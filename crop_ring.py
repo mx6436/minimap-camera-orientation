@@ -45,20 +45,29 @@ def crop_box() -> tuple[int, int, int, int]:
 
 def process(src: Path, dst: Path, mask: np.ndarray) -> None:
     left, top, right, bottom = crop_box()
-    im = Image.open(src).convert("RGBA")
-    box = im.crop((left, top, right, bottom))
-    arr = np.asarray(box)
-    # 与源图自带 alpha 取小，再叠加环形掩膜
-    alpha = np.minimum(arr[..., 3], mask[top:bottom, left:right])
-    out = np.dstack([arr[..., :3], alpha])
-    Image.fromarray(out, "RGBA").save(dst)
+    with Image.open(src) as im:
+        if im.format != "PNG":
+            raise ValueError(f"{src.name}: expected PNG data, got {im.format}")
+        width, height = im.size
+        if not (0 <= left < right <= width and 0 <= top < bottom <= height):
+            raise ValueError(f"{src.name}: crop box does not fit inside image size {im.size}")
+        arr = np.asarray(im.convert("RGBA"), dtype=np.uint8)
+    box = arr[top:bottom, left:right].copy()
+    # 与源图自带 alpha 取小，再叠加环形掩膜。
+    alpha = np.minimum(box[..., 3], mask[top:bottom, left:right])
+    box[..., 3] = alpha
+    box[alpha == 0, :3] = 0
+    Image.fromarray(box, "RGBA").save(dst)
 
 
 def main() -> None:
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
     pngs = sorted(RAW_DIR.glob("*.png"))
     if not pngs:
         raise SystemExit(f"no png found in {RAW_DIR}")
+
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    for old in OUT_DIR.glob("*.png"):
+        old.unlink()
 
     masks: dict[tuple[int, int], np.ndarray] = {}
     for i, src in enumerate(pngs, 1):
@@ -70,11 +79,24 @@ def main() -> None:
         if i % 50 == 0 or i == len(pngs):
             print(f"[{i}/{len(pngs)}] {src.name}")
 
+    output_names = sorted(p.name for p in OUT_DIR.glob("*.png"))
+    input_names = sorted(p.name for p in pngs)
+    if output_names != input_names:
+        raise RuntimeError("processed PNG names do not exactly match raw PNG names")
+    for name in output_names:
+        with Image.open(OUT_DIR / name) as im:
+            if im.size != (BOX, BOX) or im.mode != "RGBA":
+                raise RuntimeError(f"invalid processed image: {name}")
+            arr = np.asarray(im, dtype=np.uint8).copy()
+        transparent = arr[..., 3] == 0
+        if np.any(transparent & np.any(arr[..., :3] != 0, axis=-1)):
+            raise RuntimeError(f"transparent RGB is not zeroed: {name}")
     print(f"done: {len(pngs)} images -> {OUT_DIR}")
 
     # 自检：第一张输出的环内像素数应约为 π*(56²-11²) ≈ 9472
     first = OUT_DIR / pngs[0].name
-    alpha = np.asarray(Image.open(first).convert("RGBA"))[..., 3]
+    with Image.open(first) as image:
+        alpha = np.asarray(image.convert("RGBA"), dtype=np.uint8)[..., 3]
     n = int((alpha > 0).sum())
     print(f"self-check: {first.name} ring pixels = {n} (expected ~{np.pi * (OUTER_R**2 - INNER_R**2):.0f})")
 

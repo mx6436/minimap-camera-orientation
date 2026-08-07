@@ -1,0 +1,41 @@
+#!/usr/bin/env python3
+"""Predict an angle for one already-cropped RGBA PNG."""
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+
+import numpy as np
+import torch
+
+from data_utils import decode_angle, load_rgba, round_angle
+from model import AngleCNN, EXPECTED_PARAMETER_COUNT, count_trainable_parameters
+from train import load_checkpoint, choose_device
+
+ROOT = Path(__file__).resolve().parent
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("image", type=Path)
+    parser.add_argument("--checkpoint", type=Path, default=ROOT / "runs" / "spatial-rotation" / "best.pt")
+    parser.add_argument("--device", default=None)
+    args = parser.parse_args()
+    device = choose_device(args.device)
+    array = load_rgba(args.image).astype(np.float32) / 255.0
+    features = torch.from_numpy(array.transpose(2, 0, 1)).unsqueeze(0).to(device)
+    model = AngleCNN().to(device)
+    if count_trainable_parameters(model) != EXPECTED_PARAMETER_COUNT:
+        raise RuntimeError("unexpected model parameter count")
+    load_checkpoint(args.checkpoint, model, device=device)
+    model.eval()
+    with torch.no_grad():
+        output = model(features).cpu().numpy()
+    continuous = float(decode_angle(output)[0])
+    rounded = int(round_angle(continuous))
+    print(f"continuous_angle: {continuous:.6f}")
+    print(f"rounded_angle: {rounded}")
+
+
+if __name__ == "__main__":
+    main()
