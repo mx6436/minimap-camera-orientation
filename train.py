@@ -63,11 +63,6 @@ class AngleDataset(Dataset):
         alpha = array[..., 3:4]
         if self.augment:
             if random.random() < 0.5:
-                rgb *= random.uniform(0.85, 1.15)
-            if random.random() < 0.5:
-                mean = rgb[alpha[..., 0] > 0].mean() if np.any(alpha[..., 0] > 0) else 0.0
-                rgb = (rgb - mean) * random.uniform(0.85, 1.15) + mean
-            if random.random() < 0.5:
                 rgb += np.random.normal(0.0, 0.02, rgb.shape).astype(np.float32) * (alpha > 0)
             rgb = np.clip(rgb, 0.0, 1.0)
             rgb[alpha[..., 0] == 0] = 0.0
@@ -303,7 +298,7 @@ def main() -> None:
             )
 
     config: dict[str, Any] = {
-        "version": 3,
+        "version": 4,
         "seed": args.seed,
         "device": str(device),
         "input_shape": [4, 112, 112],
@@ -320,8 +315,6 @@ def main() -> None:
         "early_stopping_patience": 25,
         "loss": "MSE([raw_sin, raw_cos], [target_sin, target_cos])",
         "augmentation": {
-            "brightness": {"probability": 0.5, "factor": [0.85, 1.15]},
-            "contrast": {"probability": 0.5, "factor": [0.85, 1.15]},
             "rgb_gaussian_noise": {"probability": 0.5, "sigma": 0.02},
             "clockwise_rotation": {"probability": 0.5, "degrees": [90, 180, 270]},
         },

@@ -26,7 +26,7 @@ python train.py --resume runs/experiment_name/last.pt --output-dir runs/experime
 
 Each output directory contains `best.pt`, `last.pt`, `history.json`, and `config.json`. Start a fresh experiment in an empty output directory; use `--resume` instead of silently overwriting an existing checkpoint. The model has 995,952 trainable parameters, preserves a 4x4 coarse spatial layout before its regression head, accepts `4x112x112` RGBA input scaled to `[0, 1]`, and regresses sine/cosine components that are normalized when decoded. Validation metrics use circular errors, so the 0/360 boundary is continuous.
 
-Training augments the training images with brightness/contrast/RGB-noise changes plus, with 50% probability, one clockwise rotation selected uniformly from 90°, 180°, and 270°. The target angle is increased by the same rotation amount modulo 360; validation images are never augmented.
+Training augments the training images with RGB-noise (σ=0.02) plus, with 50% probability, one clockwise rotation selected uniformly from 90°, 180°, and 270°. The target angle is increased by the same rotation amount modulo 360; validation images are never augmented.
 
 `predict.py` accepts exactly one existing 112x112 RGBA PNG and does not resize or convert it. It defaults to `runs/spatial-rotation/best.pt`; pass `--checkpoint` and `--device` when needed.
 
