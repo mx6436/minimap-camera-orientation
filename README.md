@@ -15,7 +15,7 @@ python predict.py data/val/<one-val-file>.png --checkpoint runs/experiment_001/b
 
 `split_dataset.py` is the only script that operates on the dataset. It copies a seeded, angle-stratified split from `data/processed`: approximately 15% validation images, distributed across 30-degree angle bins with at least one validation image per bin, to `data/val`, and the rest to `data/train`. The split is recorded in `data/split_manifest.json` and reused on later runs. Use `python split_dataset.py --resplit` only when intentionally creating a new split.
 
-`train.py` only trains: it reads `data/train` and `data/val`, never copies, moves, or splits images. Training defaults to CPU or CUDA automatically, output directory `runs/spatial-rotation`, batch size 32, zero data-loader workers, and 200 maximum epochs. Use `--device cpu`, `--output-dir runs/experiment_name`, `--epochs N`, `--batch-size N`, or `--workers N` to override settings. The `--smoke` flag runs exactly one epoch through the normal path for verification; it is not a substitute for full training.
+`train.py` only trains: it reads `data/train` and `data/val`, never copies, moves, or splits images. Training defaults to CPU or CUDA automatically, output directory `runs/spatial-rotation`, batch size 32, zero data-loader workers, 16 CPU threads, and 400 maximum epochs with early stopping (patience 40) and ReduceLROnPlateau (patience 20). Use `--device cpu`, `--output-dir runs/experiment_name`, `--epochs N`, `--batch-size N`, or `--workers N` to override settings. The `--smoke` flag runs exactly one epoch through the normal path for verification; it is not a substitute for full training.
 
 Resume an interrupted run from the default output directory or a specific checkpoint:
 

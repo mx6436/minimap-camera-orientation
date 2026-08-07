@@ -38,6 +38,9 @@ ARTIFACT_NAMES = (
     "history.json",
     "config.json",
 )
+EARLY_STOP_PATIENCE = 40
+SCHEDULER_PATIENCE = 20
+DEFAULT_THREADS = 16
 
 
 def rotate_rgba(array: np.ndarray, delta: float) -> np.ndarray:
@@ -267,7 +270,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--resume", type=Path, nargs="?", const="__DEFAULT__", help="resume last checkpoint, or provide a checkpoint path")
     parser.add_argument("--device", default=None, help="auto, cpu, or cuda")
     parser.add_argument("--batch-size", type=int, default=32)
-    parser.add_argument("--epochs", type=int, default=200)
+    parser.add_argument("--epochs", type=int, default=400)
     parser.add_argument("--workers", type=int, default=0)
     parser.add_argument("--seed", type=int, default=SEED)
     parser.add_argument("--smoke", action="store_true", help="run one epoch with the normal training path")
@@ -287,6 +290,7 @@ def main() -> None:
     args = parse_args()
     if args.epochs < 1 or args.batch_size < 1 or args.workers < 0:
         raise SystemExit("--epochs/--batch-size must be positive and --workers must be non-negative")
+    torch.set_num_threads(DEFAULT_THREADS)
     seed_everything(args.seed)
     device = choose_device(args.device)
     train_names = png_names(TRAIN_DIR)
@@ -312,8 +316,9 @@ def main() -> None:
             )
 
     config: dict[str, Any] = {
-        "version": 5,
+        "version": 6,
         "seed": args.seed,
+        "threads": torch.get_num_threads(),
         "device": str(device),
         "input_shape": [4, 112, 112],
         "input_scaling": "RGBA uint8 / 255",
@@ -325,8 +330,8 @@ def main() -> None:
         "optimizer": "AdamW",
         "learning_rate": 1e-3,
         "weight_decay": 1e-4,
-        "scheduler": {"name": "ReduceLROnPlateau", "patience": 8, "factor": 0.5, "min_lr": 1e-6},
-        "early_stopping_patience": 25,
+        "scheduler": {"name": "ReduceLROnPlateau", "patience": SCHEDULER_PATIENCE, "factor": 0.5, "min_lr": 1e-6},
+        "early_stopping_patience": EARLY_STOP_PATIENCE,
         "loss": "MSE([raw_sin, raw_cos], [target_sin, target_cos])",
         "augmentation": {
             "rgb_gaussian_noise": {"probability": 0.5, "sigma": 0.02},
@@ -342,7 +347,7 @@ def main() -> None:
     if parameter_count != EXPECTED_PARAMETER_COUNT:
         raise RuntimeError(f"unexpected parameter count: {parameter_count}")
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=8, min_lr=1e-6)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=SCHEDULER_PATIENCE, min_lr=1e-6)
     criterion = nn.MSELoss()
     train_generator = torch.Generator()
     train_generator.manual_seed(args.seed)
@@ -382,9 +387,9 @@ def main() -> None:
     atomic_json_dump(output_dir / "history.json", {"epochs": history})
     max_epochs = start_epoch + 1 if args.smoke else args.epochs
     max_epochs = min(max_epochs, args.epochs)
-    if bad_epochs >= 25:
+    if bad_epochs >= EARLY_STOP_PATIENCE:
         print("checkpoint has already reached the early-stopping condition")
-    for epoch in range(start_epoch, max_epochs if bad_epochs < 25 else start_epoch):
+    for epoch in range(start_epoch, max_epochs if bad_epochs < EARLY_STOP_PATIENCE else start_epoch):
         train_loss = train_epoch(model, train_loader, optimizer, criterion, device)
         val_loss, val_metrics = eval_loss(model, val_loader, criterion, device)
         scheduler.step(val_metrics["circular_mae"])
@@ -407,7 +412,7 @@ def main() -> None:
         )
         atomic_json_dump(output_dir / "history.json", {"epochs": history})
         print(f"epoch={epoch + 1}/{max_epochs} train_loss={train_loss:.6f} val_mae={val_metrics['circular_mae']:.3f} device={device}")
-        if not args.smoke and bad_epochs >= 25:
+        if not args.smoke and bad_epochs >= EARLY_STOP_PATIENCE:
             print("early stopping")
             break
 
