@@ -222,6 +222,42 @@ def save_checkpoint(path: Path, model: nn.Module, optimizer: torch.optim.Optimiz
         raise
 
 
+def plot_loss_curves(output_dir: Path, history: list[dict[str, Any]]) -> None:
+    """Plot train/val loss curves with matplotlib and save them to output_dir."""
+    import matplotlib
+
+    matplotlib.use("Agg")  # headless-safe, no display required
+    import matplotlib.pyplot as plt
+
+    epochs = [record["epoch"] for record in history]
+    train_loss = [record["train_loss"] for record in history]
+    val_loss = [record["val_loss"] for record in history]
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.plot(epochs, train_loss, label="train loss", color="#1f77b4")
+    ax.plot(epochs, val_loss, label="val loss", color="#ff7f0e")
+    ax.set_xlabel("epoch")
+    ax.set_ylabel("loss (MSE)")
+    ax.set_title("Training and validation loss")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    path = output_dir / "loss_curve.png"
+    fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=output_dir)
+    os.close(fd)
+    try:
+        fig.savefig(temp_name, dpi=150, format="png")
+        os.replace(temp_name, path)
+    except BaseException:
+        try:
+            os.unlink(temp_name)
+        except FileNotFoundError:
+            pass
+        raise
+    finally:
+        plt.close(fig)
+    print(f"saved loss curve: {path}")
+
+
 def load_checkpoint(path: Path, model: nn.Module, optimizer: torch.optim.Optimizer | None = None,
                     scheduler: Any = None, device: torch.device | str = "cpu") -> dict[str, Any]:
     try:
@@ -420,7 +456,27 @@ def main() -> None:
         raise RuntimeError("best checkpoint was not produced")
     if history:
         best_record = min(history, key=lambda record: record["val_circular_mae"])
-        print(f"best val_circular_mae={best_record['val_circular_mae']:.3f} (epoch {best_record['epoch']})")
+        # Settlement: reload best.pt and re-evaluate on the validation set so the
+        # reported numbers are exactly those of the shipped checkpoint.
+        load_checkpoint(output_dir / "best.pt", model, device=device)
+        _, final_metrics = eval_loss(model, val_loader, criterion, device)
+        summary: dict[str, Any] = {
+            "epoch": int(best_record["epoch"]),
+            "val_count": len(val_names),
+            "best_val_circular_mae": best_record["val_circular_mae"],
+            **{f"val_{k}": v for k, v in final_metrics.items()},
+        }
+        atomic_json_dump(output_dir / "summary.json", summary)
+        print(f"best val_circular_mae={best_record['val_circular_mae']:.3f}° (epoch {best_record['epoch']})")
+        print("final evaluation on best.pt (val set):")
+        print(f"  val_circular_mae={final_metrics['circular_mae']:.3f}°  "
+              f"val_circular_median={final_metrics['circular_median']:.3f}°")
+        print(f"  within_1_degree={final_metrics['within_1_degree']:.2%}  "
+              f"within_3_degrees={final_metrics['within_3_degrees']:.2%}  "
+              f"within_5_degrees={final_metrics['within_5_degrees']:.2%}  "
+              f"within_10_degrees={final_metrics['within_10_degrees']:.2%}")
+        print(f"  integer_accuracy={final_metrics['integer_accuracy']:.2%}")
+        plot_loss_curves(output_dir, history)
 
 
 if __name__ == "__main__":
