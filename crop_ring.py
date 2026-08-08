@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """将 data/raw 中的 PNG 裁剪为圆环形样本，输出到 data/processed。
 
-ROI 中心 (108, 111)，内径 11，外径 56，硬掩膜（无过渡）：
-保留像素中心到 ROI 中心距离满足 11 <= d <= 56 的像素，
+ROI 中心 (108, 111)，内径 12，外径 56，硬掩膜（无过渡）：
+保留像素中心到 ROI 中心距离满足 12 <= d <= 56 的像素，
 其余像素置为全透明。输出 112x112 外接正方形 RGBA PNG，文件名保持不变。
 
 距离按像素中心计算：像素 (i, j) 的中心为 (j + 0.5, i + 0.5)。
@@ -14,7 +14,7 @@ import numpy as np
 from PIL import Image
 
 ROI_CENTER = (108.0, 111.0)
-INNER_R = 11.0
+INNER_R = 12.0
 OUTER_R = 56.0
 BOX = 112  # 外径 56 的外接正方形边长
 
