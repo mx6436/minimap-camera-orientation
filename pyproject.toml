@@ -1,0 +1,17 @@
+[project]
+name = "endfield-minimap"
+version = "0.1.0"
+description = "RGBA angle CNN for Endfield minimap rotation prediction"
+requires-python = ">=3.14"
+dependencies = [
+    "numpy>=2.5",
+    "opencv-python>=5.0",
+    "pillow>=12.3",
+    "matplotlib>=3.11",
+    "torch>=2.13",
+    "MaaFw>=5.12",
+]
+
+[tool.uv]
+# 纯脚本项目,不需要构建/安装为包
+package = false

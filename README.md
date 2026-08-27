@@ -4,24 +4,26 @@ This project trains a small PyTorch CNN to predict the direction encoded by the 
 
 ## Workflow
 
+Dependencies are managed with [uv](https://docs.astral.sh/uv/). Run `uv sync` once to create `.venv` and install locked dependencies, then run scripts via `uv run`:
+
 ```bash
-python crop_ring.py
-python split_dataset.py
-python train.py --output-dir runs/experiment_001
-python predict.py data/val/<one-val-file>.png --checkpoint runs/experiment_001/best.pt
+uv run crop_ring.py
+uv run split_dataset.py
+uv run train.py --output-dir runs/experiment_001
+uv run predict.py data/val/<one-val-file>.png --checkpoint runs/experiment_001/best.pt
 ```
 
 `crop_ring.py` rebuilds `data/processed` from `data/raw`, applies the ring mask, and writes transparent pixels as `(0, 0, 0, 0)`. It only removes old PNG files from `data/processed`; raw images are never changed.
 
-`split_dataset.py` is the only script that operates on the dataset. It copies a seeded, angle-stratified split from `data/processed`: approximately 15% validation images, distributed across 30-degree angle bins with at least one validation image per bin, to `data/val`, and the rest to `data/train`. The split is recorded in `data/split_manifest.json` and reused on later runs. Use `python split_dataset.py --resplit` only when intentionally creating a new split.
+`split_dataset.py` is the only script that operates on the dataset. It copies a seeded, angle-stratified split from `data/processed`: approximately 15% validation images, distributed across 30-degree angle bins with at least one validation image per bin, to `data/val`, and the rest to `data/train`. The split is recorded in `data/split_manifest.json` and reused on later runs. Use `uv run split_dataset.py --resplit` only when intentionally creating a new split.
 
 `train.py` only trains: it reads `data/train` and `data/val`, never copies, moves, or splits images. Training defaults to CPU or CUDA automatically, output directory `runs/spatial-rotation`, batch size 32, zero data-loader workers, 16 CPU threads, and 400 maximum epochs with early stopping (patience 40) and ReduceLROnPlateau (patience 20). Use `--device cpu`, `--output-dir runs/experiment_name`, `--epochs N`, `--batch-size N`, or `--workers N` to override settings. The `--smoke` flag runs exactly one epoch through the normal path for verification; it is not a substitute for full training.
 
 Resume an interrupted run from the default output directory or a specific checkpoint:
 
 ```bash
-python train.py --resume
-python train.py --resume runs/experiment_name/last.pt --output-dir runs/experiment_name
+uv run train.py --resume
+uv run train.py --resume runs/experiment_name/last.pt --output-dir runs/experiment_name
 ```
 
 Each output directory contains `best.pt`, `last.pt`, `history.json`, and `config.json`. Start a fresh experiment in an empty output directory; use `--resume` instead of silently overwriting an existing checkpoint. The model has 995,952 trainable parameters, preserves a 4x4 coarse spatial layout before its regression head, accepts `4x112x112` RGBA input scaled to `[0, 1]`, and regresses sine/cosine components that are normalized when decoded. Validation metrics use circular errors, so the 0/360 boundary is continuous.
