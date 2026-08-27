@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
 """MaaFw 实时截图 → 环形小地图预处理 → AngleCNN 角度预测 → 单窗口实时绘制。
 
-截图通道：MaaFramework Python 绑定（MaaFw）的 Wlroots 控制器，连接
-wlr_socket_path 指定的 Wayland socket（与 MaaEnd 的 Wlroots 控制器一致）。
+截图通道：MaaFramework Python 绑定（MaaFw）的 Linux 控制器，采用与
+MaaEnd 的 Linux-Gamescope 控制器一致的方式：PipeWire 会话 daemon 节点
+截图（screencap_method=PipeWire）+ Libei 输入（input_method=Libei）。
+
+gamescope 实例通过 MaaToolkitGamescopeInstanceFindAll 自动发现：每个实例
+以 $XDG_RUNTIME_DIR 下 gamescope-<n> 命名的 Wayland socket 为键，附带
+PipeWire 节点 ID（gamescope_pipewire 协议）和同名 gamescope-<n>-ei EIS
+socket 路径。默认自动选择唯一的实例，也可用 --display / --node-id 指定。
 
 预处理与训练数据完全一致（见 crop_ring.py）：ROI（中心 (108,111)、内径 12、
 外径 56，720p 基准）按实际截图尺寸等比缩放，裁 112x112 外接正方形，环形硬
@@ -32,9 +38,13 @@ from model import AngleCNN, EXPECTED_PARAMETER_COUNT, count_trainable_parameters
 from train import choose_device, load_checkpoint  # noqa: E402
 
 BASE_W, BASE_H = 1280, 720  # 训练基准分辨率
-DEFAULT_WLR_SOCKET = "wayland-0"
 DISPLAY_SCALE = 6  # 112x112 裁图放大倍数
 ARROW_LENGTH = 42  # 箭头长度（112x112 裁图坐标系内）
+
+# Linux 控制器 config_json 字段值，见 MaaFramework docs 2.4-控制方式说明：
+# Screencap: Wlr=1, PipeWire=4；Input: Wlr=1, UInput=2, Libei=4
+SCREENCAP_PIPEWIRE = 4
+INPUT_LIBEI = 4
 
 
 def parse_args() -> argparse.Namespace:
@@ -52,9 +62,21 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--device", default=None, help="推理设备，默认自动选择")
     parser.add_argument(
-        "--wlr-socket",
-        default=DEFAULT_WLR_SOCKET,
-        help="Wayland socket 路径（默认 wayland-0）",
+        "--display",
+        type=int,
+        default=None,
+        help="gamescope display 号（gamescope-<n> 的 n）；省略时自动选择唯一实例",
+    )
+    parser.add_argument(
+        "--node-id",
+        type=int,
+        default=None,
+        help="PipeWire 节点 ID；省略时从 gamescope 实例自动获取",
+    )
+    parser.add_argument(
+        "--eis-socket",
+        default=None,
+        help="EIS socket 路径；省略时从 gamescope 实例自动获取",
     )
     return parser.parse_args()
 
@@ -157,6 +179,43 @@ def draw_overlay(ring: np.ndarray, angle: float) -> np.ndarray:
     return display
 
 
+def resolve_gamescope(toolkit: type, args: argparse.Namespace) -> tuple[int, str]:
+    """确定 PipeWire 节点 ID 与 EIS socket 路径。
+
+    命令行显式指定的值优先；否则枚举 gamescope 实例，--display 匹配或唯一
+    实例自动选中。节点 ID 为 0（无截图节点）或 EIS socket 为空时报错。
+    """
+    if args.node_id is not None and args.eis_socket is not None:
+        return args.node_id, args.eis_socket
+
+    instances = toolkit.find_gamescope_instances()
+    if not instances:
+        raise SystemExit("未发现 gamescope 实例，请确认 gamescope 正在运行")
+
+    instance = None
+    if args.display is not None:
+        for cand in instances:
+            if cand.display_no == args.display:
+                instance = cand
+                break
+        if instance is None:
+            found = [c.display_no for c in instances]
+            raise SystemExit(f"未找到 gamescope-{args.display}，当前实例: {found}")
+    elif len(instances) == 1:
+        instance = instances[0]
+    else:
+        found = [c.display_no for c in instances]
+        raise SystemExit(f"发现多个 gamescope 实例 {found}，请用 --display 指定")
+
+    node_id = args.node_id if args.node_id is not None else instance.pipewire_node_id
+    eis_socket = args.eis_socket if args.eis_socket is not None else instance.eis_socket_path
+    if not node_id:
+        raise SystemExit(f"gamescope-{instance.display_no} 无可用 PipeWire 截图节点")
+    if not eis_socket:
+        raise SystemExit(f"gamescope-{instance.display_no} 无可用 EIS socket")
+    return node_id, eis_socket
+
+
 def main() -> None:
     args = parse_args()
     if args.checkpoint is None:
@@ -164,20 +223,28 @@ def main() -> None:
     model = prepare_model(args.checkpoint, args.device)
 
     try:
-        from maa.controller import WlRootsController
+        from maa.controller import LinuxController
+        from maa.toolkit import Toolkit
     except ImportError as exc:
         raise SystemExit(
-            "MaaFw 未安装：请在项目根目录执行 "
-            "`uv venv --system-site-packages .venv && uv pip install --python .venv/bin/python MaaFw`"
+            "MaaFw 缺少 Linux 控制器支持（需要 MaaFw>=5.13.0b5）："
+            "请在项目根目录执行 `uv sync` 更新依赖"
         ) from exc
 
-    controller = WlRootsController(args.wlr_socket)
+    node_id, eis_socket = resolve_gamescope(Toolkit, args)
+    controller = LinuxController(
+        {
+            "screencap_method": SCREENCAP_PIPEWIRE,
+            "input_method": INPUT_LIBEI,
+            "pw_node_id": node_id,
+            "eis_socket_path": eis_socket,
+            "use_win32_vk_code": True,
+        }
+    )
     connection = controller.post_connection().wait()
     if not connection.status.succeeded:
-        raise RuntimeError(
-            f"无法连接 Wayland socket '{args.wlr_socket}'（status: {connection.status}）"
-        )
-    print(f"connected to {args.wlr_socket}")
+        raise RuntimeError(f"无法连接 gamescope 节点（status: {connection.status}）")
+    print(f"connected: pw_node_id={node_id}, eis_socket={eis_socket}")
 
     printed_info = False
     while True:

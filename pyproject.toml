@@ -9,7 +9,7 @@ dependencies = [
     "pillow>=12.3",
     "matplotlib>=3.11",
     "torch>=2.13",
-    "MaaFw>=5.12",
+    "MaaFw>=5.13.0b5",  # LinuxController + gamescope toolkit 需要 5.13.0b5+
 ]
 
 [tool.uv]
