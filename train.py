@@ -11,6 +11,7 @@ from typing import Any
 
 import numpy as np
 import torch
+from PIL import Image
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
@@ -42,6 +43,17 @@ SCHEDULER_PATIENCE = 20
 DEFAULT_THREADS = 16
 
 
+def rotate_rgba(array: np.ndarray, delta: float) -> np.ndarray:
+    """Rotate an HxWx4 float [0,1] array clockwise by delta degrees.
+    Multiples of 90 use lossless np.rot90; other angles use PIL (clockwise = -angle,
+    since PIL rotate is counter-clockwise; transparent fill keeps the ring intact)."""
+    if abs(delta % 90) < 1e-9:
+        return np.rot90(array, k=-int(round(delta / 90)) % 4, axes=(0, 1)).copy()
+    img = Image.fromarray((array * 255.0).astype(np.uint8), "RGBA")
+    img = img.rotate(-delta, resample=Image.Resampling.BICUBIC, expand=False, fillcolor=(0, 0, 0, 0))
+    return np.asarray(img).astype(np.float32) / 255.0
+
+
 class AngleDataset(Dataset):
     def __init__(self, directory: Path, names: list[str], augment: bool = False) -> None:
         self.directory = directory
@@ -55,9 +67,15 @@ class AngleDataset(Dataset):
         name = self.names[index]
         angle = parse_angle(Path(name))
         array = load_rgba(self.directory / name).astype(np.float32) / 255.0
-        # No rotation augmentation: the minimap is world-anchored (terrain never
-        # rotates, icons are always screen-upright), so rotated inputs do not
-        # exist in real data. See CONTEXT.md.
+        if self.augment:
+            # Rotation augmentation is kept for empirical reasons despite rotated
+            # terrain/icons not existing in real inputs (see CONTEXT.md): it acts
+            # as a 24x data multiplier / regularizer on a small dataset, and run
+            # experiment_023 (rot) reached val MAE 3.14 vs 6.01 without it.
+            if random.random() < 0.5:
+                delta = 15 * random.randint(1, 23)  # 15, 30, ..., 345
+                array = rotate_rgba(array, float(delta))
+                angle = (angle + delta) % 360
         rgb = array[..., :3]
         alpha = array[..., 3:4]
         if self.augment:
@@ -339,7 +357,7 @@ def main() -> None:
             )
 
     config: dict[str, Any] = {
-        "version": 9,
+        "version": 10,
         "seed": args.seed,
         "threads": args.threads,
         "device": str(device),
@@ -357,6 +375,7 @@ def main() -> None:
         "loss": "MSE(normalize([raw_sin, raw_cos]), [target_sin, target_cos]) = 2-2cos(dtheta)",
         "augmentation": {
             "rgb_gaussian_noise": {"probability": 0.5, "sigma": 0.02},
+            "clockwise_rotation": {"probability": 0.5, "degrees": "15-multiples 15..345 (24 directions); 90-multiples via lossless np.rot90, others via PIL BICUBIC"},
         },
         "train_count": len(train_names),
         "val_count": len(val_names),
