@@ -1,7 +1,7 @@
 [project]
 name = "endfield-minimap"
 version = "0.1.0"
-description = "RGBA angle CNN for Endfield minimap rotation prediction"
+description = "RGBA angle CNN predicting the Endfield camera angle from the world-anchored minimap"
 requires-python = ">=3.14"
 dependencies = [
     "numpy>=2.5",
