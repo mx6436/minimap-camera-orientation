@@ -55,10 +55,12 @@ def rotate_rgba(array: np.ndarray, delta: float) -> np.ndarray:
 
 
 class AngleDataset(Dataset):
-    def __init__(self, directory: Path, names: list[str], augment: bool = False) -> None:
+    def __init__(self, directory: Path, names: list[str], augment: bool = False,
+                 rotate: bool = True) -> None:
         self.directory = directory
         self.names = names
         self.augment = augment
+        self.rotate = rotate
 
     def __len__(self) -> int:
         return len(self.names)
@@ -72,7 +74,7 @@ class AngleDataset(Dataset):
             # terrain/icons not existing in real inputs (see CONTEXT.md): it acts
             # as a 24x data multiplier / regularizer on a small dataset, and run
             # experiment_023 (rot) reached val MAE 3.14 vs 6.01 without it.
-            if random.random() < 0.5:
+            if self.rotate and random.random() < 0.5:
                 delta = 15 * random.randint(1, 23)  # 15, 30, ..., 345
                 array = rotate_rgba(array, float(delta))
                 angle = (angle + delta) % 360
@@ -314,6 +316,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--epochs", type=int, default=400)
     parser.add_argument("--threads", type=int, default=DEFAULT_THREADS, help="CPU core count for torch (torch.set_num_threads)")
     parser.add_argument("--seed", type=int, default=SEED)
+    parser.add_argument("--no-rotation", action="store_true",
+                        help="disable rotation augmentation (noise only)")
     parser.add_argument("--smoke", action="store_true", help="run one epoch with the normal training path")
     return parser.parse_args()
 
@@ -375,7 +379,7 @@ def main() -> None:
         "loss": "MSE(normalize([raw_sin, raw_cos]), [target_sin, target_cos]) = 2-2cos(dtheta)",
         "augmentation": {
             "rgb_gaussian_noise": {"probability": 0.5, "sigma": 0.02},
-            "clockwise_rotation": {"probability": 0.5, "degrees": "15-multiples 15..345 (24 directions); 90-multiples via lossless np.rot90, others via PIL BICUBIC"},
+            "clockwise_rotation": {"probability": 0.0 if args.no_rotation else 0.5, "degrees": "15-multiples 15..345 (24 directions); 90-multiples via lossless np.rot90, others via PIL BICUBIC"},
         },
         "train_count": len(train_names),
         "val_count": len(val_names),
@@ -392,7 +396,7 @@ def main() -> None:
     train_generator = torch.Generator()
     train_generator.manual_seed(args.seed)
     train_loader = make_loader(
-        AngleDataset(TRAIN_DIR, train_names, True),
+        AngleDataset(TRAIN_DIR, train_names, True, rotate=not args.no_rotation),
         args.batch_size,
         True,
         args.seed,
