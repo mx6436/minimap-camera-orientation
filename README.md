@@ -19,7 +19,7 @@ uv run predict.py data/val/<one-val-file>.png --checkpoint runs/experiment_001/b
 
 `split_dataset.py` 是唯一操作数据集划分的脚本。它从 `data/processed` 按种子和角度分层复制：约 15% 的验证图像（按 30 度角度分箱，每箱至少一张验证图）复制到 `data/val`，其余复制到 `data/train`。划分结果记录在 `data/split_manifest.json` 并在后续运行中复用。只有刻意要重新划分时才使用 `uv run split_dataset.py --resplit`。
 
-`train.py` 只负责训练：读取 `data/train` 和 `data/val`，从不复制、移动或划分图像。训练默认自动使用 CPU 或 CUDA，输出目录 `runs/production_001`，batch size 32，数据加载进程 0 个，CPU 线程 16 个，最大 400 个 epoch 并带早停（patience 40）与 ReduceLROnPlateau（patience 20）。可用 `--device cpu`、`--output-dir runs/experiment_name`、`--epochs N`、`--batch-size N` 或 `--workers N` 覆盖默认值。`--smoke` 标志走正常路径只跑一个 epoch，用于验证流程，不能替代完整训练。
+`train.py` 只负责训练：读取 `data/train` 和 `data/val`，从不复制、移动或划分图像。训练默认自动使用 CPU 或 CUDA，输出目录 `runs/production_001`，batch size 32，数据加载为单进程（num\_workers=0），CPU 线程默认 16（可用 `--threads` 调整），最大 400 个 epoch 并带早停（patience 40）与 ReduceLROnPlateau（patience 20）。可用 `--device cpu`、`--output-dir runs/experiment_name`、`--epochs N`、`--batch-size N` 或 `--threads N` 覆盖默认值。`--smoke` 标志走正常路径只跑一个 epoch，用于验证流程，不能替代完整训练。
 
 从中断处恢复训练：
 

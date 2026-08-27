@@ -129,13 +129,7 @@ def eval_loss(model: nn.Module, loader: DataLoader, criterion: nn.Module, device
     return total / len(loader.dataset), metrics_from_outputs(output_array, angle_array)
 
 
-def seed_worker(_worker_id: int) -> None:
-    worker_seed = torch.initial_seed() % (2**32)
-    random.seed(worker_seed)
-    np.random.seed(worker_seed)
-
-
-def make_loader(dataset: Dataset, batch_size: int, shuffle: bool, seed: int, workers: int,
+def make_loader(dataset: Dataset, batch_size: int, shuffle: bool, seed: int,
                 device: torch.device, generator: torch.Generator | None = None) -> DataLoader:
     if generator is None:
         generator = torch.Generator()
@@ -144,9 +138,8 @@ def make_loader(dataset: Dataset, batch_size: int, shuffle: bool, seed: int, wor
         dataset,
         batch_size=batch_size,
         shuffle=shuffle,
-        num_workers=workers,
+        num_workers=0,
         generator=generator,
-        worker_init_fn=seed_worker if workers else None,
         pin_memory=device.type == "cuda",
     )
 
@@ -267,7 +260,7 @@ def validate_resume_config(checkpoint_config: object, config: dict[str, Any]) ->
         "model",
         "trainable_parameters",
         "batch_size",
-        "workers",
+        "threads",
         "optimizer",
         "learning_rate",
         "weight_decay",
@@ -290,7 +283,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", default=None, help="auto, cpu, or cuda")
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--epochs", type=int, default=400)
-    parser.add_argument("--workers", type=int, default=0)
     parser.add_argument("--threads", type=int, default=DEFAULT_THREADS, help="CPU core count for torch (torch.set_num_threads)")
     parser.add_argument("--seed", type=int, default=SEED)
     parser.add_argument("--smoke", action="store_true", help="run one epoch with the normal training path")
@@ -308,8 +300,8 @@ def choose_device(value: str | None) -> torch.device:
 
 def main() -> None:
     args = parse_args()
-    if args.epochs < 1 or args.batch_size < 1 or args.workers < 0 or args.threads < 1:
-        raise SystemExit("--epochs/--batch-size/--threads must be positive and --workers must be non-negative")
+    if args.epochs < 1 or args.batch_size < 1 or args.threads < 1:
+        raise SystemExit("--epochs/--batch-size/--threads must be positive")
     torch.set_num_threads(args.threads)
     seed_everything(args.seed)
     device = choose_device(args.device)
@@ -336,16 +328,15 @@ def main() -> None:
             )
 
     config: dict[str, Any] = {
-        "version": 7,
+        "version": 8,
         "seed": args.seed,
-        "threads": torch.get_num_threads(),
+        "threads": args.threads,
         "device": str(device),
         "input_shape": [4, 112, 112],
         "input_scaling": "RGBA uint8 / 255",
         "model": "AngleCNN",
         "trainable_parameters": EXPECTED_PARAMETER_COUNT,
         "batch_size": args.batch_size,
-        "workers": args.workers,
         "max_epochs": args.epochs,
         "optimizer": "AdamW",
         "learning_rate": 1e-3,
@@ -375,7 +366,6 @@ def main() -> None:
         args.batch_size,
         True,
         args.seed,
-        args.workers,
         device,
         train_generator,
     )
@@ -384,7 +374,6 @@ def main() -> None:
         args.batch_size,
         False,
         args.seed,
-        args.workers,
         device,
     )
     start_epoch = 0
