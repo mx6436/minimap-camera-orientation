@@ -291,6 +291,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--epochs", type=int, default=400)
     parser.add_argument("--workers", type=int, default=0)
+    parser.add_argument("--threads", type=int, default=DEFAULT_THREADS, help="CPU core count for torch (torch.set_num_threads)")
     parser.add_argument("--seed", type=int, default=SEED)
     parser.add_argument("--smoke", action="store_true", help="run one epoch with the normal training path")
     return parser.parse_args()
@@ -307,9 +308,9 @@ def choose_device(value: str | None) -> torch.device:
 
 def main() -> None:
     args = parse_args()
-    if args.epochs < 1 or args.batch_size < 1 or args.workers < 0:
-        raise SystemExit("--epochs/--batch-size must be positive and --workers must be non-negative")
-    torch.set_num_threads(DEFAULT_THREADS)
+    if args.epochs < 1 or args.batch_size < 1 or args.workers < 0 or args.threads < 1:
+        raise SystemExit("--epochs/--batch-size/--threads must be positive and --workers must be non-negative")
+    torch.set_num_threads(args.threads)
     seed_everything(args.seed)
     device = choose_device(args.device)
     train_names = png_names(TRAIN_DIR)
