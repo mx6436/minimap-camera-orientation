@@ -95,6 +95,7 @@ def metrics_from_outputs(outputs: np.ndarray, angles: np.ndarray) -> dict[str, f
     rounded = round_angle(continuous)
     return {
         "circular_mae": float(np.mean(errors)),
+        "circular_rmse": float(np.sqrt(np.mean(errors ** 2))),
         "circular_median": float(np.median(errors)),
         "integer_accuracy": float(np.mean(rounded == angles)),
         "within_1_degree": float(np.mean(errors <= 1.0)),
@@ -447,7 +448,7 @@ def main() -> None:
             config, history, train_generator,
         )
         atomic_json_dump(output_dir / "history.json", {"epochs": history})
-        print(f"epoch={epoch + 1}/{max_epochs} train_loss={train_loss:.6f} val_mae={val_metrics['circular_mae']:.3f} device={device}")
+        print(f"epoch={epoch + 1}/{max_epochs} train_loss={train_loss:.6f} val_mae={val_metrics['circular_mae']:.3f}° val_rmse={val_metrics['circular_rmse']:.3f}°")
         if not args.smoke and bad_epochs >= EARLY_STOP_PATIENCE:
             print("early stopping")
             break
