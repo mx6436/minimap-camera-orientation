@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parent
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("image", type=Path)
-    parser.add_argument("--checkpoint", type=Path, default=ROOT / "runs" / "spatial-rotation" / "best.pt")
+    parser.add_argument("--checkpoint", type=Path, default=ROOT / "runs" / "production_001" / "best.pt")
     parser.add_argument("--device", default=None)
     args = parser.parse_args()
     device = choose_device(args.device)

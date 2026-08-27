@@ -11,7 +11,6 @@ from typing import Any
 
 import numpy as np
 import torch
-from PIL import Image
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
@@ -43,17 +42,6 @@ SCHEDULER_PATIENCE = 20
 DEFAULT_THREADS = 16
 
 
-def rotate_rgba(array: np.ndarray, delta: float) -> np.ndarray:
-    """Rotate an HxWx4 float [0,1] array clockwise by delta degrees.
-    Multiples of 90 use lossless np.rot90; other angles use PIL (clockwise = -angle,
-    since PIL rotate is counter-clockwise; transparent fill keeps the ring intact)."""
-    if abs(delta % 90) < 1e-9:
-        return np.rot90(array, k=-int(round(delta / 90)) % 4, axes=(0, 1)).copy()
-    img = Image.fromarray((array * 255.0).astype(np.uint8), "RGBA")
-    img = img.rotate(-delta, resample=Image.Resampling.BICUBIC, expand=False, fillcolor=(0, 0, 0, 0))
-    return np.asarray(img).astype(np.float32) / 255.0
-
-
 class AngleDataset(Dataset):
     def __init__(self, directory: Path, names: list[str], augment: bool = False) -> None:
         self.directory = directory
@@ -67,15 +55,9 @@ class AngleDataset(Dataset):
         name = self.names[index]
         angle = parse_angle(Path(name))
         array = load_rgba(self.directory / name).astype(np.float32) / 255.0
-        if self.augment:
-            # Rotate the complete RGBA sample clockwise and update the label by
-            # the same positive angle (clockwise = angle increase). 15-degree
-            # multiples give 24 directions; 90-multiples use lossless np.rot90,
-            # other angles use PIL BICUBIC (see rotate_rgba).
-            if random.random() < 0.5:
-                delta = 15 * random.randint(1, 23)  # 15, 30, ..., 345
-                array = rotate_rgba(array, float(delta))
-                angle = (angle + delta) % 360
+        # No rotation augmentation: the minimap is world-anchored (terrain never
+        # rotates, icons are always screen-upright), so rotated inputs do not
+        # exist in real data. See CONTEXT.md.
         rgb = array[..., :3]
         alpha = array[..., 3:4]
         if self.augment:
@@ -303,7 +285,7 @@ def validate_resume_config(checkpoint_config: object, config: dict[str, Any]) ->
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output-dir", type=Path, default=ROOT / "runs" / "spatial-rotation")
+    parser.add_argument("--output-dir", type=Path, default=ROOT / "runs" / "production_001")
     parser.add_argument("--resume", type=Path, nargs="?", const="__DEFAULT__", help="resume last checkpoint, or provide a checkpoint path")
     parser.add_argument("--device", default=None, help="auto, cpu, or cuda")
     parser.add_argument("--batch-size", type=int, default=32)
@@ -353,7 +335,7 @@ def main() -> None:
             )
 
     config: dict[str, Any] = {
-        "version": 6,
+        "version": 7,
         "seed": args.seed,
         "threads": torch.get_num_threads(),
         "device": str(device),
@@ -372,7 +354,6 @@ def main() -> None:
         "loss": "MSE([raw_sin, raw_cos], [target_sin, target_cos])",
         "augmentation": {
             "rgb_gaussian_noise": {"probability": 0.5, "sigma": 0.02},
-            "clockwise_rotation": {"probability": 0.5, "degrees": "15-multiples 15..345 (24 directions); 90-multiples via lossless np.rot90, others via PIL BICUBIC"},
         },
         "train_count": len(train_names),
         "val_count": len(val_names),
