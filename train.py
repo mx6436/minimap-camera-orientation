@@ -71,6 +71,17 @@ class AngleDataset(Dataset):
         return tensor, target
 
 
+class AngularMSELoss(nn.Module):
+    """MSE between unit-normalized predictions and unit targets (= 2-2cos dtheta).
+
+    Output norm is excluded from the objective: decode_angle normalizes anyway,
+    so raw-norm errors are pure noise that used to dominate the loss (~90% of
+    validation MSE) and mask fine angular progress."""
+
+    def forward(self, outputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        return nn.functional.mse_loss(nn.functional.normalize(outputs, dim=-1), targets)
+
+
 def metrics_from_outputs(outputs: np.ndarray, angles: np.ndarray) -> dict[str, float]:
     continuous = decode_angle(outputs)
     errors = circular_error(continuous, angles)
@@ -328,7 +339,7 @@ def main() -> None:
             )
 
     config: dict[str, Any] = {
-        "version": 8,
+        "version": 9,
         "seed": args.seed,
         "threads": args.threads,
         "device": str(device),
@@ -343,7 +354,7 @@ def main() -> None:
         "weight_decay": 1e-4,
         "scheduler": {"name": "ReduceLROnPlateau", "patience": SCHEDULER_PATIENCE, "factor": 0.5, "min_lr": 1e-6},
         "early_stopping_patience": EARLY_STOP_PATIENCE,
-        "loss": "MSE([raw_sin, raw_cos], [target_sin, target_cos])",
+        "loss": "MSE(normalize([raw_sin, raw_cos]), [target_sin, target_cos]) = 2-2cos(dtheta)",
         "augmentation": {
             "rgb_gaussian_noise": {"probability": 0.5, "sigma": 0.02},
         },
@@ -358,7 +369,7 @@ def main() -> None:
         raise RuntimeError(f"unexpected parameter count: {parameter_count}")
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=SCHEDULER_PATIENCE, min_lr=1e-6)
-    criterion = nn.MSELoss()
+    criterion = AngularMSELoss()
     train_generator = torch.Generator()
     train_generator.manual_seed(args.seed)
     train_loader = make_loader(
