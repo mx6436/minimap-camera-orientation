@@ -17,6 +17,7 @@ from PIL import Image
 ANGLE_RE = re.compile(r"_r(\d+)\.png$")
 SEED = 42
 IMAGE_SIZE = (112, 112)
+POLAR_IMAGE_SIZE = (360, 44)  # PIL (width, height)：1°/列，1px/行
 
 
 def parse_angle(path: Path) -> int:
@@ -64,6 +65,18 @@ def load_rgba(path: Path) -> np.ndarray:
         array = np.asarray(image, dtype=np.uint8).copy()
     array[array[..., 3] == 0, :3] = 0
     return array
+
+
+def load_rgb(path: Path) -> np.ndarray:
+    """加载极坐标展开 RGB 样本（360x44，无透明区域）。"""
+    with Image.open(path) as image:
+        if image.format != "PNG":
+            raise ValueError(f"{path}: expected PNG, got {image.format}")
+        if image.size != POLAR_IMAGE_SIZE:
+            raise ValueError(f"{path}: expected 360x44, got {image.size}")
+        if image.mode != "RGB":
+            raise ValueError(f"{path}: expected RGB, got {image.mode}")
+        return np.asarray(image, dtype=np.uint8).copy()
 
 
 def atomic_json_dump(path: Path, value: object) -> None:

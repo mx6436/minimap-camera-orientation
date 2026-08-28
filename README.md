@@ -34,11 +34,29 @@ uv run train.py --resume runs/experiment_name/last.pt --output-dir runs/experime
 
 `predict.py` 接受恰好一个已存在的 112x112 RGBA PNG，不缩放、不转换颜色格式。默认读取 `runs/production_001/best.pt`；需要时传 `--checkpoint` 和 `--device`。
 
+## 极坐标展开实验（与环形 RGBA 管线并行）
+
+第二条输入表示管线，用于验证“极坐标展开能否优于环形裁剪”（对比基准：`runs/experiment_004`，best val_circular_mae 4.556°，同一 split_manifest、同一 seed 与超参）：
+
+```bash
+uv run unwrap_polar.py
+uv run split_dataset.py --input polar
+uv run train.py --input polar --output-dir runs/polar_001
+```
+
+`unwrap_polar.py` 从 `data/raw` 生成 `data/processed_polar`（360x44 RGB PNG，无透明区域，天然全有效）。展开约定见 [CONTEXT.md](./CONTEXT.md) “极坐标展开”词条：角度 → x 轴（1°/列，顺时针，正北在第 0 列），半径 → y 轴（内径 12 在上，外径 56 在下），双线性反向映射。箭头仍被内径排除。
+
+`split_dataset.py --input polar` 按**现有** `split_manifest.json` 复制到 `data/train_polar`、`data/val_polar`，与 RGBA 管线逐文件同划分；不支持 `--resplit`（重新划分只能在 RGBA 管线上进行）。
+
+`train.py --input polar` 切换数据加载（3 通道 360x44 RGB）、模型（`AngleCNN(in_channels=3, padding_mode="circular")`，循环 padding 使 0/360 接缝两侧连通，参数量 995,664）与增强实现：顺时针旋转变为沿角度轴 `np.roll` 15 列（24 方向全部无损，替代 bicubic）；RGB 噪声不加掩膜（全图有效）。概率与 σ 与 RGBA 管线相同。极坐标实验的 config 为 version 11，含 `input_representation` 与 `conv_padding_mode` 字段；RGBA 路径的 config（version 10）保持不变，旧 checkpoint 可继续 `--resume`。
+
 ## 数据目录
 
 - `data/raw`：原始截图；任何脚本都不会修改它。
 - `data/processed`：重新生成的环形裁剪 RGBA 图像。
+- `data/processed_polar`：重新生成的极坐标展开 RGB 图像（`unwrap_polar.py`）。
 - `data/train`：复制的训练图像（磁盘上不做增强）。
 - `data/val`：复制的留出验证图像。
+- `data/train_polar` / `data/val_polar`：极坐标管线的副本，划分与 `data/train`、`data/val` 逐文件一致。
 - `data/split_manifest.json`：可复现的划分记录。
 - `runs/`：checkpoint 与 JSON 实验结果。

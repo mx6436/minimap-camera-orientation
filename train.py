@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Train the RGBA angle regression CNN on data/train and validate on data/val."""
+"""Train the angle regression CNN on data/train[-polar] and validate on data/val[-polar]."""
 from __future__ import annotations
 
 import argparse
@@ -21,17 +21,20 @@ from data_utils import (
     atomic_json_dump,
     circular_error,
     decode_angle,
+    load_rgb,
     load_rgba,
     parse_angle,
     png_names,
     round_angle,
     seed_everything,
 )
-from model import AngleCNN, EXPECTED_PARAMETER_COUNT, count_trainable_parameters
+from model import AngleCNN, expected_parameter_count, count_trainable_parameters
 
 ROOT = Path(__file__).resolve().parent
 TRAIN_DIR = ROOT / "data" / "train"
 VAL_DIR = ROOT / "data" / "val"
+POLAR_TRAIN_DIR = ROOT / "data" / "train_polar"
+POLAR_VAL_DIR = ROOT / "data" / "val_polar"
 ARTIFACT_NAMES = (
     "best.pt",
     "last.pt",
@@ -56,11 +59,12 @@ def rotate_rgba(array: np.ndarray, delta: float) -> np.ndarray:
 
 class AngleDataset(Dataset):
     def __init__(self, directory: Path, names: list[str], augment: bool = False,
-                 rotate: bool = True) -> None:
+                 rotate: bool = True, polar: bool = False) -> None:
         self.directory = directory
         self.names = names
         self.augment = augment
         self.rotate = rotate
+        self.polar = polar
 
     def __len__(self) -> int:
         return len(self.names)
@@ -68,7 +72,10 @@ class AngleDataset(Dataset):
     def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
         name = self.names[index]
         angle = parse_angle(Path(name))
-        array = load_rgba(self.directory / name).astype(np.float32) / 255.0
+        if self.polar:
+            array = load_rgb(self.directory / name).astype(np.float32) / 255.0
+        else:
+            array = load_rgba(self.directory / name).astype(np.float32) / 255.0
         if self.augment:
             # Rotation augmentation is kept for empirical reasons despite rotated
             # terrain/icons not existing in real inputs (see CONTEXT.md): it acts
@@ -76,16 +83,27 @@ class AngleDataset(Dataset):
             # experiment_023 (rot) reached val MAE 3.14 vs 6.01 without it.
             if self.rotate and random.random() < 0.5:
                 delta = 15 * random.randint(1, 23)  # 15, 30, ..., 345
-                array = rotate_rgba(array, float(delta))
+                if self.polar:
+                    # 1°/列角度轴：内容顺时针转 delta 度 == 列右移 delta（严格无损，
+                    # 替代 RGBA 管线的 bicubic 方案）。
+                    array = np.roll(array, delta, axis=1)
+                else:
+                    array = rotate_rgba(array, float(delta))
                 angle = (angle + delta) % 360
-        rgb = array[..., :3]
-        alpha = array[..., 3:4]
         if self.augment:
-            if random.random() < 0.5:
-                rgb += np.random.normal(0.0, 0.02, rgb.shape).astype(np.float32) * (alpha > 0)
-            rgb = np.clip(rgb, 0.0, 1.0)
-            rgb[alpha[..., 0] == 0] = 0.0
-            array = np.concatenate([rgb, alpha], axis=-1)
+            if self.polar:
+                # 极坐标图全图有效，噪声不加掩膜。
+                if random.random() < 0.5:
+                    array = array + np.random.normal(0.0, 0.02, array.shape).astype(np.float32)
+                array = np.clip(array, 0.0, 1.0)
+            else:
+                rgb = array[..., :3]
+                alpha = array[..., 3:4]
+                if random.random() < 0.5:
+                    rgb += np.random.normal(0.0, 0.02, rgb.shape).astype(np.float32) * (alpha > 0)
+                rgb = np.clip(rgb, 0.0, 1.0)
+                rgb[alpha[..., 0] == 0] = 0.0
+                array = np.concatenate([rgb, alpha], axis=-1)
         tensor = torch.from_numpy(array.transpose(2, 0, 1)).contiguous()
         target = torch.from_numpy(angle_target(angle))
         return tensor, target
@@ -302,6 +320,9 @@ def validate_resume_config(checkpoint_config: object, config: dict[str, Any]) ->
         "train_files",
         "val_files",
     )
+    if "input_representation" in config:
+        # 极坐标管线（version 11）才携带该字段，避免破坏旧 RGBA checkpoint 的续训。
+        keys = keys + ("input_representation", "conv_padding_mode")
     mismatched = [key for key in keys if checkpoint_config.get(key) != config.get(key)]
     if mismatched:
         raise ValueError(f"checkpoint configuration mismatch for: {', '.join(mismatched)}")
@@ -316,6 +337,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--epochs", type=int, default=400)
     parser.add_argument("--threads", type=int, default=DEFAULT_THREADS, help="CPU core count for torch (torch.set_num_threads)")
     parser.add_argument("--seed", type=int, default=SEED)
+    parser.add_argument("--input", choices=("rgba", "polar"), default="rgba",
+                        help="input representation: rgba ring crops (default) or polar unwraps")
     parser.add_argument("--no-rotation", action="store_true",
                         help="disable rotation augmentation (noise only)")
     parser.add_argument("--smoke", action="store_true", help="run one epoch with the normal training path")
@@ -338,10 +361,17 @@ def main() -> None:
     torch.set_num_threads(args.threads)
     seed_everything(args.seed)
     device = choose_device(args.device)
-    train_names = png_names(TRAIN_DIR)
-    val_names = png_names(VAL_DIR)
+    polar = args.input == "polar"
+    train_dir = POLAR_TRAIN_DIR if polar else TRAIN_DIR
+    val_dir = POLAR_VAL_DIR if polar else VAL_DIR
+    train_names = png_names(train_dir)
+    val_names = png_names(val_dir)
     if not train_names or not val_names:
-        raise SystemExit("missing data/train or data/val PNG files; run split_dataset.py first")
+        raise SystemExit(
+            f"missing {train_dir} or {val_dir} PNG files; "
+            f"run unwrap_polar.py + split_dataset.py --input polar first" if polar else
+            f"missing {train_dir} or {val_dir} PNG files; run split_dataset.py first"
+        )
 
     output_dir = args.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -360,15 +390,27 @@ def main() -> None:
                 "use --resume or choose an empty --output-dir"
             )
 
+    if polar:
+        config_input = {
+            "version": 11,
+            "input_shape": [3, 44, 360],
+            "input_scaling": "RGB uint8 / 255",
+            "input_representation": "polar_unwrap_rgb_360x44 (angle->x, 1 deg/column, clockwise, north at column 0; radius->y, inner at top)",
+            "conv_padding_mode": "circular",
+        }
+    else:
+        config_input = {
+            "version": 10,
+            "input_shape": [4, 112, 112],
+            "input_scaling": "RGBA uint8 / 255",
+        }
     config: dict[str, Any] = {
-        "version": 10,
+        **config_input,
         "seed": args.seed,
         "threads": args.threads,
         "device": str(device),
-        "input_shape": [4, 112, 112],
-        "input_scaling": "RGBA uint8 / 255",
         "model": "AngleCNN",
-        "trainable_parameters": EXPECTED_PARAMETER_COUNT,
+        "trainable_parameters": expected_parameter_count(3 if polar else 4),
         "batch_size": args.batch_size,
         "max_epochs": args.epochs,
         "optimizer": "AdamW",
@@ -378,17 +420,25 @@ def main() -> None:
         "early_stopping_patience": EARLY_STOP_PATIENCE,
         "loss": "MSE(normalize([raw_sin, raw_cos]), [target_sin, target_cos]) = 2-2cos(dtheta)",
         "augmentation": {
-            "rgb_gaussian_noise": {"probability": 0.5, "sigma": 0.02},
-            "clockwise_rotation": {"probability": 0.0 if args.no_rotation else 0.5, "degrees": "15-multiples 15..345 (24 directions); 90-multiples via lossless np.rot90, others via PIL BICUBIC"},
+            "rgb_gaussian_noise": {"probability": 0.5, "sigma": 0.02,
+                                   "masked_to_ring_alpha": not polar},
+            "clockwise_rotation": {
+                "probability": 0.0 if args.no_rotation else 0.5,
+                "degrees": (
+                    "15-multiples 15..345 (24 directions); lossless np.roll on the 1 deg/column angular axis"
+                    if polar else
+                    "15-multiples 15..345 (24 directions); 90-multiples via lossless np.rot90, others via PIL BICUBIC"
+                ),
+            },
         },
         "train_count": len(train_names),
         "val_count": len(val_names),
         "train_files": train_names,
         "val_files": val_names,
     }
-    model = AngleCNN().to(device)
+    model = (AngleCNN(in_channels=3, padding_mode="circular") if polar else AngleCNN()).to(device)
     parameter_count = count_trainable_parameters(model)
-    if parameter_count != EXPECTED_PARAMETER_COUNT:
+    if parameter_count != expected_parameter_count(3 if polar else 4):
         raise RuntimeError(f"unexpected parameter count: {parameter_count}")
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=SCHEDULER_PATIENCE, min_lr=1e-6)
@@ -396,7 +446,7 @@ def main() -> None:
     train_generator = torch.Generator()
     train_generator.manual_seed(args.seed)
     train_loader = make_loader(
-        AngleDataset(TRAIN_DIR, train_names, True, rotate=not args.no_rotation),
+        AngleDataset(train_dir, train_names, True, rotate=not args.no_rotation, polar=polar),
         args.batch_size,
         True,
         args.seed,
@@ -404,7 +454,7 @@ def main() -> None:
         train_generator,
     )
     val_loader = make_loader(
-        NamedDataset(AngleDataset(VAL_DIR, val_names, False)),
+        NamedDataset(AngleDataset(val_dir, val_names, False, polar=polar)),
         args.batch_size,
         False,
         args.seed,
