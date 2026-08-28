@@ -10,7 +10,7 @@ gamescope 实例通过 MaaToolkitGamescopeInstanceFindAll 自动发现：每个�
 PipeWire 节点 ID（gamescope_pipewire 协议）和同名 gamescope-<n>-ei EIS
 socket 路径。默认自动选择唯一的实例，也可用 --display / --node-id 指定。
 
-预处理与训练数据完全一致（见 crop_ring.py）：ROI（中心 (108,111)、内径 12、
+预处理与训练数据完全一致（见 prepare_data.py）：ROI（中心 (108,111)、内径 12、
 外径 56，720p 基准）按实际截图尺寸等比缩放，裁 112x112 外接正方形，环形硬
 掩膜，RGBA 输出，透明处 RGB 清零。缩放后的环先按原始分辨率裁出，再缩放至
 112x112 输入模型；若实际分辨率恰为 1280x720，则与训练预处理逐像素一致。

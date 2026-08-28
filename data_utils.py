@@ -14,23 +14,24 @@ from typing import Iterable
 import numpy as np
 from PIL import Image
 
-ANGLE_RE = re.compile(r"_r(\d+)\.png$")
+ANGLE_RE = re.compile(r"_r(\d+(?:\.\d+)?)\.png$")
 SEED = 42
 IMAGE_SIZE = (112, 112)
 POLAR_IMAGE_SIZE = (360, 44)  # PIL (width, height)：1°/列，1px/行
 
 
-def parse_angle(path: Path) -> int:
+def parse_angle(path: Path) -> float:
+    """从文件名的 `_r<角度>.png` 后缀解析角度；标注可带一位小数。"""
     match = ANGLE_RE.search(path.name)
     if match is None:
         raise ValueError(f"cannot parse angle from filename: {path.name}")
-    angle = int(match.group(1))
+    angle = float(match.group(1))
     if not 0 <= angle < 360:
         raise ValueError(f"angle out of range in filename: {path.name}")
     return angle
 
 
-def angle_target(angle: int) -> np.ndarray:
+def angle_target(angle: float) -> np.ndarray:
     radians = math.radians(angle)
     return np.asarray([math.sin(radians), math.cos(radians)], dtype=np.float32)
 

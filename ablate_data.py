@@ -134,7 +134,7 @@ def stratified_subset(names: list[str], fraction: float, seed: int = 42) -> list
     """30-degree-bin stratified subset; larger fractions nest smaller ones."""
     bins: dict[int, list[str]] = defaultdict(list)
     for name in names:
-        bins[parse_angle(Path(name)) // 30].append(name)
+        bins[int(parse_angle(Path(name)) // 30)].append(name)
     rng = random.Random(seed)
     for bucket in bins.values():
         rng.shuffle(bucket)

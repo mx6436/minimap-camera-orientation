@@ -33,8 +33,6 @@ from model import AngleCNN, expected_parameter_count, count_trainable_parameters
 ROOT = Path(__file__).resolve().parent
 TRAIN_DIR = ROOT / "data" / "train"
 VAL_DIR = ROOT / "data" / "val"
-POLAR_TRAIN_DIR = ROOT / "data" / "train_polar"
-POLAR_VAL_DIR = ROOT / "data" / "val_polar"
 ARTIFACT_NAMES = (
     "best.pt",
     "last.pt",
@@ -362,15 +360,13 @@ def main() -> None:
     seed_everything(args.seed)
     device = choose_device(args.device)
     polar = args.input == "polar"
-    train_dir = POLAR_TRAIN_DIR if polar else TRAIN_DIR
-    val_dir = POLAR_VAL_DIR if polar else VAL_DIR
+    train_dir = TRAIN_DIR
+    val_dir = VAL_DIR
     train_names = png_names(train_dir)
     val_names = png_names(val_dir)
     if not train_names or not val_names:
         raise SystemExit(
-            f"missing {train_dir} or {val_dir} PNG files; "
-            f"run unwrap_polar.py + split_dataset.py --input polar first" if polar else
-            f"missing {train_dir} or {val_dir} PNG files; run split_dataset.py first"
+            f"missing {train_dir} or {val_dir} PNG files; run prepare_data.py --input {'polar' if polar else 'rgba'} first"
         )
 
     output_dir = args.output_dir.resolve()
