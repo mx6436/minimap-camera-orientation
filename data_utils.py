@@ -16,7 +16,6 @@ from PIL import Image
 
 ANGLE_RE = re.compile(r"_r(\d+(?:\.\d+)?)\.png$")
 SEED = 42
-IMAGE_SIZE = (112, 112)
 POLAR_IMAGE_SIZE = (360, 44)  # PIL (width, height)：1°/列，1px/行
 
 
@@ -53,19 +52,6 @@ def decode_angle(outputs: np.ndarray) -> np.ndarray:
 def round_angle(angles: np.ndarray | float) -> np.ndarray | int:
     rounded = np.floor(np.asarray(angles, dtype=np.float64) + 0.5).astype(np.int64) % 360
     return int(rounded) if rounded.ndim == 0 else rounded
-
-
-def load_rgba(path: Path) -> np.ndarray:
-    with Image.open(path) as image:
-        if image.format != "PNG":
-            raise ValueError(f"{path}: expected PNG, got {image.format}")
-        if image.size != IMAGE_SIZE:
-            raise ValueError(f"{path}: expected 112x112, got {image.size}")
-        if image.mode != "RGBA":
-            raise ValueError(f"{path}: expected RGBA, got {image.mode}")
-        array = np.asarray(image, dtype=np.uint8).copy()
-    array[array[..., 3] == 0, :3] = 0
-    return array
 
 
 def load_rgb(path: Path) -> np.ndarray:

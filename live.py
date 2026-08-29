@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""MaaFw 实时截图 → 环形小地图预处理 → AngleCNN 角度预测 → 单窗口实时绘制。
+"""MaaFw 实时截图 → 极坐标展开 → AngleCNN 角度预测 → 单窗口实时绘制。
 
 截图通道：MaaFramework Python 绑定（MaaFw）的 Linux 控制器，采用与
 MaaEnd 的 Linux-Gamescope 控制器一致的方式：PipeWire 会话 daemon 节点
@@ -10,12 +10,14 @@ gamescope 实例通过 MaaToolkitGamescopeInstanceFindAll 自动发现：每个�
 PipeWire 节点 ID（gamescope_pipewire 协议）和同名 gamescope-<n>-ei EIS
 socket 路径。默认自动选择唯一的实例，也可用 --display / --node-id 指定。
 
-预处理与训练数据完全一致（见 prepare_data.py）：ROI（中心 (108,111)、内径 12、
-外径 56，720p 基准）按实际截图尺寸等比缩放，裁 112x112 外接正方形，环形硬
-掩膜，RGBA 输出，透明处 RGB 清零。缩放后的环先按原始分辨率裁出，再缩放至
-112x112 输入模型；若实际分辨率恰为 1280x720，则与训练预处理逐像素一致。
+预处理与训练数据完全一致（见 prepare_data.py / polar.py）：按 720p 基准
+ROI（中心 (108,111)、内径 12、外径 56）随实际截图尺寸等比缩放，将环形
+区域极坐标展开为 360x44 RGB 输入模型；实际分辨率恰为 1280x720 时与训练
+预处理逐像素一致。overlay 窗口另绘展示用圆形裁剪（完整圆盘，含中心圆
+与箭头）——仅给人看，不进模型，模型永远看不到位于中心圆内的箭头（见
+CONTEXT.md「采样一致性假象」）。
 
-窗口仅绘制一条角度直线（0°=正上方，顺时针增加）与角度文字。
+窗口绘制放大圆盘、一条角度直线（0°=正上方，顺时针增加）与角度文字。
 """
 
 from __future__ import annotations
@@ -32,14 +34,14 @@ import torch
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
-from crop_ring import ROI_CENTER, INNER_R, OUTER_R  # noqa: E402
+import polar  # noqa: E402
 from data_utils import decode_angle, round_angle  # noqa: E402
 from model import AngleCNN, EXPECTED_PARAMETER_COUNT, count_trainable_parameters  # noqa: E402
 from train import choose_device, load_checkpoint  # noqa: E402
 
-BASE_W, BASE_H = 1280, 720  # 训练基准分辨率
-DISPLAY_SCALE = 6  # 112x112 裁图放大倍数
-ARROW_LENGTH = 42  # 箭头长度（112x112 裁图坐标系内）
+DISPLAY_BOX = 112  # 展示用圆盘边长（外径 56 的外接正方形，720p 基准）
+DISPLAY_SCALE = 6  # 圆盘放大倍数
+ARROW_LENGTH = 42  # 角度直线长度（112x112 圆盘坐标系内）
 
 # Linux 控制器 config_json 字段值，见 MaaFramework docs 2.4-控制方式说明：
 # Screencap: Wlr=1, PipeWire=4；Input: Wlr=1, UInput=2, Libei=4
@@ -91,28 +93,20 @@ def prepare_model(checkpoint: Path, device: str | None) -> torch.nn.Module:
     return model
 
 
-def scaled_roi(frame_shape: tuple[int, int]) -> tuple[float, float, float, float]:
-    """按实际截图尺寸等比缩放 ROI。
+def prepare_input(frame: np.ndarray) -> tuple[np.ndarray, np.ndarray, float, float]:
+    """MaaFw BGR 帧 -> (模型输入 360x44 RGB, 展示用圆盘 RGBA, 实测外径, 缩放比例)。
 
-    返回 (cx, cy, r_in, r_out)，均为浮点像素坐标；半径按 x 方向缩放，
-    若 y 方向缩放与 x 差异超过 1% 则打印警告（非等比缩放会破坏环形状）。
-    """
-    height, width = frame_shape[:2]
-    sx, sy = width / BASE_W, height / BASE_H
-    if abs(sx - sy) / max(sx, sy) > 0.01:
-        print(f"WARNING: non-uniform scale sx={sx:.4f} sy={sy:.4f}; ring will be distorted")
-    cx, cy = ROI_CENTER[0] * sx, ROI_CENTER[1] * sy
-    return cx, cy, INNER_R * sx, OUTER_R * sx
-
-
-def crop_ring(frame: np.ndarray, box: int) -> tuple[np.ndarray, float, float]:
-    """按训练预处理从一帧截图裁出环形小地图。
-
-    frame: MaaFw 截图（BGR）。返回 (112x112 RGBA 环, 实测环外径, 缩放比例)；
-    缩放比例 = 外径像素 / 56，用于打印核对与训练分布是否吻合。
+    模型输入：按训练预处理把等比缩放后的 ROI 极坐标展开（polar.py）。
+    展示用圆盘：完整圆形裁剪（含中心圆与箭头），仅用于 overlay 显示，
+    不是模型输入。缩放比例 = 外径像素 / 56，用于打印核对与训练分布
+    是否吻合。
     """
     height, width = frame.shape[:2]
-    cx, cy, r_in, r_out = scaled_roi((height, width))
+    cx, cy, r_in, r_out = polar.scaled_roi((height, width))
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+    strip = polar.unwrap(rgb, cx, cy, r_in, r_out)
+
     left = int(round(cx - r_out))
     top = int(round(cy - r_out))
     right = int(round(cx + r_out))
@@ -122,27 +116,22 @@ def crop_ring(frame: np.ndarray, box: int) -> tuple[np.ndarray, float, float]:
             f"ring crop box ({left},{top},{right},{bottom}) does not fit frame {width}x{height}"
         )
 
-    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    box_arr = rgb[top:bottom, left:right].copy()
-
-    # 环形硬掩膜：按像素中心距离平方比较，与 crop_ring.ring_mask 一致。
+    # 展示用圆形掩膜：完整圆盘（d <= r_out），内径孔洞不裁，箭头对人眼可见。
+    box = rgb[top:bottom, left:right].copy()
     xs = np.arange(right - left) + left + 0.5 - cx
     ys = np.arange(bottom - top) + top + 0.5 - cy
     d2 = xs[None, :] ** 2 + ys[:, None] ** 2
-    keep = (d2 >= r_in**2) & (d2 <= r_out**2)
-
-    alpha = (keep * 255).astype(np.uint8)
-    rgba = np.dstack([box_arr, alpha])
-    rgba[alpha == 0, :3] = 0
-
-    if rgba.shape[0] != box or rgba.shape[1] != box:
-        interpolation = cv2.INTER_AREA if rgba.shape[0] > box else cv2.INTER_LINEAR
-        rgba = cv2.resize(rgba, (box, box), interpolation=interpolation)
-    return rgba, float(r_out), r_out / OUTER_R
+    alpha = (d2 <= r_out**2).astype(np.uint8) * 255
+    disc = np.dstack([box, alpha])
+    disc[alpha == 0, :3] = 0
+    if disc.shape[0] != DISPLAY_BOX or disc.shape[1] != DISPLAY_BOX:
+        interpolation = cv2.INTER_AREA if disc.shape[0] > DISPLAY_BOX else cv2.INTER_LINEAR
+        disc = cv2.resize(disc, (DISPLAY_BOX, DISPLAY_BOX), interpolation=interpolation)
+    return strip, disc, float(r_out), r_out / polar.OUTER_R
 
 
-def predict(model: torch.nn.Module, rgba: np.ndarray) -> tuple[float, int]:
-    array = rgba.astype(np.float32) / 255.0
+def predict(model: torch.nn.Module, strip: np.ndarray) -> tuple[float, int]:
+    array = strip.astype(np.float32) / 255.0
     features = torch.from_numpy(array.transpose(2, 0, 1)).unsqueeze(0)
     device = next(model.parameters()).device
     features = features.to(device)
@@ -153,10 +142,10 @@ def predict(model: torch.nn.Module, rgba: np.ndarray) -> tuple[float, int]:
     return continuous, rounded
 
 
-def draw_overlay(ring: np.ndarray, angle: float) -> np.ndarray:
-    """绘制放大环 + 角度直线 + 角度文字。0°=正上，顺时针。"""
-    size = ring.shape[0] * DISPLAY_SCALE
-    display = cv2.resize(ring, (size, size), interpolation=cv2.INTER_NEAREST)
+def draw_overlay(disc: np.ndarray, angle: float) -> np.ndarray:
+    """绘制放大圆盘 + 角度直线 + 角度文字。0°=正上，顺时针。"""
+    size = disc.shape[0] * DISPLAY_SCALE
+    display = cv2.resize(disc, (size, size), interpolation=cv2.INTER_NEAREST)
     display = cv2.cvtColor(display, cv2.COLOR_RGBA2BGR)
     center = (size // 2, size // 2)
     radians = math.radians(angle)
@@ -255,15 +244,15 @@ def main() -> None:
         if frame.size == 0:
             continue
         if not printed_info:
-            _, r_out, scale = crop_ring(frame, 112)
+            _, _, r_out, scale = prepare_input(frame)
             print(
                 f"frame {frame.shape[1]}x{frame.shape[0]}, "
                 f"ring outer radius = {r_out:.1f} px (scale x{scale:.3f})"
             )
             printed_info = True
-        ring, _, _ = crop_ring(frame, 112)
-        angle, _ = predict(model, ring)
-        cv2.imshow("minimap angle", draw_overlay(ring, angle))
+        strip, disc, _, _ = prepare_input(frame)
+        angle, _ = predict(model, strip)
+        cv2.imshow("minimap angle", draw_overlay(disc, angle))
         key = cv2.waitKey(1) & 0xFF
         if key in (ord("q"), 27):
             break

@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Predict an angle for one already-cropped RGBA PNG."""
+"""Predict an angle for one raw screenshot PNG.
+
+The screenshot is preprocessed exactly like the training data (see
+prepare_data.py and polar.py): the ROI is scaled to the actual resolution
+and the ring is unwrapped to a 360x44 RGB polar image.
+"""
 from __future__ import annotations
 
 import argparse
@@ -8,7 +13,8 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from data_utils import decode_angle, load_rgba, round_angle
+import polar
+from data_utils import decode_angle, round_angle
 from model import AngleCNN, EXPECTED_PARAMETER_COUNT, count_trainable_parameters
 from train import load_checkpoint, choose_device
 
@@ -22,13 +28,16 @@ def main() -> None:
     parser.add_argument("--device", default=None)
     args = parser.parse_args()
     device = choose_device(args.device)
-    array = load_rgba(args.image).astype(np.float32) / 255.0
-    features = torch.from_numpy(array.transpose(2, 0, 1)).unsqueeze(0).to(device)
     model = AngleCNN().to(device)
     if count_trainable_parameters(model) != EXPECTED_PARAMETER_COUNT:
         raise RuntimeError("unexpected model parameter count")
     load_checkpoint(args.checkpoint, model, device=device)
     model.eval()
+
+    frame = polar.load_source_rgb(args.image)
+    cx, cy, r_in, r_out = polar.scaled_roi(frame.shape[:2])
+    array = polar.unwrap(frame, cx, cy, r_in, r_out).astype(np.float32) / 255.0
+    features = torch.from_numpy(array.transpose(2, 0, 1)).unsqueeze(0).to(device)
     with torch.no_grad():
         output = model(features).cpu().numpy()
     continuous = float(decode_angle(output)[0])
