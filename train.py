@@ -71,15 +71,22 @@ class AngleDataset(Dataset):
         return tensor, target
 
 
-class AngularMSELoss(nn.Module):
-    """MSE between unit-normalized predictions and unit targets (= 2-2cos dtheta).
+def norm_metrics(outputs: np.ndarray, targets: np.ndarray) -> dict[str, float]:
+    """Norm statistics plus an exact additive split of the raw MSE.
 
-    Output norm is excluded from the objective: decode_angle normalizes anyway,
-    so raw-norm errors are pure noise that used to dominate the loss (~90% of
-    validation MSE) and mask fine angular progress."""
-
-    def forward(self, outputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        return nn.functional.mse_loss(nn.functional.normalize(outputs, dim=-1), targets)
+    |v-y|^2 = (||v||-1)^2 + 2*||v||*(1-cos dtheta); both terms are
+    non-negative, so norm_err_share = mean((||v||-1)^2) / mean(|v-y|^2) is an
+    exact decomposition."""
+    norms = np.linalg.norm(outputs, axis=-1)
+    raw_mse = np.sum((outputs - targets) ** 2, axis=-1)
+    total = float(np.mean(raw_mse))
+    return {
+        "norm_mean": float(np.mean(norms)),
+        "norm_p5": float(np.percentile(norms, 5)),
+        "norm_p95": float(np.percentile(norms, 95)),
+        "raw_mse_total": total,
+        "norm_err_share": float(np.mean((norms - 1.0) ** 2) / total) if total > 0 else 0.0,
+    }
 
 
 def metrics_from_outputs(outputs: np.ndarray, angles: np.ndarray) -> dict[str, float]:
@@ -129,15 +136,19 @@ def eval_loss(model: nn.Module, loader: DataLoader, criterion: nn.Module, device
     total = 0.0
     outputs: list[np.ndarray] = []
     angles: list[np.ndarray] = []
+    targets_list: list[np.ndarray] = []
     with torch.no_grad():
         for features, targets, batch_angles, _batch_names in loader:
             prediction = model(features.to(device))
             total += criterion(prediction, targets.to(device)).item() * len(features)
             outputs.append(prediction.cpu().numpy())
             angles.append(batch_angles.numpy().astype(np.float64))
+            targets_list.append(targets.numpy())
     output_array = np.concatenate(outputs)
     angle_array = np.concatenate(angles)
-    return total / len(loader.dataset), metrics_from_outputs(output_array, angle_array)
+    metrics = metrics_from_outputs(output_array, angle_array)
+    metrics.update(norm_metrics(output_array, np.concatenate(targets_list)))
+    return total / len(loader.dataset), metrics
 
 
 def make_loader(dataset: Dataset, batch_size: int, shuffle: bool, seed: int,
@@ -345,7 +356,7 @@ def main() -> None:
             )
 
     config: dict[str, Any] = {
-        "version": 11,
+        "version": 12,
         "input_shape": [3, 44, 360],
         "input_scaling": "RGB uint8 / 255",
         "input_representation": "polar_unwrap_rgb_360x44 (angle->x, 1 deg/column, clockwise, north at column 0; radius->y, inner at top)",
@@ -362,7 +373,7 @@ def main() -> None:
         "weight_decay": 1e-4,
         "scheduler": {"name": "ReduceLROnPlateau", "patience": SCHEDULER_PATIENCE, "factor": 0.5, "min_lr": 1e-6},
         "early_stopping_patience": EARLY_STOP_PATIENCE,
-        "loss": "MSE(normalize([raw_sin, raw_cos]), [target_sin, target_cos]) = 2-2cos(dtheta)",
+        "loss": "MSE([raw_sin, raw_cos], [target_sin, target_cos])",
         "augmentation": {
             "rgb_gaussian_noise": {"probability": 0.5, "sigma": 0.02,
                                    "masked_to_ring_alpha": False},
@@ -382,7 +393,7 @@ def main() -> None:
         raise RuntimeError(f"unexpected parameter count: {parameter_count}")
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=SCHEDULER_PATIENCE, min_lr=1e-6)
-    criterion = AngularMSELoss()
+    criterion = nn.MSELoss()
     train_generator = torch.Generator()
     train_generator.manual_seed(args.seed)
     train_loader = make_loader(
