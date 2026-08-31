@@ -59,12 +59,12 @@ ARTIFACT_NAMES = ("best.pt", "config.json", "history.json", "summary.json")
 
 CONFIG_DEFAULTS: dict[str, Any] = {
     "batch_size": 32,
-    "epochs": 400,
+    "epochs": 200,
     "seed": SEED,
     "lr": 1e-3,
     "weight_decay": 1e-4,
-    "scheduler_patience": 20,
-    "early_stop_patience": 40,
+    "scheduler_patience": 8,
+    "early_stop_patience": 25,
     "dropout": DEFAULT_DROPOUT,
     "norm_lambda": 0.0,
     "head_grid": list(DEFAULT_HEAD_GRID),

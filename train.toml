@@ -3,14 +3,14 @@
 
 # 训练规模
 batch_size = 32
-epochs = 400
+epochs = 200
 seed = 42
 
 # 优化
 lr = 1e-3
 weight_decay = 1e-4
-scheduler_patience = 20
-early_stop_patience = 40
+scheduler_patience = 8
+early_stop_patience = 25
 
 # 模型与损失
 dropout = 0.0
