@@ -36,8 +36,7 @@ sys.path.insert(0, str(ROOT))
 
 import polar  # noqa: E402
 from data_utils import decode_angle, round_angle  # noqa: E402
-from model import AngleCNN, EXPECTED_PARAMETER_COUNT, count_trainable_parameters  # noqa: E402
-from train import choose_device, load_checkpoint  # noqa: E402
+from model import choose_device, load_model  # noqa: E402
 
 DISPLAY_BOX = 112  # 展示用圆盘边长（外径 56 的外接正方形，720p 基准）
 DISPLAY_SCALE = 6  # 圆盘放大倍数
@@ -84,13 +83,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def prepare_model(checkpoint: Path, device: str | None) -> torch.nn.Module:
-    device = choose_device(device)
-    model = AngleCNN().to(device)
-    if count_trainable_parameters(model) != EXPECTED_PARAMETER_COUNT:
-        raise RuntimeError("unexpected model parameter count")
-    load_checkpoint(checkpoint, model, device=device)
-    model.eval()
-    return model
+    return load_model(checkpoint, device=choose_device(device))
 
 
 def prepare_input(frame: np.ndarray) -> tuple[np.ndarray, np.ndarray, float, float]:
@@ -130,7 +123,11 @@ def prepare_input(frame: np.ndarray) -> tuple[np.ndarray, np.ndarray, float, flo
     return strip, disc, float(r_out), r_out / polar.OUTER_R
 
 
-def predict(model: torch.nn.Module, strip: np.ndarray) -> tuple[float, int]:
+# 模型输出 (sin, cos) 向量的模长低于该阈值视为低置信度，overlay 用黄色标注
+CONFIDENCE_THRESHOLD = 0.7
+
+
+def predict(model: torch.nn.Module, strip: np.ndarray) -> tuple[float, int, float]:
     array = strip.astype(np.float32) / 255.0
     features = torch.from_numpy(array.transpose(2, 0, 1)).unsqueeze(0)
     device = next(model.parameters()).device
@@ -139,11 +136,17 @@ def predict(model: torch.nn.Module, strip: np.ndarray) -> tuple[float, int]:
         output = model(features).cpu().numpy()
     continuous = float(decode_angle(output)[0])
     rounded = int(round_angle(continuous))
-    return continuous, rounded
+    norm = float(np.linalg.norm(output[0]))
+    return continuous, rounded, norm
 
 
-def draw_overlay(disc: np.ndarray, angle: float) -> np.ndarray:
-    """绘制放大圆盘 + 角度直线 + 角度文字。0°=正上，顺时针。"""
+def draw_overlay(disc: np.ndarray, angle: float, norm: float) -> np.ndarray:
+    """绘制放大圆盘 + 角度直线 + 角度文字。0°=正上，顺时针。
+
+    模型输出向量模长 < CONFIDENCE_THRESHOLD 时（低置信度），直线与文字
+    标为黄色，否则红色。
+    """
+    color = (0, 255, 255) if norm < CONFIDENCE_THRESHOLD else (0, 0, 255)
     size = disc.shape[0] * DISPLAY_SCALE
     display = cv2.resize(disc, (size, size), interpolation=cv2.INTER_NEAREST)
     display = cv2.cvtColor(display, cv2.COLOR_RGBA2BGR)
@@ -154,14 +157,14 @@ def draw_overlay(disc: np.ndarray, angle: float) -> np.ndarray:
         int(round(center[0] + math.sin(radians) * length)),
         int(round(center[1] - math.cos(radians) * length)),
     )
-    cv2.line(display, center, tip, (0, 0, 255), max(2, DISPLAY_SCALE // 3), cv2.LINE_AA)
+    cv2.line(display, center, tip, color, max(2, DISPLAY_SCALE // 3), cv2.LINE_AA)
     cv2.putText(
         display,
-        f"angle={angle:.1f} (rounded {round_angle(angle)})",
+        f"angle={angle:.1f} (rounded {round_angle(angle)}) norm={norm:.2f}",
         (12, size - 16),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.7,
-        (0, 0, 255),
+        color,
         2,
         cv2.LINE_AA,
     )
@@ -251,8 +254,8 @@ def main() -> None:
             )
             printed_info = True
         strip, disc, _, _ = prepare_input(frame)
-        angle, _ = predict(model, strip)
-        cv2.imshow("minimap angle", draw_overlay(disc, angle))
+        angle, _, norm = predict(model, strip)
+        cv2.imshow("minimap angle", draw_overlay(disc, angle, norm))
         key = cv2.waitKey(1) & 0xFF
         if key in (ord("q"), 27):
             break

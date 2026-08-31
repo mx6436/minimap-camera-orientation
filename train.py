@@ -1,16 +1,25 @@
 #!/usr/bin/env python3
-"""Train the angle regression CNN on data/train and validate on data/val."""
+"""Train the angle regression CNN on data/train and validate on data/val.
+
+Run configuration (model, loss, optimization, augmentation) lives in a TOML
+file, train.toml by default (see --config); the CLI only carries invocation
+plumbing. There is no resume support: a checkpoint holds just the model
+weights and the architecture kwargs, so an interrupted run restarts from
+scratch (see docs/adr/0003).
+"""
 from __future__ import annotations
 
 import argparse
 import os
 import random
 import tempfile
+import tomllib
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
@@ -26,20 +35,44 @@ from data_utils import (
     round_angle,
     seed_everything,
 )
-from model import AngleCNN, EXPECTED_PARAMETER_COUNT, count_trainable_parameters
+from model import (
+    DEFAULT_DROPOUT,
+    DEFAULT_HEAD_CHANNELS,
+    DEFAULT_HEAD_GRID,
+    DEFAULT_NORM,
+    DEFAULT_RADIUS_POOL,
+    AngleCNN,
+    EXPECTED_PARAMETER_COUNT,
+    choose_device,
+    count_trainable_parameters,
+    load_model,
+)
 
 ROOT = Path(__file__).resolve().parent
 TRAIN_DIR = ROOT / "data" / "train"
 VAL_DIR = ROOT / "data" / "val"
-ARTIFACT_NAMES = (
-    "best.pt",
-    "last.pt",
-    "history.json",
-    "config.json",
-)
-EARLY_STOP_PATIENCE = 40
-SCHEDULER_PATIENCE = 20
+DEFAULT_OUTPUT_DIR = ROOT / "runs" / "production_001"
+DEFAULT_CONFIG_PATH = ROOT / "train.toml"
 DEFAULT_THREADS = 16
+# 启动守卫检查的产物清单：目录里已有任何一个就拒绝开跑，防止覆盖。
+ARTIFACT_NAMES = ("best.pt", "config.json", "history.json", "summary.json")
+
+CONFIG_DEFAULTS: dict[str, Any] = {
+    "batch_size": 32,
+    "epochs": 400,
+    "seed": SEED,
+    "lr": 1e-3,
+    "weight_decay": 1e-4,
+    "scheduler_patience": 20,
+    "early_stop_patience": 40,
+    "dropout": DEFAULT_DROPOUT,
+    "norm_lambda": 0.0,
+    "head_grid": list(DEFAULT_HEAD_GRID),
+    "head_channels": DEFAULT_HEAD_CHANNELS,
+    "radius_pool": DEFAULT_RADIUS_POOL,
+    "norm": DEFAULT_NORM,
+    "rotation": True,
+}
 
 
 class AngleDataset(Dataset):
@@ -71,21 +104,80 @@ class AngleDataset(Dataset):
         return tensor, target
 
 
+def load_config(path: Path) -> dict[str, Any]:
+    """Read the TOML config and merge it over CONFIG_DEFAULTS.
+
+    Unknown keys are fatal: a typo like "norm_lamda" must not silently fall
+    back to the default and waste a run.
+    """
+    with path.open("rb") as handle:
+        values = tomllib.load(handle)
+    unknown = sorted(set(values) - set(CONFIG_DEFAULTS))
+    if unknown:
+        raise SystemExit(f"unknown config keys in {path}: {', '.join(unknown)}")
+    config = {**CONFIG_DEFAULTS, **values}
+    validate_config(config)
+    return config
+
+
+def validate_config(config: dict[str, Any]) -> None:
+    if config["epochs"] < 1 or config["batch_size"] < 1:
+        raise SystemExit("epochs/batch_size must be positive")
+    if not 0.0 <= config["dropout"] < 1.0:
+        raise SystemExit("dropout must be in [0, 1)")
+    if config["norm_lambda"] < 0.0:
+        raise SystemExit("norm_lambda must be non-negative")
+    if len(config["head_grid"]) != 2 or min(config["head_grid"]) < 1:
+        raise SystemExit("head_grid must be two positive integers")
+    if config["head_channels"] < 0:
+        raise SystemExit("head_channels must be non-negative (0 keeps the 256 trunk channels)")
+    if config["radius_pool"] not in ("max", "avg"):
+        raise SystemExit("radius_pool must be 'max' or 'avg'")
+    if config["norm"] not in ("batch", "group"):
+        raise SystemExit("norm must be 'batch' or 'group'")
+    if config["lr"] <= 0.0 or config["weight_decay"] < 0.0:
+        raise SystemExit("lr must be positive and weight_decay non-negative")
+    if config["scheduler_patience"] < 1 or config["early_stop_patience"] < 1:
+        raise SystemExit("scheduler_patience/early_stop_patience must be positive")
+
+
+def _rank_data(values: np.ndarray) -> np.ndarray:
+    order = np.argsort(values, kind="stable")
+    ranks = np.empty(len(values), dtype=np.float64)
+    ranks[order] = np.arange(len(values), dtype=np.float64)
+    return ranks
+
+
+def _spearman(a: np.ndarray, b: np.ndarray) -> float:
+    if len(a) < 2:
+        return 0.0
+    return float(np.corrcoef(_rank_data(a), _rank_data(b))[0, 1])
+
+
 def norm_metrics(outputs: np.ndarray, targets: np.ndarray) -> dict[str, float]:
     """Norm statistics plus an exact additive split of the raw MSE.
 
     |v-y|^2 = (||v||-1)^2 + 2*||v||*(1-cos dtheta); both terms are
     non-negative, so norm_err_share = mean((||v||-1)^2) / mean(|v-y|^2) is an
-    exact decomposition."""
+    exact decomposition.
+
+    The angle between v and the unit target equals the decoded circular error,
+    so arccos alignment doubles as a per-sample error for norm-dial tracking."""
     norms = np.linalg.norm(outputs, axis=-1)
     raw_mse = np.sum((outputs - targets) ** 2, axis=-1)
     total = float(np.mean(raw_mse))
+    align = np.sum(outputs * targets, axis=-1) / np.maximum(norms, 1e-12)
+    angular = np.degrees(np.arccos(np.clip(align, -1.0, 1.0)))
+    low = norms <= np.percentile(norms, 20)
     return {
         "norm_mean": float(np.mean(norms)),
         "norm_p5": float(np.percentile(norms, 5)),
         "norm_p95": float(np.percentile(norms, 95)),
         "raw_mse_total": total,
         "norm_err_share": float(np.mean((norms - 1.0) ** 2) / total) if total > 0 else 0.0,
+        "spearman_norm_err": _spearman(norms, angular),
+        "norm_low20_mae": float(np.mean(angular[low])),
+        "norm_low20_gt10_share": float(np.mean(angular[low] > 10.0)),
     }
 
 
@@ -118,20 +210,33 @@ class NamedDataset(Dataset):
         return features, target, parse_angle(Path(name)), name
 
 
+def combined_loss(outputs: torch.Tensor, targets: torch.Tensor, norm_lambda: float) -> torch.Tensor:
+    """MSE on raw sin/cos plus an optional quadratic norm anchor.
+
+    With the anchor, the per-sample equilibrium for direction alignment c is
+    r = (c + 2*lam) / (1 + 2*lam): r = 1 when c = 1, monotone in c, floored at
+    2*lam/(1+2*lam) for fully uncertain samples."""
+    mse = F.mse_loss(outputs, targets)
+    if norm_lambda <= 0.0:
+        return mse
+    norms = torch.linalg.vector_norm(outputs, dim=-1)
+    return mse + norm_lambda * ((norms - 1.0) ** 2).mean()
+
+
 def train_epoch(model: nn.Module, loader: DataLoader, optimizer: torch.optim.Optimizer,
-                criterion: nn.Module, device: torch.device) -> float:
+                norm_lambda: float, device: torch.device) -> float:
     model.train()
     total = 0.0
     for features, targets in loader:
         optimizer.zero_grad(set_to_none=True)
-        loss = criterion(model(features.to(device)), targets.to(device))
+        loss = combined_loss(model(features.to(device)), targets.to(device), norm_lambda)
         loss.backward()
         optimizer.step()
         total += loss.item() * len(features)
     return total / len(loader.dataset)
 
 
-def eval_loss(model: nn.Module, loader: DataLoader, criterion: nn.Module, device: torch.device) -> tuple[float, dict[str, float]]:
+def eval_loss(model: nn.Module, loader: DataLoader, norm_lambda: float, device: torch.device) -> tuple[float, dict[str, float]]:
     model.eval()
     total = 0.0
     outputs: list[np.ndarray] = []
@@ -140,7 +245,7 @@ def eval_loss(model: nn.Module, loader: DataLoader, criterion: nn.Module, device
     with torch.no_grad():
         for features, targets, batch_angles, _batch_names in loader:
             prediction = model(features.to(device))
-            total += criterion(prediction, targets.to(device)).item() * len(features)
+            total += combined_loss(prediction, targets.to(device), norm_lambda).item() * len(features)
             outputs.append(prediction.cpu().numpy())
             angles.append(batch_angles.numpy().astype(np.float64))
             targets_list.append(targets.numpy())
@@ -166,46 +271,10 @@ def make_loader(dataset: Dataset, batch_size: int, shuffle: bool, seed: int,
     )
 
 
-def capture_rng_state(train_generator: torch.Generator) -> dict[str, Any]:
-    state: dict[str, Any] = {
-        "python": random.getstate(),
-        "numpy": np.random.get_state(),
-        "torch": torch.get_rng_state(),
-        "train_loader": train_generator.get_state(),
-    }
-    if torch.cuda.is_available():
-        state["cuda"] = torch.cuda.get_rng_state_all()
-    return state
-
-
-def restore_rng_state(state: object, train_generator: torch.Generator) -> None:
-    if not isinstance(state, dict):
-        raise ValueError("checkpoint does not contain resumable RNG state")
-    try:
-        random.setstate(state["python"])
-        np.random.set_state(state["numpy"])
-        torch.set_rng_state(state["torch"].cpu())
-        train_generator.set_state(state["train_loader"].cpu())
-        if torch.cuda.is_available() and "cuda" in state:
-            torch.cuda.set_rng_state_all([value.cpu() for value in state["cuda"]])
-    except (KeyError, TypeError, ValueError) as error:
-        raise ValueError("checkpoint RNG state is incomplete or incompatible") from error
-
-
-def save_checkpoint(path: Path, model: nn.Module, optimizer: torch.optim.Optimizer, scheduler: Any,
-                    epoch: int, best_val: float, bad_epochs: int, config: dict[str, Any],
-                    history: list[dict[str, Any]], train_generator: torch.Generator) -> None:
-    checkpoint = {
-        "model": model.state_dict(),
-        "optimizer": optimizer.state_dict(),
-        "scheduler": scheduler.state_dict(),
-        "epoch": epoch,
-        "best_val_circular_mae": best_val,
-        "early_stop_bad_epochs": bad_epochs,
-        "config": config,
-        "history": history,
-        "rng_state": capture_rng_state(train_generator),
-    }
+def save_checkpoint(path: Path, model: nn.Module, model_config: dict[str, Any]) -> None:
+    """Write the two-key checkpoint: weights plus the kwargs that rebuild the
+    architecture. Atomic via temp file + rename."""
+    checkpoint = {"model": model.state_dict(), "config": model_config}
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
     os.close(fd)
@@ -256,80 +325,30 @@ def plot_loss_curves(output_dir: Path, history: list[dict[str, Any]]) -> None:
     print(f"saved loss curve: {path}")
 
 
-def load_checkpoint(path: Path, model: nn.Module, optimizer: torch.optim.Optimizer | None = None,
-                    scheduler: Any = None, device: torch.device | str = "cpu") -> dict[str, Any]:
-    try:
-        checkpoint = torch.load(path, map_location=device, weights_only=False)
-    except TypeError:
-        checkpoint = torch.load(path, map_location=device)
-    if not isinstance(checkpoint, dict) or "model" not in checkpoint:
-        raise ValueError(f"invalid checkpoint: {path}")
-    model.load_state_dict(checkpoint["model"])
-    if optimizer is not None and "optimizer" in checkpoint:
-        optimizer.load_state_dict(checkpoint["optimizer"])
-    if scheduler is not None and "scheduler" in checkpoint:
-        scheduler.load_state_dict(checkpoint["scheduler"])
-    return checkpoint
-
-
-def validate_resume_config(checkpoint_config: object, config: dict[str, Any]) -> None:
-    if not isinstance(checkpoint_config, dict):
-        raise ValueError("checkpoint config is missing or invalid")
-    keys = (
-        "version",
-        "seed",
-        "input_shape",
-        "model",
-        "trainable_parameters",
-        "batch_size",
-        "threads",
-        "optimizer",
-        "learning_rate",
-        "weight_decay",
-        "scheduler",
-        "early_stopping_patience",
-        "loss",
-        "augmentation",
-        "train_files",
-        "val_files",
-        "input_representation",
-        "conv_padding_mode",
-    )
-    mismatched = [key for key in keys if checkpoint_config.get(key) != config.get(key)]
-    if mismatched:
-        raise ValueError(f"checkpoint configuration mismatch for: {', '.join(mismatched)}")
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output-dir", type=Path, default=ROOT / "runs" / "production_001")
-    parser.add_argument("--resume", type=Path, nargs="?", const="__DEFAULT__", help="resume last checkpoint, or provide a checkpoint path")
+    parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH,
+                        help="training config TOML (model/loss/optimization/augmentation)")
+    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--device", default=None, help="auto, cpu, or cuda")
-    parser.add_argument("--batch-size", type=int, default=32)
-    parser.add_argument("--epochs", type=int, default=400)
-    parser.add_argument("--threads", type=int, default=DEFAULT_THREADS, help="CPU core count for torch (torch.set_num_threads)")
-    parser.add_argument("--seed", type=int, default=SEED)
-    parser.add_argument("--no-rotation", action="store_true",
-                        help="disable rotation augmentation (noise only)")
+    parser.add_argument("--threads", type=int, default=DEFAULT_THREADS,
+                        help="CPU core count for torch (torch.set_num_threads)")
     parser.add_argument("--smoke", action="store_true", help="run one epoch with the normal training path")
     return parser.parse_args()
 
 
-def choose_device(value: str | None) -> torch.device:
-    if value in (None, "auto"):
-        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    device = torch.device(value)
-    if device.type == "cuda" and not torch.cuda.is_available():
-        raise RuntimeError("CUDA requested but is not available")
-    return device
-
-
 def main() -> None:
     args = parse_args()
-    if args.epochs < 1 or args.batch_size < 1 or args.threads < 1:
-        raise SystemExit("--epochs/--batch-size/--threads must be positive")
+    if args.threads < 1:
+        raise SystemExit("--threads must be positive")
+    try:
+        config = load_config(args.config)
+    except FileNotFoundError:
+        raise SystemExit(f"config file not found: {args.config}")
+    except tomllib.TOMLDecodeError as error:
+        raise SystemExit(f"invalid TOML in {args.config}: {error}")
     torch.set_num_threads(args.threads)
-    seed_everything(args.seed)
+    seed_everything(config["seed"])
     device = choose_device(args.device)
     train_names = png_names(TRAIN_DIR)
     val_names = png_names(VAL_DIR)
@@ -340,45 +359,54 @@ def main() -> None:
 
     output_dir = args.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
-    resume_path = args.resume
-    if resume_path is not None:
-        resume_path = output_dir / "last.pt" if str(resume_path) == "__DEFAULT__" else resume_path.resolve()
-        if resume_path.parent != output_dir:
-            raise ValueError("--resume checkpoint must be inside --output-dir")
-        if not resume_path.is_file():
-            raise FileNotFoundError(f"resume checkpoint not found: {resume_path}")
-    else:
-        existing = [name for name in ARTIFACT_NAMES if (output_dir / name).exists()]
-        if existing:
-            raise FileExistsError(
-                f"{output_dir} already contains experiment artifacts ({', '.join(existing)}); "
-                "use --resume or choose an empty --output-dir"
-            )
+    existing = [name for name in ARTIFACT_NAMES if (output_dir / name).exists()]
+    if existing:
+        raise FileExistsError(
+            f"{output_dir} already contains experiment artifacts ({', '.join(existing)}); "
+            "choose an empty --output-dir"
+        )
 
-    config: dict[str, Any] = {
-        "version": 12,
+    # Checkpoint payload: exactly what load_model needs to rebuild the model.
+    model_config = {
+        "dropout": config["dropout"],
+        "head_grid": list(config["head_grid"]),
+        "head_channels": config["head_channels"] or None,
+        "radius_pool": config["radius_pool"],
+        "norm": config["norm"],
+    }
+    loss_description = "MSE([raw_sin, raw_cos], [target_sin, target_cos])"
+    if config["norm_lambda"] > 0.0:
+        loss_description += f" + {config['norm_lambda']:g}*(||v||-1)^2"
+    record: dict[str, Any] = {
+        "version": 15,
+        "head_grid": list(config["head_grid"]),
+        "head_channels": config["head_channels"] or None,
+        "radius_pool": config["radius_pool"],
+        "norm": config["norm"],
+        "dropout": config["dropout"],
+        "norm_lambda": config["norm_lambda"],
+        "loss": loss_description,
         "input_shape": [3, 44, 360],
         "input_scaling": "RGB uint8 / 255",
         "input_representation": "polar_unwrap_rgb_360x44 (angle->x, 1 deg/column, clockwise, north at column 0; radius->y, inner at top)",
         "conv_padding_mode": "circular",
-        "seed": args.seed,
+        "seed": config["seed"],
         "threads": args.threads,
         "device": str(device),
         "model": "AngleCNN",
-        "trainable_parameters": EXPECTED_PARAMETER_COUNT,
-        "batch_size": args.batch_size,
-        "max_epochs": args.epochs,
+        "trainable_parameters": None,  # filled after the model is built
+        "batch_size": config["batch_size"],
+        "max_epochs": config["epochs"],
         "optimizer": "AdamW",
-        "learning_rate": 1e-3,
-        "weight_decay": 1e-4,
-        "scheduler": {"name": "ReduceLROnPlateau", "patience": SCHEDULER_PATIENCE, "factor": 0.5, "min_lr": 1e-6},
-        "early_stopping_patience": EARLY_STOP_PATIENCE,
-        "loss": "MSE([raw_sin, raw_cos], [target_sin, target_cos])",
+        "learning_rate": config["lr"],
+        "weight_decay": config["weight_decay"],
+        "scheduler": {"name": "ReduceLROnPlateau", "patience": config["scheduler_patience"], "factor": 0.5, "min_lr": 1e-6},
+        "early_stopping_patience": config["early_stop_patience"],
         "augmentation": {
             "rgb_gaussian_noise": {"probability": 0.5, "sigma": 0.02,
                                    "masked_to_ring_alpha": False},
             "clockwise_rotation": {
-                "probability": 0.0 if args.no_rotation else 0.5,
+                "probability": 0.5 if config["rotation"] else 0.0,
                 "degrees": "15-multiples 15..345 (24 directions); lossless np.roll on the 1 deg/column angular axis",
             },
         },
@@ -387,103 +415,85 @@ def main() -> None:
         "train_files": train_names,
         "val_files": val_names,
     }
-    model = AngleCNN().to(device)
+    model = AngleCNN(dropout=config["dropout"], head_grid=tuple(config["head_grid"]),
+                     head_channels=config["head_channels"] or None,
+                     radius_pool=config["radius_pool"], norm=config["norm"]).to(device)
     parameter_count = count_trainable_parameters(model)
-    if parameter_count != EXPECTED_PARAMETER_COUNT:
+    if model.is_default_architecture() and parameter_count != EXPECTED_PARAMETER_COUNT:
         raise RuntimeError(f"unexpected parameter count: {parameter_count}")
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=SCHEDULER_PATIENCE, min_lr=1e-6)
-    criterion = nn.MSELoss()
+    record["trainable_parameters"] = parameter_count
+    optimizer = torch.optim.AdamW(model.parameters(), lr=config["lr"], weight_decay=config["weight_decay"])
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode="min", factor=0.5, patience=config["scheduler_patience"], min_lr=1e-6)
     train_generator = torch.Generator()
-    train_generator.manual_seed(args.seed)
+    train_generator.manual_seed(config["seed"])
     train_loader = make_loader(
-        AngleDataset(TRAIN_DIR, train_names, True, rotate=not args.no_rotation),
-        args.batch_size,
+        AngleDataset(TRAIN_DIR, train_names, True, rotate=config["rotation"]),
+        config["batch_size"],
         True,
-        args.seed,
+        config["seed"],
         device,
         train_generator,
     )
     val_loader = make_loader(
         NamedDataset(AngleDataset(VAL_DIR, val_names, False)),
-        args.batch_size,
+        config["batch_size"],
         False,
-        args.seed,
+        config["seed"],
         device,
     )
-    start_epoch = 0
+
     best_val = float("inf")
     bad_epochs = 0
     history: list[dict[str, Any]] = []
-    if resume_path is not None:
-        checkpoint = load_checkpoint(resume_path, model, optimizer, scheduler, device)
-        validate_resume_config(checkpoint.get("config"), config)
-        start_epoch = int(checkpoint.get("epoch", -1)) + 1
-        best_val = float(checkpoint.get("best_val_circular_mae", best_val))
-        bad_epochs = int(checkpoint.get("early_stop_bad_epochs", 0))
-        history = list(checkpoint.get("history", []))
-        if len(history) != start_epoch:
-            raise ValueError("checkpoint epoch/history length is inconsistent")
-        restore_rng_state(checkpoint.get("rng_state"), train_generator)
-
-    atomic_json_dump(output_dir / "config.json", config)
+    atomic_json_dump(output_dir / "config.json", record)
     atomic_json_dump(output_dir / "history.json", {"epochs": history})
-    max_epochs = start_epoch + 1 if args.smoke else args.epochs
-    max_epochs = min(max_epochs, args.epochs)
-    if bad_epochs >= EARLY_STOP_PATIENCE:
-        print("checkpoint has already reached the early-stopping condition")
-    for epoch in range(start_epoch, max_epochs if bad_epochs < EARLY_STOP_PATIENCE else start_epoch):
-        train_loss = train_epoch(model, train_loader, optimizer, criterion, device)
-        val_loss, val_metrics = eval_loss(model, val_loader, criterion, device)
+    max_epochs = 1 if args.smoke else config["epochs"]
+    for epoch in range(max_epochs):
+        train_loss = train_epoch(model, train_loader, optimizer, config["norm_lambda"], device)
+        val_loss, val_metrics = eval_loss(model, val_loader, config["norm_lambda"], device)
         scheduler.step(val_metrics["circular_mae"])
-        record = {"epoch": epoch + 1, "train_loss": train_loss, "val_loss": val_loss, **{f"val_{k}": v for k, v in val_metrics.items()},
-                  "learning_rate": optimizer.param_groups[0]["lr"]}
-        history.append(record)
+        record_epoch = {"epoch": epoch + 1, "train_loss": train_loss, "val_loss": val_loss,
+                        **{f"val_{k}": v for k, v in val_metrics.items()},
+                        "learning_rate": optimizer.param_groups[0]["lr"]}
+        history.append(record_epoch)
         improved = val_metrics["circular_mae"] < best_val
         if improved:
             best_val = val_metrics["circular_mae"]
             bad_epochs = 0
-            save_checkpoint(
-                output_dir / "best.pt", model, optimizer, scheduler, epoch, best_val, bad_epochs,
-                config, history, train_generator,
-            )
+            save_checkpoint(output_dir / "best.pt", model, model_config)
         else:
             bad_epochs += 1
-        save_checkpoint(
-            output_dir / "last.pt", model, optimizer, scheduler, epoch, best_val, bad_epochs,
-            config, history, train_generator,
-        )
         atomic_json_dump(output_dir / "history.json", {"epochs": history})
         print(f"epoch={epoch + 1}/{max_epochs} train_loss={train_loss:.6f} val_mae={val_metrics['circular_mae']:.3f}° val_rmse={val_metrics['circular_rmse']:.3f}°")
-        if not args.smoke and bad_epochs >= EARLY_STOP_PATIENCE:
+        if not args.smoke and bad_epochs >= config["early_stop_patience"]:
             print("early stopping")
             break
 
     if not (output_dir / "best.pt").exists():
         raise RuntimeError("best checkpoint was not produced")
-    if history:
-        best_record = min(history, key=lambda record: record["val_circular_mae"])
-        # Settlement: reload best.pt and re-evaluate on the validation set so the
-        # reported numbers are exactly those of the shipped checkpoint.
-        load_checkpoint(output_dir / "best.pt", model, device=device)
-        _, final_metrics = eval_loss(model, val_loader, criterion, device)
-        summary: dict[str, Any] = {
-            "epoch": int(best_record["epoch"]),
-            "val_count": len(val_names),
-            "best_val_circular_mae": best_record["val_circular_mae"],
-            **{f"val_{k}": v for k, v in final_metrics.items()},
-        }
-        atomic_json_dump(output_dir / "summary.json", summary)
-        print(f"best val_circular_mae={best_record['val_circular_mae']:.3f}° (epoch {best_record['epoch']})")
-        print("final evaluation on best.pt (val set):")
-        print(f"  val_circular_mae={final_metrics['circular_mae']:.3f}°  "
-              f"val_circular_median={final_metrics['circular_median']:.3f}°")
-        print(f"  within_1_degree={final_metrics['within_1_degree']:.2%}  "
-              f"within_3_degrees={final_metrics['within_3_degrees']:.2%}  "
-              f"within_5_degrees={final_metrics['within_5_degrees']:.2%}  "
-              f"within_10_degrees={final_metrics['within_10_degrees']:.2%}")
-        print(f"  integer_accuracy={final_metrics['integer_accuracy']:.2%}")
-        plot_loss_curves(output_dir, history)
+    best_record = min(history, key=lambda record: record["val_circular_mae"])
+    # Settlement: reload best.pt and re-evaluate on the validation set so the
+    # reported numbers are exactly those of the shipped checkpoint.
+    settled_model = load_model(output_dir / "best.pt", device=device)
+    _, final_metrics = eval_loss(settled_model, val_loader, config["norm_lambda"], device)
+    summary: dict[str, Any] = {
+        "epoch": int(best_record["epoch"]),
+        "val_count": len(val_names),
+        "best_val_circular_mae": best_record["val_circular_mae"],
+        **{f"val_{k}": v for k, v in final_metrics.items()},
+    }
+    atomic_json_dump(output_dir / "summary.json", summary)
+    print(f"best val_circular_mae={best_record['val_circular_mae']:.3f}° (epoch {best_record['epoch']})")
+    print("final evaluation on best.pt (val set):")
+    print(f"  val_circular_mae={final_metrics['circular_mae']:.3f}°  "
+          f"val_circular_median={final_metrics['circular_median']:.3f}°")
+    print(f"  within_1_degree={final_metrics['within_1_degree']:.2%}  "
+          f"within_3_degrees={final_metrics['within_3_degrees']:.2%}  "
+          f"within_5_degrees={final_metrics['within_5_degrees']:.2%}  "
+          f"within_10_degrees={final_metrics['within_10_degrees']:.2%}")
+    print(f"  integer_accuracy={final_metrics['integer_accuracy']:.2%}")
+    plot_loss_curves(output_dir, history)
 
 
 if __name__ == "__main__":

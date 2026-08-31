@@ -12,8 +12,8 @@
 
 ```bash
 uv run prepare_data.py
-uv run train.py --output-dir runs/experiment_001
-uv run predict.py data/raw/<screenshot>.png --checkpoint runs/experiment_001/best.pt
+uv run train.py --output-dir runs/<name>
+uv run predict.py data/raw/<screenshot>.png --checkpoint runs/<name>/best.pt
 ```
 
 `prepare_data.py` 是唯一的前处理脚本，一条命令完成 raw → 极坐标展开 → 划分：
@@ -25,16 +25,9 @@ uv run prepare_data.py --split manifest   # 极坐标展开 + 清单切分
 
 `--split` 选择切分模式，默认 `random`：按种子和 30 度角度分箱随机留出约 15% 作验证集（每箱至少一张验证图）；`manifest` 则由 `data/val_manifest.json` 直接指定验证集成员（val = 清单 ∩ processed，清单引用不存在的文件名则报错；train = 其余全部）。每次运行都会清空并重写 `data/processed`、`data/train`、`data/val` 和 `data/split_manifest.json`；只有 `data/raw` 与 `data/val_manifest.json` 永不被脚本改动。角度标签支持一位小数（如 `_r210.9.png`），训练目标保留浮点精度。
 
-`train.py` 只负责训练：读取 `data/train` 和 `data/val`，从不复制、移动或划分图像。训练默认自动使用 CPU 或 CUDA，输出目录 `runs/production_001`，batch size 32，数据加载为单进程（num\_workers=0），CPU 线程默认 16（可用 `--threads` 调整），最大 400 个 epoch 并带早停（patience 40）与 ReduceLROnPlateau（patience 20）。可用 `--device cpu`、`--output-dir runs/experiment_name`、`--epochs N`、`--batch-size N` 或 `--threads N` 覆盖默认值。`--smoke` 标志走正常路径只跑一个 epoch，用于验证流程，不能替代完整训练。
+`train.py` 只负责训练：读取 `data/train` 和 `data/val`，从不复制、移动或划分图像。全部训练参数——batch size、epoch 数、seed、学习率、weight decay、调度器/早停 patience、模型架构（dropout、模长锚点 λ、读出池化格 `head_grid`、读出前 1×1 卷积压缩通道 `head_channels`、半径轴池化 `radius_pool`、归一化 `norm`）与旋转增强开关——集中在根目录 [`train.toml`](./train.toml)：每个键都有代码内默认值，文件明示当前基线，未知键硬报错。`norm_lambda` > 0 时损失变为 `MSE + λ·(‖v‖−1)²` 模长锚点，平衡点 `r=(c+2λ)/(1+2λ)`。CLI 只保留调用管道：`--config`（默认 `train.toml`）、`--output-dir`、`--device`（auto/cpu/cuda）、`--threads`（CPU 线程，默认 16）与 `--smoke`（正常路径只跑一个 epoch，用于验证流程，不能替代完整训练）。数据加载为单进程（num\_workers=0）。
 
-从中断处恢复训练：
-
-```bash
-uv run train.py --resume
-uv run train.py --resume runs/experiment_name/last.pt --output-dir runs/experiment_name
-```
-
-每个输出目录包含 `best.pt`、`last.pt`、`history.json` 和 `config.json`。在空目录中启动新实验；恢复已有实验用 `--resume`，而不是静默覆盖已有 checkpoint。模型有 995,664 个可训练参数，在回归头之前保留 4x4 粗粒度空间布局，接受缩放到 `[0, 1]` 的 `3x44x360` RGB 输入，回归正弦/余弦分量并在解码时归一化。卷积使用循环 padding，使 0/360 接缝两侧连通；实验 config（version 11）记录 `input_representation` 与 `conv_padding_mode`。验证指标使用环形误差，因此 0/360 边界是连续的。
+训练不支持断点恢复：中断即从头重跑，取舍见 [docs/adr/0003](./docs/adr/0003-config-file-training-no-resume.md)。每个输出目录包含 `best.pt`（两键 checkpoint：权重与重建架构的 kwargs）、`config.json`（解析后的运行记录，含训练/验证文件清单）、`history.json`、`summary.json` 与 `loss_curve.png`。必须在空目录中启动新实验，目录已含产物时拒绝开跑。基线架构有 937,872 个可训练参数，在回归头之前保留 2x22 细粒度空间布局（读出前压缩到 64 通道），归一化用 GroupNorm，半径轴池化为 avg；接受缩放到 `[0, 1]` 的 `3x44x360` RGB 输入，回归正弦/余弦分量并在解码时归一化。卷积使用循环 padding，使 0/360 接缝两侧连通；运行记录（version 15）记载 `input_representation`、`conv_padding_mode`、`dropout`、`norm_lambda`、`head_grid`、`head_channels`、`radius_pool` 与 `norm`；推理端从 checkpoint 内嵌的 config 重建对应架构。验证指标使用环形误差，因此 0/360 边界是连续的。
 
 训练对训练图像施加 RGB 噪声（σ=0.02，50% 概率；极坐标展开图全图有效，不加掩膜）增强，并以 50% 概率施加一次顺时针旋转，旋转角从 24 个非零的 15 度倍数（15°–345°）中均匀选取，目标角度按模 360 加上相同旋转量；旋转沿 1°/列的角度轴做 `np.roll`，24 个方向全部严格无损。验证图像不做任何增强。注意：旋转后的地形与图标在真实输入中并不存在（见 [CONTEXT.md](./CONTEXT.md)），保留旋转增强是出于经验考量——它相当于 24 倍的数据乘数/正则化，在小数据集上实测收益大于分布外噪声（历史对照：带旋转 val MAE 3.14°，无旋转 6.01°）。
 

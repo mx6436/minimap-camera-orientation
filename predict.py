@@ -15,8 +15,7 @@ import torch
 
 import polar
 from data_utils import decode_angle, round_angle
-from model import AngleCNN, EXPECTED_PARAMETER_COUNT, count_trainable_parameters
-from train import load_checkpoint, choose_device
+from model import choose_device, load_model
 
 ROOT = Path(__file__).resolve().parent
 
@@ -28,11 +27,7 @@ def main() -> None:
     parser.add_argument("--device", default=None)
     args = parser.parse_args()
     device = choose_device(args.device)
-    model = AngleCNN().to(device)
-    if count_trainable_parameters(model) != EXPECTED_PARAMETER_COUNT:
-        raise RuntimeError("unexpected model parameter count")
-    load_checkpoint(args.checkpoint, model, device=device)
-    model.eval()
+    model = load_model(args.checkpoint, device=device)
 
     frame = polar.load_source_rgb(args.image)
     cx, cy, r_in, r_out = polar.scaled_roi(frame.shape[:2])
