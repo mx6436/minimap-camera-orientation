@@ -144,7 +144,7 @@ def main() -> None:
     for epoch in range(max_epochs):
         train_loss = train_epoch(model, train_loader, optimizer, config["norm_lambda"], device)
         val_loss, val_metrics = eval_loss(model, val_loader, config["norm_lambda"], device)
-        scheduler.step(val_metrics["circular_mae"])
+        scheduler.step(val_metrics["circular_rmse"])
         history.append(
             {
                 "epoch": epoch + 1,
@@ -155,9 +155,9 @@ def main() -> None:
                 "learning_rate": optimizer.param_groups[0]["lr"],
             }
         )
-        improved = val_metrics["circular_mae"] < best_val
+        improved = val_metrics["circular_rmse"] < best_val
         if improved:
-            best_val = val_metrics["circular_mae"]
+            best_val = val_metrics["circular_rmse"]
             bad_epochs = 0
             save_checkpoint(output_dir / "best.pt", model, model_config)
         else:
@@ -174,7 +174,7 @@ def main() -> None:
 
     if not (output_dir / "best.pt").exists():
         raise RuntimeError("best checkpoint was not produced")
-    best_entry = min(history, key=lambda entry: entry["val_circular_mae"])
+    best_entry = min(history, key=lambda entry: entry["val_circular_rmse"])
     # 结算：重新加载 best.pt 并在验证集上重新评估，确保汇报的数字就是
     # 交付 checkpoint 的数字。
     settled_model = load_model(output_dir / "best.pt", device=device)
@@ -182,12 +182,12 @@ def main() -> None:
     summary: dict[str, Any] = {
         "epoch": int(best_entry["epoch"]),
         "val_count": len(val_names),
-        "best_val_circular_mae": best_entry["val_circular_mae"],
+        "best_val_circular_rmse": best_entry["val_circular_rmse"],
         **{f"val_{k}": v for k, v in final_metrics.items()},
     }
     atomic_json_dump(output_dir / "summary.json", summary)
     print(
-        f"best val_circular_mae={best_entry['val_circular_mae']:.3f}° (epoch {best_entry['epoch']})"
+        f"best val_circular_rmse={best_entry['val_circular_rmse']:.3f}° (epoch {best_entry['epoch']})"
     )
     print("final evaluation on best.pt (val set):")
     print(

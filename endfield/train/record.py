@@ -20,7 +20,7 @@ def build_record(
     if config["norm_lambda"] > 0.0:
         loss_description += f" + {config['norm_lambda']:g}*(||v||-1)^2"
     return {
-        "version": 17,
+        "version": 19,
         "head_grid": list(config["head_grid"]),
         "head_channels": config["head_channels"] or None,
         "radius_pool": config["radius_pool"],
@@ -47,10 +47,12 @@ def build_record(
         "weight_decay": config["weight_decay"],
         "scheduler": {
             "name": "ReduceLROnPlateau",
+            "metric": "circular_rmse",
             "patience": config["scheduler_patience"],
             "factor": 0.5,
             "min_lr": 1e-6,
         },
+        "early_stopping_metric": "circular_rmse",
         "early_stopping_patience": config["early_stop_patience"],
         "augmentation": {
             "rgb_gaussian_noise": {
