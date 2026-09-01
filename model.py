@@ -39,7 +39,7 @@ class AngleCNN(nn.Module):
             raise ValueError(f"head_grid must be two positive ints, got {head_grid!r}")
         if head_channels is not None and head_channels < 1:
             raise ValueError(f"head_channels must be None or >= 1, got {head_channels!r}")
-        self._head_grid = tuple(head_grid)
+        self._head_grid = (head_grid[0], head_grid[1])
         self._head_channels = head_channels
         self._radius_pool = radius_pool
         self._norm = norm

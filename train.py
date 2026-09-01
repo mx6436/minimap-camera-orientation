@@ -222,13 +222,16 @@ def train_epoch(
 ) -> float:
     model.train()
     total = 0.0
+    samples = 0
     for features, targets in loader:
         optimizer.zero_grad(set_to_none=True)
         loss = combined_loss(model(features.to(device)), targets.to(device), norm_lambda)
         loss.backward()
         optimizer.step()
-        total += loss.item() * len(features)
-    return total / len(loader.dataset)
+        batch_size = len(features)
+        total += loss.item() * batch_size
+        samples += batch_size
+    return total / samples
 
 
 def eval_loss(
@@ -236,15 +239,16 @@ def eval_loss(
 ) -> tuple[float, dict[str, float]]:
     model.eval()
     total = 0.0
+    samples = 0
     outputs: list[np.ndarray] = []
     angles: list[np.ndarray] = []
     targets_list: list[np.ndarray] = []
     with torch.no_grad():
         for features, targets, batch_angles, _batch_names in loader:
             prediction = model(features.to(device))
-            total += combined_loss(prediction, targets.to(device), norm_lambda).item() * len(
-                features
-            )
+            batch_size = len(features)
+            total += combined_loss(prediction, targets.to(device), norm_lambda).item() * batch_size
+            samples += batch_size
             outputs.append(prediction.cpu().numpy())
             angles.append(batch_angles.numpy().astype(np.float64))
             targets_list.append(targets.numpy())
@@ -252,7 +256,7 @@ def eval_loss(
     angle_array = np.concatenate(angles)
     metrics = metrics_from_outputs(output_array, angle_array)
     metrics.update(norm_metrics(output_array, np.concatenate(targets_list)))
-    return total / len(loader.dataset), metrics
+    return total / samples, metrics
 
 
 def make_loader(
