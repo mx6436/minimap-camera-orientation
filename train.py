@@ -41,8 +41,8 @@ from model import (
     DEFAULT_HEAD_GRID,
     DEFAULT_NORM,
     DEFAULT_RADIUS_POOL,
-    AngleCNN,
     EXPECTED_PARAMETER_COUNT,
+    AngleCNN,
     choose_device,
     count_trainable_parameters,
     load_model,
@@ -101,9 +101,7 @@ class AngleDataset(Dataset):
                 array = np.roll(array, delta, axis=1)
                 angle = (angle + delta) % 360
             if random.random() < 0.5:
-                array = array + np.random.normal(0.0, 0.02, array.shape).astype(
-                    np.float32
-                )
+                array = array + np.random.normal(0.0, 0.02, array.shape).astype(np.float32)
             array = np.clip(array, 0.0, 1.0)
         tensor = torch.from_numpy(array.transpose(2, 0, 1)).contiguous()
         target = torch.from_numpy(angle_target(angle))
@@ -136,9 +134,7 @@ def validate_config(config: dict[str, Any]) -> None:
     if len(config["head_grid"]) != 2 or min(config["head_grid"]) < 1:
         raise SystemExit("head_grid must be two positive integers")
     if config["head_channels"] < 0:
-        raise SystemExit(
-            "head_channels must be non-negative (0 keeps the 256 trunk channels)"
-        )
+        raise SystemExit("head_channels must be non-negative (0 keeps the 256 trunk channels)")
     if config["radius_pool"] not in ("max", "avg"):
         raise SystemExit("radius_pool must be 'max' or 'avg'")
     if config["norm"] not in ("batch", "group"):
@@ -182,9 +178,7 @@ def norm_metrics(outputs: np.ndarray, targets: np.ndarray) -> dict[str, float]:
         "norm_p5": float(np.percentile(norms, 5)),
         "norm_p95": float(np.percentile(norms, 95)),
         "raw_mse_total": total,
-        "norm_err_share": float(np.mean((norms - 1.0) ** 2) / total)
-        if total > 0
-        else 0.0,
+        "norm_err_share": float(np.mean((norms - 1.0) ** 2) / total) if total > 0 else 0.0,
         "spearman_norm_err": _spearman(norms, angular),
         "norm_low20_mae": float(np.mean(angular[low])),
         "norm_low20_gt10_share": float(np.mean(angular[low] > 10.0)),
@@ -220,9 +214,7 @@ class NamedDataset(Dataset):
         return features, target, parse_angle(Path(name)), name
 
 
-def combined_loss(
-    outputs: torch.Tensor, targets: torch.Tensor, norm_lambda: float
-) -> torch.Tensor:
+def combined_loss(outputs: torch.Tensor, targets: torch.Tensor, norm_lambda: float) -> torch.Tensor:
     """MSE on raw sin/cos plus an optional quadratic norm anchor.
 
     With the anchor, the per-sample equilibrium for direction alignment c is
@@ -246,9 +238,7 @@ def train_epoch(
     total = 0.0
     for features, targets in loader:
         optimizer.zero_grad(set_to_none=True)
-        loss = combined_loss(
-            model(features.to(device)), targets.to(device), norm_lambda
-        )
+        loss = combined_loss(model(features.to(device)), targets.to(device), norm_lambda)
         loss.backward()
         optimizer.step()
         total += loss.item() * len(features)
@@ -266,9 +256,9 @@ def eval_loss(
     with torch.no_grad():
         for features, targets, batch_angles, _batch_names in loader:
             prediction = model(features.to(device))
-            total += combined_loss(
-                prediction, targets.to(device), norm_lambda
-            ).item() * len(features)
+            total += combined_loss(prediction, targets.to(device), norm_lambda).item() * len(
+                features
+            )
             outputs.append(prediction.cpu().numpy())
             angles.append(batch_angles.numpy().astype(np.float64))
             targets_list.append(targets.numpy())
@@ -303,9 +293,7 @@ def make_loader(
 def save_checkpoint(path: Path, model: nn.Module, model_config: dict[str, Any]) -> None:
     checkpoint = {"model": model.state_dict(), "config": model_config}
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temp_name = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
-    )
+    fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
     os.close(fd)
     try:
         torch.save(checkpoint, temp_name)
@@ -337,9 +325,7 @@ def plot_loss_curves(output_dir: Path, history: list[dict[str, Any]]) -> None:
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
     path = output_dir / "loss_curve.png"
-    fd, temp_name = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".tmp", dir=output_dir
-    )
+    fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=output_dir)
     os.close(fd)
     try:
         fig.savefig(temp_name, dpi=150, format="png")
@@ -386,18 +372,16 @@ def main() -> None:
     try:
         config = load_config(args.config)
     except FileNotFoundError:
-        raise SystemExit(f"config file not found: {args.config}")
+        raise SystemExit(f"config file not found: {args.config}") from None
     except tomllib.TOMLDecodeError as error:
-        raise SystemExit(f"invalid TOML in {args.config}: {error}")
+        raise SystemExit(f"invalid TOML in {args.config}: {error}") from error
     torch.set_num_threads(args.threads)
     seed_everything(config["seed"])
     device = choose_device(args.device)
     train_names = png_names(TRAIN_DIR)
     val_names = png_names(VAL_DIR)
     if not train_names or not val_names:
-        raise SystemExit(
-            f"missing {TRAIN_DIR} or {VAL_DIR} PNG files; run prepare_data.py first"
-        )
+        raise SystemExit(f"missing {TRAIN_DIR} or {VAL_DIR} PNG files; run prepare_data.py first")
 
     output_dir = args.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -429,7 +413,10 @@ def main() -> None:
         "loss": loss_description,
         "input_shape": [3, 44, 360],
         "input_scaling": "RGB uint8 / 255",
-        "input_representation": "polar_unwrap_rgb_360x44 (angle->x, 1 deg/column, clockwise, north at column 0; radius->y, inner at top)",
+        "input_representation": (
+            "polar_unwrap_rgb_360x44 (angle->x, 1 deg/column, clockwise, north at column 0; "
+            "radius->y, inner at top)"
+        ),
         "conv_padding_mode": "circular",
         "seed": config["seed"],
         "threads": args.threads,
@@ -456,7 +443,10 @@ def main() -> None:
             },
             "clockwise_rotation": {
                 "probability": 0.5 if config["rotation"] else 0.0,
-                "degrees": "15-multiples 15..345 (24 directions); lossless np.roll on the 1 deg/column angular axis",
+                "degrees": (
+                    "15-multiples 15..345 (24 directions); "
+                    "lossless np.roll on the 1 deg/column angular axis"
+                ),
             },
         },
         "train_count": len(train_names),
@@ -510,12 +500,8 @@ def main() -> None:
     atomic_json_dump(output_dir / "history.json", {"epochs": history})
     max_epochs = 1 if args.smoke else config["epochs"]
     for epoch in range(max_epochs):
-        train_loss = train_epoch(
-            model, train_loader, optimizer, config["norm_lambda"], device
-        )
-        val_loss, val_metrics = eval_loss(
-            model, val_loader, config["norm_lambda"], device
-        )
+        train_loss = train_epoch(model, train_loader, optimizer, config["norm_lambda"], device)
+        val_loss, val_metrics = eval_loss(model, val_loader, config["norm_lambda"], device)
         scheduler.step(val_metrics["circular_mae"])
         record_epoch = {
             "epoch": epoch + 1,
@@ -534,7 +520,9 @@ def main() -> None:
             bad_epochs += 1
         atomic_json_dump(output_dir / "history.json", {"epochs": history})
         print(
-            f"epoch={epoch + 1}/{max_epochs} train_loss={train_loss:.6f} val_mae={val_metrics['circular_mae']:.3f}° val_rmse={val_metrics['circular_rmse']:.3f}°"
+            f"epoch={epoch + 1}/{max_epochs} train_loss={train_loss:.6f} "
+            f"val_mae={val_metrics['circular_mae']:.3f}° "
+            f"val_rmse={val_metrics['circular_rmse']:.3f}°"
         )
         if not args.smoke and bad_epochs >= config["early_stop_patience"]:
             print("early stopping")
@@ -546,9 +534,7 @@ def main() -> None:
     # Settlement: reload best.pt and re-evaluate on the validation set so the
     # reported numbers are exactly those of the shipped checkpoint.
     settled_model = load_model(output_dir / "best.pt", device=device)
-    _, final_metrics = eval_loss(
-        settled_model, val_loader, config["norm_lambda"], device
-    )
+    _, final_metrics = eval_loss(settled_model, val_loader, config["norm_lambda"], device)
     summary: dict[str, Any] = {
         "epoch": int(best_record["epoch"]),
         "val_count": len(val_names),
@@ -557,7 +543,8 @@ def main() -> None:
     }
     atomic_json_dump(output_dir / "summary.json", summary)
     print(
-        f"best val_circular_mae={best_record['val_circular_mae']:.3f}° (epoch {best_record['epoch']})"
+        f"best val_circular_mae={best_record['val_circular_mae']:.3f}° "
+        f"(epoch {best_record['epoch']})"
     )
     print("final evaluation on best.pt (val set):")
     print(

@@ -113,25 +113,17 @@ def stratify_split(processed_names: list[str]) -> tuple[list[str], list[str]]:
         train_names.extend(bucket[count:])
     train_names.sort()
     val_names.sort()
-    if (
-        not train_names
-        or not val_names
-        or sorted(train_names + val_names) != processed_names
-    ):
+    if not train_names or not val_names or sorted(train_names + val_names) != processed_names:
         raise RuntimeError("invalid train/validation split")
     return train_names, val_names
 
 
 def manifest_split(processed_names: list[str]) -> tuple[list[str], list[str]]:
     if not VAL_MANIFEST.exists():
-        raise SystemExit(
-            f"{VAL_MANIFEST} missing; manifest split requires a validation manifest"
-        )
+        raise SystemExit(f"{VAL_MANIFEST} missing; manifest split requires a validation manifest")
     manifest = load_json(VAL_MANIFEST)
     if manifest.get("version") != VAL_MANIFEST_VERSION:
-        raise ValueError(
-            f"{VAL_MANIFEST}: unsupported version {manifest.get('version')!r}"
-        )
+        raise ValueError(f"{VAL_MANIFEST}: unsupported version {manifest.get('version')!r}")
     val_names = validate_manifest_names(
         manifest.get("files", []), set(processed_names), "val manifest"
     )
@@ -159,9 +151,7 @@ def copy_split(train_names: list[str], val_names: list[str]) -> None:
     print(f"val={len(val_names)} -> {VAL}")
 
 
-def write_split_manifest(
-    mode: str, train_names: list[str], val_names: list[str]
-) -> None:
+def write_split_manifest(mode: str, train_names: list[str], val_names: list[str]) -> None:
     record: dict = {
         "version": SPLIT_MANIFEST_VERSION,
         "input_format": "polar",
@@ -196,13 +186,8 @@ def main() -> None:
         train_names, val_names = manifest_split(processed_names)
     else:
         train_names, val_names = stratify_split(processed_names)
-    if (
-        set(train_names) & set(val_names)
-        or sorted(train_names + val_names) != processed_names
-    ):
-        raise RuntimeError(
-            "train/validation split does not exactly cover processed files"
-        )
+    if set(train_names) & set(val_names) or sorted(train_names + val_names) != processed_names:
+        raise RuntimeError("train/validation split does not exactly cover processed files")
     copy_split(train_names, val_names)
     write_split_manifest(args.split, train_names, val_names)
     print(f"split_mode={args.split} manifest={SPLIT_MANIFEST}")

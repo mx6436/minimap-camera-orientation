@@ -12,6 +12,25 @@ dependencies = [
     "MaaFw>=5.13.0b5",  # LinuxController + gamescope toolkit 需要 5.13.0b5+
 ]
 
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle 错误
+    "W",   # pycodestyle 警告
+    "F",   # pyflakes
+    "I",   # isort 导入排序
+    "UP",  # pyupgrade
+    "B",   # bugbear 常见错误
+]
+
 [tool.uv]
 # 纯脚本项目,不需要构建/安装为包
 package = false
+
+[dependency-groups]
+dev = [
+    "ruff>=0.16.5",
+]

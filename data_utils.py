@@ -6,8 +6,8 @@ import os
 import random
 import re
 import tempfile
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 import numpy as np
 from PIL import Image
@@ -48,9 +48,7 @@ def decode_angle(outputs: np.ndarray) -> np.ndarray:
 
 
 def round_angle(angles: np.ndarray | float) -> np.ndarray | int:
-    rounded = (
-        np.floor(np.asarray(angles, dtype=np.float64) + 0.5).astype(np.int64) % 360
-    )
+    rounded = np.floor(np.asarray(angles, dtype=np.float64) + 0.5).astype(np.int64) % 360
     return int(rounded) if rounded.ndim == 0 else rounded
 
 
@@ -67,9 +65,7 @@ def load_rgb(path: Path) -> np.ndarray:
 
 def atomic_json_dump(path: Path, value: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temp_name = tempfile.mkstemp(
-        prefix=f".{path.name}.", dir=path.parent, text=True
-    )
+    fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent, text=True)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as stream:
             json.dump(value, stream, indent=2, ensure_ascii=True)
@@ -95,9 +91,7 @@ def png_names(directory: Path) -> list[str]:
     return sorted(path.name for path in directory.glob("*.png"))
 
 
-def validate_manifest_names(
-    names: Iterable[str], available: set[str], label: str
-) -> list[str]:
+def validate_manifest_names(names: Iterable[str], available: set[str], label: str) -> list[str]:
     values = list(names)
     if len(values) != len(set(values)):
         raise ValueError(f"{label} manifest contains duplicate filenames")

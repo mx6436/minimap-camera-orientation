@@ -4,3 +4,4 @@ runs/
 .pi-subagents/
 __pycache__/
 *.py[cod]
+.ruff_cache/
