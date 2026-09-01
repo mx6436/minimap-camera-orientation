@@ -109,7 +109,9 @@ def prepare_input(frame: np.ndarray) -> tuple[np.ndarray, np.ndarray, float, flo
     disc = np.dstack([box, alpha])
     disc[alpha == 0, :3] = 0
     if disc.shape[0] != DISPLAY_BOX or disc.shape[1] != DISPLAY_BOX:
-        interpolation = cv2.INTER_AREA if disc.shape[0] > DISPLAY_BOX else cv2.INTER_LINEAR
+        interpolation = (
+            cv2.INTER_AREA if disc.shape[0] > DISPLAY_BOX else cv2.INTER_LINEAR
+        )
         disc = cv2.resize(disc, (DISPLAY_BOX, DISPLAY_BOX), interpolation=interpolation)
     return strip, disc, float(r_out), r_out / polar.OUTER_R
 
@@ -180,7 +182,9 @@ def resolve_gamescope(toolkit: type, args: argparse.Namespace) -> tuple[int, str
         raise SystemExit(f"发现多个 gamescope 实例 {found}，请用 --display 指定")
 
     node_id = args.node_id if args.node_id is not None else instance.pipewire_node_id
-    eis_socket = args.eis_socket if args.eis_socket is not None else instance.eis_socket_path
+    eis_socket = (
+        args.eis_socket if args.eis_socket is not None else instance.eis_socket_path
+    )
     if not node_id:
         raise SystemExit(f"gamescope-{instance.display_no} 无可用 PipeWire 截图节点")
     if not eis_socket:

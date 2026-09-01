@@ -35,7 +35,16 @@ from data_utils import (
     png_names,
     validate_manifest_names,
 )
-from polar import IMG_H, IMG_W, INNER_R, OUTER_R, ROI_CENTER, load_source_rgb, self_check_azimuth, unwrap
+from polar import (
+    IMG_H,
+    IMG_W,
+    INNER_R,
+    OUTER_R,
+    ROI_CENTER,
+    load_source_rgb,
+    self_check_azimuth,
+    unwrap,
+)
 
 ROOT = Path(__file__).resolve().parent
 RAW_DIR = ROOT / "data" / "raw"
@@ -66,7 +75,9 @@ def generate_processed() -> list[str]:
 
     for i, src in enumerate(pngs, 1):
         arr = load_source_rgb(src)
-        Image.fromarray(unwrap(arr, *ROI_CENTER, INNER_R, OUTER_R), "RGB").save(PROCESSED / src.name)
+        Image.fromarray(unwrap(arr, *ROI_CENTER, INNER_R, OUTER_R), "RGB").save(
+            PROCESSED / src.name
+        )
         if i % 250 == 0 or i == len(pngs):
             print(f"[{i}/{len(pngs)}] {src.name}")
 
@@ -102,24 +113,36 @@ def stratify_split(processed_names: list[str]) -> tuple[list[str], list[str]]:
         train_names.extend(bucket[count:])
     train_names.sort()
     val_names.sort()
-    if not train_names or not val_names or sorted(train_names + val_names) != processed_names:
+    if (
+        not train_names
+        or not val_names
+        or sorted(train_names + val_names) != processed_names
+    ):
         raise RuntimeError("invalid train/validation split")
     return train_names, val_names
 
 
 def manifest_split(processed_names: list[str]) -> tuple[list[str], list[str]]:
     if not VAL_MANIFEST.exists():
-        raise SystemExit(f"{VAL_MANIFEST} missing; manifest split requires a validation manifest")
+        raise SystemExit(
+            f"{VAL_MANIFEST} missing; manifest split requires a validation manifest"
+        )
     manifest = load_json(VAL_MANIFEST)
     if manifest.get("version") != VAL_MANIFEST_VERSION:
-        raise ValueError(f"{VAL_MANIFEST}: unsupported version {manifest.get('version')!r}")
-    val_names = validate_manifest_names(manifest.get("files", []), set(processed_names), "val manifest")
+        raise ValueError(
+            f"{VAL_MANIFEST}: unsupported version {manifest.get('version')!r}"
+        )
+    val_names = validate_manifest_names(
+        manifest.get("files", []), set(processed_names), "val manifest"
+    )
     if not val_names:
         raise SystemExit(f"{VAL_MANIFEST}: manifest is empty")
     available = set(processed_names)
     train_names = sorted(available - set(val_names))
     if not train_names:
-        raise SystemExit(f"{VAL_MANIFEST}: manifest covers every processed file; train set would be empty")
+        raise SystemExit(
+            f"{VAL_MANIFEST}: manifest covers every processed file; train set would be empty"
+        )
     return train_names, val_names
 
 
@@ -136,7 +159,9 @@ def copy_split(train_names: list[str], val_names: list[str]) -> None:
     print(f"val={len(val_names)} -> {VAL}")
 
 
-def write_split_manifest(mode: str, train_names: list[str], val_names: list[str]) -> None:
+def write_split_manifest(
+    mode: str, train_names: list[str], val_names: list[str]
+) -> None:
     record: dict = {
         "version": SPLIT_MANIFEST_VERSION,
         "input_format": "polar",
@@ -157,8 +182,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("--split", choices=("random", "manifest"), default="random",
-                        help="split mode: seeded random (default) or val_manifest.json-driven")
+    parser.add_argument(
+        "--split",
+        choices=("random", "manifest"),
+        default="random",
+        help="split mode: seeded random (default) or val_manifest.json-driven",
+    )
     args = parser.parse_args()
 
     processed_names = generate_processed()
@@ -167,8 +196,13 @@ def main() -> None:
         train_names, val_names = manifest_split(processed_names)
     else:
         train_names, val_names = stratify_split(processed_names)
-    if set(train_names) & set(val_names) or sorted(train_names + val_names) != processed_names:
-        raise RuntimeError("train/validation split does not exactly cover processed files")
+    if (
+        set(train_names) & set(val_names)
+        or sorted(train_names + val_names) != processed_names
+    ):
+        raise RuntimeError(
+            "train/validation split does not exactly cover processed files"
+        )
     copy_split(train_names, val_names)
     write_split_manifest(args.split, train_names, val_names)
     print(f"split_mode={args.split} manifest={SPLIT_MANIFEST}")

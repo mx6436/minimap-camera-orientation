@@ -6,6 +6,7 @@ plumbing. There is no resume support: a checkpoint holds just the model
 weights and the architecture kwargs, so an interrupted run restarts from
 scratch (see docs/adr/0003).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -74,8 +75,13 @@ CONFIG_DEFAULTS: dict[str, Any] = {
 
 
 class AngleDataset(Dataset):
-    def __init__(self, directory: Path, names: list[str], augment: bool = False,
-                 rotate: bool = True) -> None:
+    def __init__(
+        self,
+        directory: Path,
+        names: list[str],
+        augment: bool = False,
+        rotate: bool = True,
+    ) -> None:
         self.directory = directory
         self.names = names
         self.augment = augment
@@ -95,7 +101,9 @@ class AngleDataset(Dataset):
                 array = np.roll(array, delta, axis=1)
                 angle = (angle + delta) % 360
             if random.random() < 0.5:
-                array = array + np.random.normal(0.0, 0.02, array.shape).astype(np.float32)
+                array = array + np.random.normal(0.0, 0.02, array.shape).astype(
+                    np.float32
+                )
             array = np.clip(array, 0.0, 1.0)
         tensor = torch.from_numpy(array.transpose(2, 0, 1)).contiguous()
         target = torch.from_numpy(angle_target(angle))
@@ -128,7 +136,9 @@ def validate_config(config: dict[str, Any]) -> None:
     if len(config["head_grid"]) != 2 or min(config["head_grid"]) < 1:
         raise SystemExit("head_grid must be two positive integers")
     if config["head_channels"] < 0:
-        raise SystemExit("head_channels must be non-negative (0 keeps the 256 trunk channels)")
+        raise SystemExit(
+            "head_channels must be non-negative (0 keeps the 256 trunk channels)"
+        )
     if config["radius_pool"] not in ("max", "avg"):
         raise SystemExit("radius_pool must be 'max' or 'avg'")
     if config["norm"] not in ("batch", "group"):
@@ -172,7 +182,9 @@ def norm_metrics(outputs: np.ndarray, targets: np.ndarray) -> dict[str, float]:
         "norm_p5": float(np.percentile(norms, 5)),
         "norm_p95": float(np.percentile(norms, 95)),
         "raw_mse_total": total,
-        "norm_err_share": float(np.mean((norms - 1.0) ** 2) / total) if total > 0 else 0.0,
+        "norm_err_share": float(np.mean((norms - 1.0) ** 2) / total)
+        if total > 0
+        else 0.0,
         "spearman_norm_err": _spearman(norms, angular),
         "norm_low20_mae": float(np.mean(angular[low])),
         "norm_low20_gt10_share": float(np.mean(angular[low] > 10.0)),
@@ -185,7 +197,7 @@ def metrics_from_outputs(outputs: np.ndarray, angles: np.ndarray) -> dict[str, f
     rounded = round_angle(continuous)
     return {
         "circular_mae": float(np.mean(errors)),
-        "circular_rmse": float(np.sqrt(np.mean(errors ** 2))),
+        "circular_rmse": float(np.sqrt(np.mean(errors**2))),
         "circular_median": float(np.median(errors)),
         "integer_accuracy": float(np.mean(rounded == angles)),
         "within_1_degree": float(np.mean(errors <= 1.0)),
@@ -208,7 +220,9 @@ class NamedDataset(Dataset):
         return features, target, parse_angle(Path(name)), name
 
 
-def combined_loss(outputs: torch.Tensor, targets: torch.Tensor, norm_lambda: float) -> torch.Tensor:
+def combined_loss(
+    outputs: torch.Tensor, targets: torch.Tensor, norm_lambda: float
+) -> torch.Tensor:
     """MSE on raw sin/cos plus an optional quadratic norm anchor.
 
     With the anchor, the per-sample equilibrium for direction alignment c is
@@ -221,20 +235,29 @@ def combined_loss(outputs: torch.Tensor, targets: torch.Tensor, norm_lambda: flo
     return mse + norm_lambda * ((norms - 1.0) ** 2).mean()
 
 
-def train_epoch(model: nn.Module, loader: DataLoader, optimizer: torch.optim.Optimizer,
-                norm_lambda: float, device: torch.device) -> float:
+def train_epoch(
+    model: nn.Module,
+    loader: DataLoader,
+    optimizer: torch.optim.Optimizer,
+    norm_lambda: float,
+    device: torch.device,
+) -> float:
     model.train()
     total = 0.0
     for features, targets in loader:
         optimizer.zero_grad(set_to_none=True)
-        loss = combined_loss(model(features.to(device)), targets.to(device), norm_lambda)
+        loss = combined_loss(
+            model(features.to(device)), targets.to(device), norm_lambda
+        )
         loss.backward()
         optimizer.step()
         total += loss.item() * len(features)
     return total / len(loader.dataset)
 
 
-def eval_loss(model: nn.Module, loader: DataLoader, norm_lambda: float, device: torch.device) -> tuple[float, dict[str, float]]:
+def eval_loss(
+    model: nn.Module, loader: DataLoader, norm_lambda: float, device: torch.device
+) -> tuple[float, dict[str, float]]:
     model.eval()
     total = 0.0
     outputs: list[np.ndarray] = []
@@ -243,7 +266,9 @@ def eval_loss(model: nn.Module, loader: DataLoader, norm_lambda: float, device: 
     with torch.no_grad():
         for features, targets, batch_angles, _batch_names in loader:
             prediction = model(features.to(device))
-            total += combined_loss(prediction, targets.to(device), norm_lambda).item() * len(features)
+            total += combined_loss(
+                prediction, targets.to(device), norm_lambda
+            ).item() * len(features)
             outputs.append(prediction.cpu().numpy())
             angles.append(batch_angles.numpy().astype(np.float64))
             targets_list.append(targets.numpy())
@@ -254,8 +279,14 @@ def eval_loss(model: nn.Module, loader: DataLoader, norm_lambda: float, device: 
     return total / len(loader.dataset), metrics
 
 
-def make_loader(dataset: Dataset, batch_size: int, shuffle: bool, seed: int,
-                device: torch.device, generator: torch.Generator | None = None) -> DataLoader:
+def make_loader(
+    dataset: Dataset,
+    batch_size: int,
+    shuffle: bool,
+    seed: int,
+    device: torch.device,
+    generator: torch.Generator | None = None,
+) -> DataLoader:
     if generator is None:
         generator = torch.Generator()
         generator.manual_seed(seed)
@@ -272,7 +303,9 @@ def make_loader(dataset: Dataset, batch_size: int, shuffle: bool, seed: int,
 def save_checkpoint(path: Path, model: nn.Module, model_config: dict[str, Any]) -> None:
     checkpoint = {"model": model.state_dict(), "config": model_config}
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    fd, temp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
     os.close(fd)
     try:
         torch.save(checkpoint, temp_name)
@@ -304,7 +337,9 @@ def plot_loss_curves(output_dir: Path, history: list[dict[str, Any]]) -> None:
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
     path = output_dir / "loss_curve.png"
-    fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=output_dir)
+    fd, temp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=output_dir
+    )
     os.close(fd)
     try:
         fig.savefig(temp_name, dpi=150, format="png")
@@ -322,13 +357,25 @@ def plot_loss_curves(output_dir: Path, history: list[dict[str, Any]]) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH,
-                        help="training config TOML (model/loss/optimization/augmentation)")
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=DEFAULT_CONFIG_PATH,
+        help="training config TOML (model/loss/optimization/augmentation)",
+    )
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--device", default=None, help="auto, cpu, or cuda")
-    parser.add_argument("--threads", type=int, default=DEFAULT_THREADS,
-                        help="CPU core count for torch (torch.set_num_threads)")
-    parser.add_argument("--smoke", action="store_true", help="run one epoch with the normal training path")
+    parser.add_argument(
+        "--threads",
+        type=int,
+        default=DEFAULT_THREADS,
+        help="CPU core count for torch (torch.set_num_threads)",
+    )
+    parser.add_argument(
+        "--smoke",
+        action="store_true",
+        help="run one epoch with the normal training path",
+    )
     return parser.parse_args()
 
 
@@ -394,11 +441,19 @@ def main() -> None:
         "optimizer": "AdamW",
         "learning_rate": config["lr"],
         "weight_decay": config["weight_decay"],
-        "scheduler": {"name": "ReduceLROnPlateau", "patience": config["scheduler_patience"], "factor": 0.5, "min_lr": 1e-6},
+        "scheduler": {
+            "name": "ReduceLROnPlateau",
+            "patience": config["scheduler_patience"],
+            "factor": 0.5,
+            "min_lr": 1e-6,
+        },
         "early_stopping_patience": config["early_stop_patience"],
         "augmentation": {
-            "rgb_gaussian_noise": {"probability": 0.5, "sigma": 0.02,
-                                   "masked_to_ring_alpha": False},
+            "rgb_gaussian_noise": {
+                "probability": 0.5,
+                "sigma": 0.02,
+                "masked_to_ring_alpha": False,
+            },
             "clockwise_rotation": {
                 "probability": 0.5 if config["rotation"] else 0.0,
                 "degrees": "15-multiples 15..345 (24 directions); lossless np.roll on the 1 deg/column angular axis",
@@ -409,16 +464,27 @@ def main() -> None:
         "train_files": train_names,
         "val_files": val_names,
     }
-    model = AngleCNN(dropout=config["dropout"], head_grid=tuple(config["head_grid"]),
-                     head_channels=config["head_channels"] or None,
-                     radius_pool=config["radius_pool"], norm=config["norm"]).to(device)
+    model = AngleCNN(
+        dropout=config["dropout"],
+        head_grid=tuple(config["head_grid"]),
+        head_channels=config["head_channels"] or None,
+        radius_pool=config["radius_pool"],
+        norm=config["norm"],
+    ).to(device)
     parameter_count = count_trainable_parameters(model)
     if model.is_default_architecture() and parameter_count != EXPECTED_PARAMETER_COUNT:
         raise RuntimeError(f"unexpected parameter count: {parameter_count}")
     record["trainable_parameters"] = parameter_count
-    optimizer = torch.optim.AdamW(model.parameters(), lr=config["lr"], weight_decay=config["weight_decay"])
+    optimizer = torch.optim.AdamW(
+        model.parameters(), lr=config["lr"], weight_decay=config["weight_decay"]
+    )
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode="min", factor=0.5, patience=config["scheduler_patience"], min_lr=1e-6)
+        optimizer,
+        mode="min",
+        factor=0.5,
+        patience=config["scheduler_patience"],
+        min_lr=1e-6,
+    )
     train_generator = torch.Generator()
     train_generator.manual_seed(config["seed"])
     train_loader = make_loader(
@@ -444,12 +510,20 @@ def main() -> None:
     atomic_json_dump(output_dir / "history.json", {"epochs": history})
     max_epochs = 1 if args.smoke else config["epochs"]
     for epoch in range(max_epochs):
-        train_loss = train_epoch(model, train_loader, optimizer, config["norm_lambda"], device)
-        val_loss, val_metrics = eval_loss(model, val_loader, config["norm_lambda"], device)
+        train_loss = train_epoch(
+            model, train_loader, optimizer, config["norm_lambda"], device
+        )
+        val_loss, val_metrics = eval_loss(
+            model, val_loader, config["norm_lambda"], device
+        )
         scheduler.step(val_metrics["circular_mae"])
-        record_epoch = {"epoch": epoch + 1, "train_loss": train_loss, "val_loss": val_loss,
-                        **{f"val_{k}": v for k, v in val_metrics.items()},
-                        "learning_rate": optimizer.param_groups[0]["lr"]}
+        record_epoch = {
+            "epoch": epoch + 1,
+            "train_loss": train_loss,
+            "val_loss": val_loss,
+            **{f"val_{k}": v for k, v in val_metrics.items()},
+            "learning_rate": optimizer.param_groups[0]["lr"],
+        }
         history.append(record_epoch)
         improved = val_metrics["circular_mae"] < best_val
         if improved:
@@ -459,7 +533,9 @@ def main() -> None:
         else:
             bad_epochs += 1
         atomic_json_dump(output_dir / "history.json", {"epochs": history})
-        print(f"epoch={epoch + 1}/{max_epochs} train_loss={train_loss:.6f} val_mae={val_metrics['circular_mae']:.3f}° val_rmse={val_metrics['circular_rmse']:.3f}°")
+        print(
+            f"epoch={epoch + 1}/{max_epochs} train_loss={train_loss:.6f} val_mae={val_metrics['circular_mae']:.3f}° val_rmse={val_metrics['circular_rmse']:.3f}°"
+        )
         if not args.smoke and bad_epochs >= config["early_stop_patience"]:
             print("early stopping")
             break
@@ -470,7 +546,9 @@ def main() -> None:
     # Settlement: reload best.pt and re-evaluate on the validation set so the
     # reported numbers are exactly those of the shipped checkpoint.
     settled_model = load_model(output_dir / "best.pt", device=device)
-    _, final_metrics = eval_loss(settled_model, val_loader, config["norm_lambda"], device)
+    _, final_metrics = eval_loss(
+        settled_model, val_loader, config["norm_lambda"], device
+    )
     summary: dict[str, Any] = {
         "epoch": int(best_record["epoch"]),
         "val_count": len(val_names),
@@ -478,14 +556,20 @@ def main() -> None:
         **{f"val_{k}": v for k, v in final_metrics.items()},
     }
     atomic_json_dump(output_dir / "summary.json", summary)
-    print(f"best val_circular_mae={best_record['val_circular_mae']:.3f}° (epoch {best_record['epoch']})")
+    print(
+        f"best val_circular_mae={best_record['val_circular_mae']:.3f}° (epoch {best_record['epoch']})"
+    )
     print("final evaluation on best.pt (val set):")
-    print(f"  val_circular_mae={final_metrics['circular_mae']:.3f}°  "
-          f"val_circular_median={final_metrics['circular_median']:.3f}°")
-    print(f"  within_1_degree={final_metrics['within_1_degree']:.2%}  "
-          f"within_3_degrees={final_metrics['within_3_degrees']:.2%}  "
-          f"within_5_degrees={final_metrics['within_5_degrees']:.2%}  "
-          f"within_10_degrees={final_metrics['within_10_degrees']:.2%}")
+    print(
+        f"  val_circular_mae={final_metrics['circular_mae']:.3f}°  "
+        f"val_circular_median={final_metrics['circular_median']:.3f}°"
+    )
+    print(
+        f"  within_1_degree={final_metrics['within_1_degree']:.2%}  "
+        f"within_3_degrees={final_metrics['within_3_degrees']:.2%}  "
+        f"within_5_degrees={final_metrics['within_5_degrees']:.2%}  "
+        f"within_10_degrees={final_metrics['within_10_degrees']:.2%}"
+    )
     print(f"  integer_accuracy={final_metrics['integer_accuracy']:.2%}")
     plot_loss_curves(output_dir, history)
 

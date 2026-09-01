@@ -22,6 +22,7 @@ experiments:
 This module also owns checkpoint loading (load_model) and device selection
 (choose_device), so the inference scripts never import train.py.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -38,9 +39,14 @@ GROUP_NORM_GROUPS = 16
 
 
 class AngleCNN(nn.Module):
-    def __init__(self, dropout: float = DEFAULT_DROPOUT, head_grid: tuple[int, int] = DEFAULT_HEAD_GRID,
-                 head_channels: int | None = DEFAULT_HEAD_CHANNELS,
-                 radius_pool: str = DEFAULT_RADIUS_POOL, norm: str = DEFAULT_NORM) -> None:
+    def __init__(
+        self,
+        dropout: float = DEFAULT_DROPOUT,
+        head_grid: tuple[int, int] = DEFAULT_HEAD_GRID,
+        head_channels: int | None = DEFAULT_HEAD_CHANNELS,
+        radius_pool: str = DEFAULT_RADIUS_POOL,
+        norm: str = DEFAULT_NORM,
+    ) -> None:
         super().__init__()
         if radius_pool not in ("max", "avg"):
             raise ValueError(f"radius_pool must be 'max' or 'avg', got {radius_pool!r}")
@@ -49,7 +55,9 @@ class AngleCNN(nn.Module):
         if len(head_grid) != 2 or min(head_grid) < 1:
             raise ValueError(f"head_grid must be two positive ints, got {head_grid!r}")
         if head_channels is not None and head_channels < 1:
-            raise ValueError(f"head_channels must be None or >= 1, got {head_channels!r}")
+            raise ValueError(
+                f"head_channels must be None or >= 1, got {head_channels!r}"
+            )
         self._head_grid = tuple(head_grid)
         self._head_channels = head_channels
         self._radius_pool = radius_pool
@@ -69,8 +77,16 @@ class AngleCNN(nn.Module):
         channels = [3, 32, 64, 128, 192, 256]
         layers: list[nn.Module] = []
         for i in range(5):
-            layers.append(nn.Conv2d(channels[i], channels[i + 1], 3, padding=1,
-                                    bias=False, padding_mode="circular"))
+            layers.append(
+                nn.Conv2d(
+                    channels[i],
+                    channels[i + 1],
+                    3,
+                    padding=1,
+                    bias=False,
+                    padding_mode="circular",
+                )
+            )
             layers.append(norm_layer(channels[i + 1]))
             layers.append(nn.ReLU(inplace=True))
             if i < 4:
@@ -82,8 +98,9 @@ class AngleCNN(nn.Module):
             self.pool = nn.AdaptiveAvgPool2d((grid_h, grid_w))
             head_in = 256 * grid_h * grid_w
         else:
-            self.pool = nn.Sequential(nn.Conv2d(256, head_channels, 1),
-                                      nn.AdaptiveAvgPool2d((grid_h, grid_w)))
+            self.pool = nn.Sequential(
+                nn.Conv2d(256, head_channels, 1), nn.AdaptiveAvgPool2d((grid_h, grid_w))
+            )
             head_in = head_channels * grid_h * grid_w
         # Preserve coarse spatial layout for direction-sensitive features.
         self.head = nn.Sequential(
@@ -99,8 +116,12 @@ class AngleCNN(nn.Module):
         return self.head(x)
 
     def is_default_architecture(self) -> bool:
-        return (self.head_grid == DEFAULT_HEAD_GRID and self.head_channels == DEFAULT_HEAD_CHANNELS
-                and self.radius_pool == DEFAULT_RADIUS_POOL and self.norm == DEFAULT_NORM)
+        return (
+            self.head_grid == DEFAULT_HEAD_GRID
+            and self.head_channels == DEFAULT_HEAD_CHANNELS
+            and self.radius_pool == DEFAULT_RADIUS_POOL
+            and self.norm == DEFAULT_NORM
+        )
 
     @property
     def head_grid(self) -> tuple[int, int]:
@@ -120,7 +141,9 @@ class AngleCNN(nn.Module):
 
 
 def count_trainable_parameters(model: nn.Module) -> int:
-    return sum(parameter.numel() for parameter in model.parameters() if parameter.requires_grad)
+    return sum(
+        parameter.numel() for parameter in model.parameters() if parameter.requires_grad
+    )
 
 
 EXPECTED_PARAMETER_COUNT = 937_872
@@ -165,7 +188,10 @@ def load_model(path: Path | str, device: torch.device | str = "cpu") -> AngleCNN
     if not isinstance(checkpoint, dict) or "model" not in checkpoint:
         raise ValueError(f"invalid checkpoint: {path}")
     model = AngleCNN(**model_kwargs_from_config(checkpoint.get("config") or {}))
-    if model.is_default_architecture() and count_trainable_parameters(model) != EXPECTED_PARAMETER_COUNT:
+    if (
+        model.is_default_architecture()
+        and count_trainable_parameters(model) != EXPECTED_PARAMETER_COUNT
+    ):
         raise RuntimeError("unexpected model parameter count")
     model.load_state_dict(checkpoint["model"])
     return model.to(device).eval()

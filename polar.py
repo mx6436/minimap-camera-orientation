@@ -14,11 +14,13 @@
 prepare_data.py 在原始分辨率上调用；live.py / predict.py 在按基准分辨率
 等比缩放后的浮点 ROI 上调用。
 """
+
 from __future__ import annotations
+
+from pathlib import Path
 
 import numpy as np
 from PIL import Image
-from pathlib import Path
 
 # ROI 几何（训练数据采集的 720p 基准）
 BASE_SIZE = (1280, 720)
@@ -39,11 +41,15 @@ def load_source_rgb(path: Path) -> np.ndarray:
     return rgba[..., :3]
 
 
-def unwrap(rgb: np.ndarray, cx: float, cy: float, r_in: float, r_out: float) -> np.ndarray:
+def unwrap(
+    rgb: np.ndarray, cx: float, cy: float, r_in: float, r_out: float
+) -> np.ndarray:
     height, width = rgb.shape[:2]
     step = (r_out - r_in) / IMG_H
     # 双线性插值需要在源图内取到邻居像素：要求整个圆盘加一圈邻居都在图内。
-    if not (r_out + 1 <= cx <= width - r_out - 1 and r_out + 1 <= cy <= height - r_out - 1):
+    if not (
+        r_out + 1 <= cx <= width - r_out - 1 and r_out + 1 <= cy <= height - r_out - 1
+    ):
         raise ValueError(
             f"image {width}x{height} too small for ROI center "
             f"({cx}, {cy}) with outer radius {r_out}"
@@ -74,7 +80,9 @@ def scaled_roi(frame_shape: tuple[int, int]) -> tuple[float, float, float, float
     sx, sy = width / BASE_SIZE[0], height / BASE_SIZE[1]
     # 非等比缩放会破坏环形状
     if abs(sx - sy) / max(sx, sy) > 0.01:
-        print(f"WARNING: non-uniform scale sx={sx:.4f} sy={sy:.4f}; ring will be distorted")
+        print(
+            f"WARNING: non-uniform scale sx={sx:.4f} sy={sy:.4f}; ring will be distorted"
+        )
     cx, cy = ROI_CENTER[0] * sx, ROI_CENTER[1] * sy
     return cx, cy, INNER_R * sx, OUTER_R * sx
 
