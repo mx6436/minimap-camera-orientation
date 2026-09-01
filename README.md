@@ -21,11 +21,10 @@ uv run predict.py data/raw/<screenshot>.png --checkpoint runs/<name>/best.pt
 `prepare_data.py` 是唯一的前处理脚本，一条命令完成 raw → 极坐标展开 → 划分：
 
 ```bash
-uv run prepare_data.py                    # 极坐标展开 + 随机切分
-uv run prepare_data.py --split manifest   # 极坐标展开 + 清单切分
+uv run prepare_data.py                    # 极坐标展开 + 清单切分
 ```
 
-`--split` 选择切分模式，默认 `random`：按种子和 30 度角度分箱随机留出约 15% 作验证集（每箱至少一张验证图）；`manifest` 则由 `data/val_manifest.json` 直接指定验证集成员（val = 清单 ∩ processed，清单引用不存在的文件名则报错；train = 其余全部）。每次运行都会清空并重写 `data/processed`、`data/train`、`data/val` 和 `data/split_manifest.json`；只有 `data/raw` 与 `data/val_manifest.json` 永不被脚本改动。角度标签支持一位小数（如 `_r210.9.png`），训练目标保留浮点精度。
+验证集成员由 `data/val_manifest.json` 直接指定（val = 清单 ∩ processed，清单引用不存在的文件名则报错；train = 其余全部），清单由人维护，是运行脚本的前置条件。每次运行都会清空并重写 `data/processed`、`data/train` 和 `data/val`；只有 `data/raw` 与 `data/val_manifest.json` 永不被脚本改动。角度标签支持一位小数（如 `_r210.9.png`），训练目标保留浮点精度。
 
 `train.py` 只负责训练：读取 `data/train` 和 `data/val`，从不复制、移动或划分图像。全部训练参数集中在根目录 [`train.toml`](./train.toml)：每个键都有代码内默认值，文件明示当前基线，未知键硬报错。CLI 只保留调用管道：`--config`（默认 `train.toml`）、`--output-dir`、`--device`（auto/cpu/cuda）、`--threads`（CPU 线程，默认 16）与 `--smoke`（正常路径只跑一个 epoch，用于验证流程，不能替代完整训练）。数据加载为单进程（num\_workers=0）。
 
@@ -35,11 +34,10 @@ uv run prepare_data.py --split manifest   # 极坐标展开 + 清单切分
 
 ## 数据目录
 
-除 `data/raw` 与 `data/val_manifest.json` 外，以下内容均为脚本输出，每次运行 `prepare_data.py` 时清空重写（见 [docs/adr/0001](./docs/adr/0001-regenerable-data-layout.md)）：
+除 `data/raw` 与 `data/val_manifest.json` 外，以下内容均为脚本输出，每次运行 `prepare_data.py` 时清空重写：
 
 - `data/raw`：原始截图；任何脚本都不会修改它。
 - `data/val_manifest.json`：清单切分的验证集成员清单，由人维护，脚本只读。
 - `data/processed`：处理输出（全部样本的极坐标展开）。
 - `data/train` / `data/val`：划分后的训练/验证图像副本（磁盘上不做增强）。
-- `data/split_manifest.json`：最近一次划分的记录（格式、模式、策略参数、文件列表）。
 - `runs/`：checkpoint 与 JSON 实验结果。

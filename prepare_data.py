@@ -1,23 +1,17 @@
-"""数据前处理：从 data/raw 生成极坐标展开样本并完成训练/验证划分。
+"""数据前处理：从 data/raw 生成极坐标展开样本。
 
-manifest 切分模式用于留出地图（Held-out Map）的跨地图泛化验证：
-验证地图的样本一律不进入训练集。
+训练/验证划分由 data/val_manifest.json 声明，train = processed 全集减去清单所列验证集。
 """
 
 from __future__ import annotations
 
-import argparse
-import random
 import shutil
 from pathlib import Path
 
 from PIL import Image
 
 from data_utils import (
-    SEED,
-    atomic_json_dump,
     load_json,
-    parse_angle,
     png_names,
     validate_manifest_names,
 )
@@ -36,13 +30,8 @@ RAW_DIR = ROOT / "data" / "raw"
 PROCESSED = ROOT / "data" / "processed"
 TRAIN = ROOT / "data" / "train"
 VAL = ROOT / "data" / "val"
-SPLIT_MANIFEST = ROOT / "data" / "split_manifest.json"
 VAL_MANIFEST = ROOT / "data" / "val_manifest.json"
 
-VALIDATION_FRACTION = 0.15
-ANGLE_BIN_DEGREES = 30
-BIN_COUNT = 360 // ANGLE_BIN_DEGREES
-SPLIT_MANIFEST_VERSION = 2
 VAL_MANIFEST_VERSION = 1
 
 
@@ -78,30 +67,6 @@ def generate_processed() -> list[str]:
     return processed_names
 
 
-def stratify_split(processed_names: list[str]) -> tuple[list[str], list[str]]:
-    buckets: dict[int, list[str]] = {i: [] for i in range(BIN_COUNT)}
-    for name in processed_names:
-        buckets[int(parse_angle(Path(name)) // ANGLE_BIN_DEGREES)].append(name)
-    rng = random.Random(SEED)
-    train_names: list[str] = []
-    val_names: list[str] = []
-    for bucket in buckets.values():
-        bucket = sorted(bucket)
-        rng.shuffle(bucket)
-        if len(bucket) <= 1:
-            train_names.extend(bucket)
-            continue
-        count = max(1, round(len(bucket) * VALIDATION_FRACTION))
-        count = min(count, len(bucket) - 1)
-        val_names.extend(bucket[:count])
-        train_names.extend(bucket[count:])
-    train_names.sort()
-    val_names.sort()
-    if not train_names or not val_names or sorted(train_names + val_names) != processed_names:
-        raise RuntimeError("invalid train/validation split")
-    return train_names, val_names
-
-
 def manifest_split(processed_names: list[str]) -> tuple[list[str], list[str]]:
     if not VAL_MANIFEST.exists():
         raise SystemExit(f"{VAL_MANIFEST} missing; manifest split requires a validation manifest")
@@ -135,46 +100,12 @@ def copy_split(train_names: list[str], val_names: list[str]) -> None:
     print(f"val={len(val_names)} -> {VAL}")
 
 
-def write_split_manifest(mode: str, train_names: list[str], val_names: list[str]) -> None:
-    record: dict = {
-        "version": SPLIT_MANIFEST_VERSION,
-        "input_format": "polar",
-        "split_mode": mode,
-        "train_files": train_names,
-        "val_files": val_names,
-    }
-    if mode == "random":
-        record["seed"] = SEED
-        record["validation_fraction"] = VALIDATION_FRACTION
-        record["angle_bin_degrees"] = ANGLE_BIN_DEGREES
-    else:
-        record["val_manifest"] = str(VAL_MANIFEST.relative_to(ROOT))
-    atomic_json_dump(SPLIT_MANIFEST, record)
-
-
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
-    )
-    parser.add_argument(
-        "--split",
-        choices=("random", "manifest"),
-        default="random",
-        help="切分模式：随机切分（默认）或清单切分（留出地图验证）",
-    )
-    args = parser.parse_args()
-
     processed_names = generate_processed()
-
-    if args.split == "manifest":
-        train_names, val_names = manifest_split(processed_names)
-    else:
-        train_names, val_names = stratify_split(processed_names)
+    train_names, val_names = manifest_split(processed_names)
     if set(train_names) & set(val_names) or sorted(train_names + val_names) != processed_names:
         raise RuntimeError("train/validation split does not exactly cover processed files")
     copy_split(train_names, val_names)
-    write_split_manifest(args.split, train_names, val_names)
-    print(f"split_mode={args.split} manifest={SPLIT_MANIFEST}")
 
 
 if __name__ == "__main__":
