@@ -9,7 +9,7 @@ import numpy as np
 import torch
 
 import polar
-from data_utils import decode_angle, round_angle
+from data_utils import decode_angle
 from model import choose_device, load_model
 
 ROOT = Path(__file__).resolve().parent
@@ -32,10 +32,8 @@ def main() -> None:
     features = torch.from_numpy(array.transpose(2, 0, 1)).unsqueeze(0).to(device)
     with torch.no_grad():
         output = model(features).cpu().numpy()
-    continuous = float(decode_angle(output)[0])
-    rounded = int(round_angle(continuous))
-    print(f"continuous_angle: {continuous:.6f}")
-    print(f"rounded_angle: {rounded}")
+    angle = float(decode_angle(output)[0])
+    print(f"angle: {angle:.6f}")
 
 
 if __name__ == "__main__":

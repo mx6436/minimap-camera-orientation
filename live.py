@@ -25,7 +25,7 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
 import polar  # noqa: E402
-from data_utils import decode_angle, round_angle  # noqa: E402
+from data_utils import decode_angle  # noqa: E402
 from model import choose_device, load_model  # noqa: E402
 
 DISPLAY_BOX = 112  # 展示用圆盘边长（外径 56 的外接正方形，720p 基准）
@@ -108,17 +108,16 @@ def prepare_input(frame: np.ndarray) -> tuple[np.ndarray, np.ndarray, float, flo
 CONFIDENCE_THRESHOLD = 0.7
 
 
-def predict(model: torch.nn.Module, strip: np.ndarray) -> tuple[float, int, float]:
+def predict(model: torch.nn.Module, strip: np.ndarray) -> tuple[float, float]:
     array = strip.astype(np.float32) / 255.0
     features = torch.from_numpy(array.transpose(2, 0, 1)).unsqueeze(0)
     device = next(model.parameters()).device
     features = features.to(device)
     with torch.no_grad():
         output = model(features).cpu().numpy()
-    continuous = float(decode_angle(output)[0])
-    rounded = int(round_angle(continuous))
+    angle = float(decode_angle(output)[0])
     norm = float(np.linalg.norm(output[0]))
-    return continuous, rounded, norm
+    return angle, norm
 
 
 def draw_overlay(disc: np.ndarray, angle: float, norm: float) -> np.ndarray:
@@ -136,7 +135,7 @@ def draw_overlay(disc: np.ndarray, angle: float, norm: float) -> np.ndarray:
     cv2.line(display, center, tip, color, max(2, DISPLAY_SCALE // 3), cv2.LINE_AA)
     cv2.putText(
         display,
-        f"angle={angle:.1f} (rounded {round_angle(angle)}) norm={norm:.2f}",
+        f"angle={angle:.1f} norm={norm:.2f}",
         (12, size - 16),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.7,
@@ -225,7 +224,7 @@ def main() -> None:
             )
             printed_info = True
         strip, disc, _, _ = prepare_input(frame)
-        angle, _, norm = predict(model, strip)
+        angle, norm = predict(model, strip)
         cv2.imshow("minimap angle", draw_overlay(disc, angle, norm))
         key = cv2.waitKey(1) & 0xFF
         if key in (ord("q"), 27):

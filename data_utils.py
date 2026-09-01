@@ -47,11 +47,6 @@ def decode_angle(outputs: np.ndarray) -> np.ndarray:
     return angles
 
 
-def round_angle(angles: np.ndarray | float) -> np.ndarray | int:
-    rounded = np.floor(np.asarray(angles, dtype=np.float64) + 0.5).astype(np.int64) % 360
-    return int(rounded) if rounded.ndim == 0 else rounded
-
-
 def load_rgb(path: Path) -> np.ndarray:
     with Image.open(path) as image:
         if image.format != "PNG":

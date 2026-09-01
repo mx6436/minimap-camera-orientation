@@ -25,7 +25,6 @@ from data_utils import (
     load_rgb,
     parse_angle,
     png_names,
-    round_angle,
     seed_everything,
 )
 from model import (
@@ -173,14 +172,12 @@ def norm_metrics(outputs: np.ndarray, targets: np.ndarray) -> dict[str, float]:
 
 
 def metrics_from_outputs(outputs: np.ndarray, angles: np.ndarray) -> dict[str, float]:
-    continuous = decode_angle(outputs)
-    errors = circular_error(continuous, angles)
-    rounded = round_angle(continuous)
+    predicted = decode_angle(outputs)
+    errors = circular_error(predicted, angles)
     return {
         "circular_mae": float(np.mean(errors)),
         "circular_rmse": float(np.sqrt(np.mean(errors**2))),
         "circular_median": float(np.median(errors)),
-        "integer_accuracy": float(np.mean(rounded == angles)),
         "within_1_degree": float(np.mean(errors <= 1.0)),
         "within_3_degrees": float(np.mean(errors <= 3.0)),
         "within_5_degrees": float(np.mean(errors <= 5.0)),
@@ -547,7 +544,6 @@ def main() -> None:
         f"within_5_degrees={final_metrics['within_5_degrees']:.2%}  "
         f"within_10_degrees={final_metrics['within_10_degrees']:.2%}"
     )
-    print(f"  integer_accuracy={final_metrics['integer_accuracy']:.2%}")
     plot_loss_curves(output_dir, history)
 
 
