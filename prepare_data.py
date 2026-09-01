@@ -53,8 +53,6 @@ SPLIT_MANIFEST_VERSION = 2
 VAL_MANIFEST_VERSION = 1
 
 
-# ================= 第 1 步：raw -> processed =================
-
 def clear_pngs(directory: Path) -> None:
     directory.mkdir(parents=True, exist_ok=True)
     for path in directory.glob("*.png"):
@@ -62,7 +60,6 @@ def clear_pngs(directory: Path) -> None:
 
 
 def generate_processed() -> list[str]:
-    """清空 data/processed，从 data/raw 全量生成极坐标展开样本，返回文件名列表。"""
     pngs = sorted(RAW_DIR.glob("*.png"))
     if not pngs:
         raise SystemExit(f"no png found in {RAW_DIR}")
@@ -87,10 +84,7 @@ def generate_processed() -> list[str]:
     return processed_names
 
 
-# ================= 第 2 步：processed -> train/val =================
-
 def stratify_split(processed_names: list[str]) -> tuple[list[str], list[str]]:
-    """随机切分：按 30 度角度分箱，每箱随机留出约 15%（至少一张）作验证集。"""
     buckets: dict[int, list[str]] = {i: [] for i in range(BIN_COUNT)}
     for name in processed_names:
         buckets[int(parse_angle(Path(name)) // ANGLE_BIN_DEGREES)].append(name)
@@ -115,7 +109,6 @@ def stratify_split(processed_names: list[str]) -> tuple[list[str], list[str]]:
 
 
 def manifest_split(processed_names: list[str]) -> tuple[list[str], list[str]]:
-    """清单切分：val = 清单 ∩ processed（严格校验），train = 其余全部。"""
     if not VAL_MANIFEST.exists():
         raise SystemExit(f"{VAL_MANIFEST} missing; manifest split requires a validation manifest")
     manifest = load_json(VAL_MANIFEST)

@@ -54,7 +54,6 @@ VAL_DIR = ROOT / "data" / "val"
 DEFAULT_OUTPUT_DIR = ROOT / "runs" / "production_001"
 DEFAULT_CONFIG_PATH = ROOT / "train.toml"
 DEFAULT_THREADS = 16
-# 启动守卫检查的产物清单：目录里已有任何一个就拒绝开跑，防止覆盖。
 ARTIFACT_NAMES = ("best.pt", "config.json", "history.json", "summary.json")
 
 CONFIG_DEFAULTS: dict[str, Any] = {
@@ -92,7 +91,7 @@ class AngleDataset(Dataset):
         array = load_rgb(self.directory / name).astype(np.float32) / 255.0
         if self.augment:
             if self.rotate and random.random() < 0.5:
-                delta = 15 * random.randint(1, 23)  # 15, 30, ..., 345
+                delta = 15 * random.randint(1, 23)
                 # 1°/列角度轴：内容顺时针转 delta 度 == 列右移 delta（严格无损）。
                 array = np.roll(array, delta, axis=1)
                 angle = (angle + delta) % 360
@@ -272,8 +271,6 @@ def make_loader(dataset: Dataset, batch_size: int, shuffle: bool, seed: int,
 
 
 def save_checkpoint(path: Path, model: nn.Module, model_config: dict[str, Any]) -> None:
-    """Write the two-key checkpoint: weights plus the kwargs that rebuild the
-    architecture. Atomic via temp file + rename."""
     checkpoint = {"model": model.state_dict(), "config": model_config}
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
@@ -290,7 +287,6 @@ def save_checkpoint(path: Path, model: nn.Module, model_config: dict[str, Any]) 
 
 
 def plot_loss_curves(output_dir: Path, history: list[dict[str, Any]]) -> None:
-    """Plot train/val loss curves with matplotlib and save them to output_dir."""
     import matplotlib
 
     matplotlib.use("Agg")  # headless-safe, no display required
@@ -366,7 +362,6 @@ def main() -> None:
             "choose an empty --output-dir"
         )
 
-    # Checkpoint payload: exactly what load_model needs to rebuild the model.
     model_config = {
         "dropout": config["dropout"],
         "head_grid": list(config["head_grid"]),
@@ -394,7 +389,7 @@ def main() -> None:
         "threads": args.threads,
         "device": str(device),
         "model": "AngleCNN",
-        "trainable_parameters": None,  # filled after the model is built
+        "trainable_parameters": None,
         "batch_size": config["batch_size"],
         "max_epochs": config["epochs"],
         "optimizer": "AdamW",

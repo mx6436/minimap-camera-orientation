@@ -39,8 +39,8 @@ from data_utils import decode_angle, round_angle  # noqa: E402
 from model import choose_device, load_model  # noqa: E402
 
 DISPLAY_BOX = 112  # 展示用圆盘边长（外径 56 的外接正方形，720p 基准）
-DISPLAY_SCALE = 6  # 圆盘放大倍数
-ARROW_LENGTH = 42  # 角度直线长度（112x112 圆盘坐标系内）
+DISPLAY_SCALE = 6
+ARROW_LENGTH = 42
 
 # Linux 控制器 config_json 字段值，见 MaaFramework docs 2.4-控制方式说明：
 # Screencap: Wlr=1, PipeWire=4；Input: Wlr=1, UInput=2, Libei=4
@@ -87,13 +87,6 @@ def prepare_model(checkpoint: Path, device: str | None) -> torch.nn.Module:
 
 
 def prepare_input(frame: np.ndarray) -> tuple[np.ndarray, np.ndarray, float, float]:
-    """MaaFw BGR 帧 -> (模型输入 360x44 RGB, 展示用圆盘 RGBA, 实测外径, 缩放比例)。
-
-    模型输入：按训练预处理把等比缩放后的 ROI 极坐标展开（polar.py）。
-    展示用圆盘：完整圆形裁剪（含中心圆与箭头），仅用于 overlay 显示，
-    不是模型输入。缩放比例 = 外径像素 / 56，用于打印核对与训练分布
-    是否吻合。
-    """
     height, width = frame.shape[:2]
     cx, cy, r_in, r_out = polar.scaled_roi((height, width))
     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -109,7 +102,6 @@ def prepare_input(frame: np.ndarray) -> tuple[np.ndarray, np.ndarray, float, flo
             f"ring crop box ({left},{top},{right},{bottom}) does not fit frame {width}x{height}"
         )
 
-    # 展示用圆形掩膜：完整圆盘（d <= r_out），内径孔洞不裁，箭头对人眼可见。
     box = rgb[top:bottom, left:right].copy()
     xs = np.arange(right - left) + left + 0.5 - cx
     ys = np.arange(bottom - top) + top + 0.5 - cy
@@ -123,7 +115,6 @@ def prepare_input(frame: np.ndarray) -> tuple[np.ndarray, np.ndarray, float, flo
     return strip, disc, float(r_out), r_out / polar.OUTER_R
 
 
-# 模型输出 (sin, cos) 向量的模长低于该阈值视为低置信度，overlay 用黄色标注
 CONFIDENCE_THRESHOLD = 0.7
 
 
@@ -141,11 +132,6 @@ def predict(model: torch.nn.Module, strip: np.ndarray) -> tuple[float, int, floa
 
 
 def draw_overlay(disc: np.ndarray, angle: float, norm: float) -> np.ndarray:
-    """绘制放大圆盘 + 角度直线 + 角度文字。0°=正上，顺时针。
-
-    模型输出向量模长 < CONFIDENCE_THRESHOLD 时（低置信度），直线与文字
-    标为黄色，否则红色。
-    """
     color = (0, 255, 255) if norm < CONFIDENCE_THRESHOLD else (0, 0, 255)
     size = disc.shape[0] * DISPLAY_SCALE
     display = cv2.resize(disc, (size, size), interpolation=cv2.INTER_NEAREST)
@@ -172,11 +158,6 @@ def draw_overlay(disc: np.ndarray, angle: float, norm: float) -> np.ndarray:
 
 
 def resolve_gamescope(toolkit: type, args: argparse.Namespace) -> tuple[int, str]:
-    """确定 PipeWire 节点 ID 与 EIS socket 路径。
-
-    命令行显式指定的值优先；否则枚举 gamescope 实例，--display 匹配或唯一
-    实例自动选中。节点 ID 为 0（无截图节点）或 EIS socket 为空时报错。
-    """
     if args.node_id is not None and args.eis_socket is not None:
         return args.node_id, args.eis_socket
 

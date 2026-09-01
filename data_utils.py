@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Shared image, angle, split, and JSON helpers for the training tools."""
 from __future__ import annotations
 
 import json
@@ -16,11 +15,11 @@ from PIL import Image
 
 ANGLE_RE = re.compile(r"_r(\d+(?:\.\d+)?)\.png$")
 SEED = 42
-POLAR_IMAGE_SIZE = (360, 44)  # PIL (width, height)：1°/列，1px/行
+POLAR_IMAGE_SIZE = (360, 44)
 
 
 def parse_angle(path: Path) -> float:
-    """从文件名的 `_r<角度>.png` 后缀解析角度；标注可带一位小数。"""
+    """文件名标注的角度可带一位小数。"""
     match = ANGLE_RE.search(path.name)
     if match is None:
         raise ValueError(f"cannot parse angle from filename: {path.name}")
@@ -55,7 +54,6 @@ def round_angle(angles: np.ndarray | float) -> np.ndarray | int:
 
 
 def load_rgb(path: Path) -> np.ndarray:
-    """加载极坐标展开 RGB 样本（360x44，无透明区域）。"""
     with Image.open(path) as image:
         if image.format != "PNG":
             raise ValueError(f"{path}: expected PNG, got {image.format}")

@@ -145,7 +145,6 @@ def model_kwargs_from_config(config: dict) -> dict:
 
 
 def choose_device(value: str | None = None) -> torch.device:
-    """Resolve an optional --device value; None/auto picks CUDA when available."""
     if value in (None, "auto"):
         return torch.device("cuda" if torch.cuda.is_available() else "cpu")
     device = torch.device(value)

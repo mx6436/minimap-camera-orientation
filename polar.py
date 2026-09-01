@@ -22,17 +22,16 @@ from PIL import Image
 from pathlib import Path
 
 # ROI 几何（训练数据采集的 720p 基准）
-BASE_SIZE = (1280, 720)  # (width, height)
-ROI_CENTER = (108.0, 111.0)  # (cx, cy)
+BASE_SIZE = (1280, 720)
+ROI_CENTER = (108.0, 111.0)
 INNER_R = 12.0
 OUTER_R = 56.0
 
-IMG_W = 360  # 极坐标展开输出：1°/列
-IMG_H = 44   # 极坐标展开输出：r_in+0.5·step .. r_out-0.5·step，内径在上
+IMG_W = 360
+IMG_H = 44
 
 
 def load_source_rgb(path: Path) -> np.ndarray:
-    """读取源 PNG 为 RGB；若有 alpha，先把透明像素 RGB 置零。"""
     with Image.open(path) as im:
         if im.format != "PNG":
             raise ValueError(f"{path}: expected PNG data, got {im.format}")
@@ -42,10 +41,6 @@ def load_source_rgb(path: Path) -> np.ndarray:
 
 
 def unwrap(rgb: np.ndarray, cx: float, cy: float, r_in: float, r_out: float) -> np.ndarray:
-    """HxWx3 uint8 源图 -> IMG_H x IMG_W x3 uint8 极坐标展开图。
-
-    (cx, cy) 为极点的源图像素坐标（浮点）；r_in/r_out 为环的内、外径。
-    """
     height, width = rgb.shape[:2]
     step = (r_out - r_in) / IMG_H
     # 双线性插值需要在源图内取到邻居像素：要求整个圆盘加一圈邻居都在图内。
@@ -55,35 +50,30 @@ def unwrap(rgb: np.ndarray, cx: float, cy: float, r_in: float, r_out: float) -> 
             f"({cx}, {cy}) with outer radius {r_out}"
         )
 
-    radii = r_in + step * (np.arange(IMG_H, dtype=np.float64) + 0.5)   # (H,)
-    theta = np.deg2rad(np.arange(IMG_W, dtype=np.float64))             # (W,) 列 j = 方位角 j°
-    src_x = cx + radii[:, None] * np.sin(theta)[None, :]               # (H, W)
-    src_y = cy - radii[:, None] * np.cos(theta)[None, :]               # (H, W) 正北向上
+    radii = r_in + step * (np.arange(IMG_H, dtype=np.float64) + 0.5)
+    theta = np.deg2rad(np.arange(IMG_W, dtype=np.float64))
+    src_x = cx + radii[:, None] * np.sin(theta)[None, :]
+    src_y = cy - radii[:, None] * np.cos(theta)[None, :]
 
     x0 = np.floor(src_x).astype(np.int64)
     y0 = np.floor(src_y).astype(np.int64)
-    fx = (src_x - x0)[..., None]                                       # (H, W, 1)
+    fx = (src_x - x0)[..., None]
     fy = (src_y - y0)[..., None]
     x0c = np.clip(x0, 0, width - 1)
     x1c = np.clip(x0 + 1, 0, width - 1)
     y0c = np.clip(y0, 0, height - 1)
     y1c = np.clip(y0 + 1, 0, height - 1)
 
-    top = rgb[y0c, x0c] * (1.0 - fx) + rgb[y0c, x1c] * fx              # (H, W, 3)
+    top = rgb[y0c, x0c] * (1.0 - fx) + rgb[y0c, x1c] * fx
     bottom = rgb[y1c, x0c] * (1.0 - fx) + rgb[y1c, x1c] * fx
     out = top * (1.0 - fy) + bottom * fy
     return np.clip(np.rint(out), 0, 255).astype(np.uint8)
 
 
 def scaled_roi(frame_shape: tuple[int, int]) -> tuple[float, float, float, float]:
-    """按实际截图尺寸等比缩放 ROI。
-
-    frame_shape: (height, width)。返回 (cx, cy, r_in, r_out)，均为浮点
-    像素坐标；半径按 x 方向缩放，若 y 方向缩放与 x 差异超过 1% 则打印
-    警告（非等比缩放会破坏环形状）。
-    """
     height, width = frame_shape[:2]
     sx, sy = width / BASE_SIZE[0], height / BASE_SIZE[1]
+    # 非等比缩放会破坏环形状
     if abs(sx - sy) / max(sx, sy) > 0.01:
         print(f"WARNING: non-uniform scale sx={sx:.4f} sy={sy:.4f}; ring will be distorted")
     cx, cy = ROI_CENTER[0] * sx, ROI_CENTER[1] * sy
@@ -91,7 +81,6 @@ def scaled_roi(frame_shape: tuple[int, int]) -> tuple[float, float, float, float
 
 
 def self_check_azimuth() -> None:
-    """合成图自检：已知方位角的亮点必须落在对应列（顺时针、正北 = 第 0 列）。"""
     size = 224
     canvas = np.zeros((size, size, 3), dtype=np.uint8)
     cx, cy = size / 2.0, size / 2.0
@@ -104,7 +93,7 @@ def self_check_azimuth() -> None:
     out = unwrap(canvas, cx, cy, INNER_R, OUTER_R)
     for azimuth_deg, radius in dots:
         row = int(round(radius - 0.5 - INNER_R))
-        col = int(out[row].sum(axis=1).argmax())  # 该行最亮的列
+        col = int(out[row].sum(axis=1).argmax())
         if abs(col - azimuth_deg) > 1:
             raise RuntimeError(
                 f"azimuth self-check failed: dot at {azimuth_deg}° landed in column {col}"
