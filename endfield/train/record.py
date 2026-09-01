@@ -20,7 +20,7 @@ def build_record(
     if config["norm_lambda"] > 0.0:
         loss_description += f" + {config['norm_lambda']:g}*(||v||-1)^2"
     return {
-        "version": 16,
+        "version": 17,
         "head_grid": list(config["head_grid"]),
         "head_channels": config["head_channels"] or None,
         "radius_pool": config["radius_pool"],
@@ -34,7 +34,7 @@ def build_record(
             "polar_unwrap_rgb_360x44 (angle->x, 1 deg/column, clockwise, north at column 0; "
             "radius->y, inner at top)"
         ),
-        "conv_padding_mode": "circular",
+        "conv_padding_mode": "azimuth-circular; radius-zero (radius boundaries are ring-outside)",
         "seed": config["seed"],
         "threads": threads,
         "device": str(device),

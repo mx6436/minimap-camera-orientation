@@ -1,6 +1,7 @@
 """角度回归 CNN。
 
-输入表示：极坐标展开（见 CONTEXT.md）——3 通道，循环填充连通 0/360 接缝。
+输入表示：极坐标展开（见 CONTEXT.md）——3 通道。循环填充仅作用于方位角轴（连通 0/360 接缝）；
+半径轴上下边界是内径与外径，边界外即环外，零填充。
 
 - head_grid：保留完整方位角剖面，而不是平均成 90 度单元格。
 - head_channels：使线性 head 在细网格上的开销可控。
@@ -61,14 +62,12 @@ class AngleCNN(nn.Module):
         channels = [3, 32, 64, 128, 192, 256]
         layers: list[nn.Module] = []
         for i in range(5):
+            # 循环填充仅限方位角轴；半径轴的上下边界不是同一位置，边界外即环外，零填充
             layers.append(
-                nn.Conv2d(
-                    channels[i],
-                    channels[i + 1],
-                    3,
-                    padding=1,
-                    bias=False,
-                    padding_mode="circular",
+                nn.Sequential(
+                    nn.CircularPad2d((1, 1, 0, 0)),
+                    nn.ZeroPad2d((0, 0, 1, 1)),
+                    nn.Conv2d(channels[i], channels[i + 1], 3, padding=0, bias=False),
                 )
             )
             layers.append(norm_layer(channels[i + 1]))
