@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """MaaFw 实时截图 → 极坐标展开 → AngleCNN 角度预测 → 单窗口实时绘制。
 
 截图通道：MaaFramework Python 绑定（MaaFw）的 Linux 控制器，采用与

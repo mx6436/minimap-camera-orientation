@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """The angle regression CNN (baseline: 937,872 trainable parameters).
 
 Input representation: polar unwraps (see CONTEXT.md) — 3 channels, with

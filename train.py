@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Train the angle regression CNN on data/train and validate on data/val.
 
 Run configuration (model, loss, optimization, augmentation) lives in a TOML

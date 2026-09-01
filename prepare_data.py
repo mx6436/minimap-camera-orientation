@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """数据前处理：从 data/raw 生成极坐标展开样本并完成训练/验证划分。
 
 流水线（一条命令完成，除 data/raw 与 data/val_manifest.json 外全部输出

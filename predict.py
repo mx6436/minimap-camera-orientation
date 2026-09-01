@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Predict an angle for one raw screenshot PNG.
 
 The screenshot is preprocessed exactly like the training data (see
