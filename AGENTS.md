@@ -7,3 +7,7 @@
 ## Avoid instruction-to-output leakage
 
 Distinguish instructions from deliverable content. Embody the requirements; never restate them unless explicitly requested.
+
+## 注释规范
+
+代码是自解释的，注释必须能提供额外的信息，否则不应提供注释
