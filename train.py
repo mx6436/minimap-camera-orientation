@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import random
 import tempfile
@@ -98,6 +99,11 @@ class AngleDataset(Dataset):
         tensor = torch.from_numpy(array.transpose(2, 0, 1)).contiguous()
         target = torch.from_numpy(angle_target(angle))
         return tensor, target
+
+
+def names_fingerprint(names: list[str]) -> str:
+    """跨 run 校验数据集一致性的摘要：排序、\n 连接后取 sha256。"""
+    return hashlib.sha256("\n".join(sorted(names)).encode("utf-8")).hexdigest()
 
 
 def load_config(path: Path) -> dict[str, Any]:
@@ -390,7 +396,7 @@ def main() -> None:
     if config["norm_lambda"] > 0.0:
         loss_description += f" + {config['norm_lambda']:g}*(||v||-1)^2"
     record: dict[str, Any] = {
-        "version": 15,
+        "version": 16,
         "head_grid": list(config["head_grid"]),
         "head_channels": config["head_channels"] or None,
         "radius_pool": config["radius_pool"],
@@ -438,8 +444,8 @@ def main() -> None:
         },
         "train_count": len(train_names),
         "val_count": len(val_names),
-        "train_files": train_names,
-        "val_files": val_names,
+        "train_files_sha256": names_fingerprint(train_names),
+        "val_files_sha256": names_fingerprint(val_names),
     }
     model = AngleCNN(
         dropout=config["dropout"],
@@ -494,7 +500,8 @@ def main() -> None:
             "epoch": epoch + 1,
             "train_loss": train_loss,
             "val_loss": val_loss,
-            **{f"val_{k}": v for k, v in val_metrics.items()},
+            "val_circular_mae": val_metrics["circular_mae"],
+            "val_circular_rmse": val_metrics["circular_rmse"],
             "learning_rate": optimizer.param_groups[0]["lr"],
         }
         history.append(record_epoch)
