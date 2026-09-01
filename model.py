@@ -10,8 +10,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import torch
 from torch import nn
+
+from data_utils import decode_angle
 
 DEFAULT_HEAD_GRID = (2, 22)
 DEFAULT_HEAD_CHANNELS: int | None = 64
@@ -160,3 +163,15 @@ def load_model(path: Path | str, device: torch.device | str = "cpu") -> AngleCNN
         raise RuntimeError("unexpected model parameter count")
     model.load_state_dict(checkpoint["model"])
     return model.to(device).eval()
+
+
+def predict_angle(model: nn.Module, strip_rgb: np.ndarray) -> tuple[float, float]:
+    """strip_rgb: 极坐标展开的输出（RGB uint8，HWC 排布，见 CONTEXT.md）。
+    返回 (角度 [0,360)，输出向量范数——可作置信度的代理指标)。
+    """
+    array = strip_rgb.astype(np.float32) / 255.0
+    features = torch.from_numpy(array.transpose(2, 0, 1)).unsqueeze(0)
+    features = features.to(next(model.parameters()).device)
+    with torch.no_grad():
+        output = model(features).cpu().numpy()
+    return float(decode_angle(output)[0]), float(np.linalg.norm(output[0]))

@@ -14,26 +14,22 @@ from __future__ import annotations
 
 import argparse
 import math
-import sys
 from pathlib import Path
 
 import cv2
 import numpy as np
-import torch
+
+import polar
+from model import choose_device, load_model, predict_angle
 
 ROOT = Path(__file__).resolve().parent
-sys.path.insert(0, str(ROOT))
 
-import polar  # noqa: E402
-from data_utils import decode_angle  # noqa: E402
-from model import choose_device, load_model  # noqa: E402
-
-DISPLAY_BOX = 112  # 展示用圆盘边长（外径 56 的外接正方形，720p 基准）
+DISPLAY_BOX = 112  # 外径 56 的外接正方形，720p 基准
 DISPLAY_SCALE = 6
 ARROW_LENGTH = 42
+CONFIDENCE_THRESHOLD = 0.7
 
-# Linux 控制器 config_json 字段值，见 MaaFramework docs 2.4-控制方式说明：
-# Screencap: Wlr=1, PipeWire=4；Input: Wlr=1, UInput=2, Libei=4
+# Linux 控制器 config_json 字段值，枚举定义见 MaaFramework docs「2.4 控制方式说明」
 SCREENCAP_PIPEWIRE = 4
 INPUT_LIBEI = 4
 
@@ -72,26 +68,12 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def prepare_model(checkpoint: Path, device: str | None) -> torch.nn.Module:
-    return load_model(checkpoint, device=choose_device(device))
-
-
-def prepare_input(frame: np.ndarray) -> tuple[np.ndarray, np.ndarray, float, float]:
-    height, width = frame.shape[:2]
-    cx, cy, r_in, r_out = polar.scaled_roi((height, width))
-    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-
-    strip = polar.unwrap(rgb, cx, cy, r_in, r_out)
-
+def render_disc(rgb: np.ndarray, cx: float, cy: float, r_out: float) -> np.ndarray:
+    """polar.unwrap 已保证 r_out + 1 的边距落在图内，故此处裁剪无需越界检查。"""
     left = int(round(cx - r_out))
     top = int(round(cy - r_out))
     right = int(round(cx + r_out))
     bottom = int(round(cy + r_out))
-    if not (0 <= left < right <= width and 0 <= top < bottom <= height):
-        raise RuntimeError(
-            f"ring crop box ({left},{top},{right},{bottom}) does not fit frame {width}x{height}"
-        )
-
     box = rgb[top:bottom, left:right].copy()
     xs = np.arange(right - left) + left + 0.5 - cx
     ys = np.arange(bottom - top) + top + 0.5 - cy
@@ -102,22 +84,7 @@ def prepare_input(frame: np.ndarray) -> tuple[np.ndarray, np.ndarray, float, flo
     if disc.shape[0] != DISPLAY_BOX or disc.shape[1] != DISPLAY_BOX:
         interpolation = cv2.INTER_AREA if disc.shape[0] > DISPLAY_BOX else cv2.INTER_LINEAR
         disc = cv2.resize(disc, (DISPLAY_BOX, DISPLAY_BOX), interpolation=interpolation)
-    return strip, disc, float(r_out), r_out / polar.OUTER_R
-
-
-CONFIDENCE_THRESHOLD = 0.7
-
-
-def predict(model: torch.nn.Module, strip: np.ndarray) -> tuple[float, float]:
-    array = strip.astype(np.float32) / 255.0
-    features = torch.from_numpy(array.transpose(2, 0, 1)).unsqueeze(0)
-    device = next(model.parameters()).device
-    features = features.to(device)
-    with torch.no_grad():
-        output = model(features).cpu().numpy()
-    angle = float(decode_angle(output)[0])
-    norm = float(np.linalg.norm(output[0]))
-    return angle, norm
+    return disc
 
 
 def draw_overlay(disc: np.ndarray, angle: float, norm: float) -> np.ndarray:
@@ -146,11 +113,14 @@ def draw_overlay(disc: np.ndarray, angle: float, norm: float) -> np.ndarray:
     return display
 
 
-def resolve_gamescope(toolkit: type, args: argparse.Namespace) -> tuple[int, str]:
+def resolve_gamescope(instances: list, args: argparse.Namespace) -> tuple[int, str]:
+    """instances 为 Toolkit.find_gamescope_instances() 的返回值。
+
+    优先级：显式 --node-id / --eis-socket > 按 --display 匹配 > 唯一实例。
+    """
     if args.node_id is not None and args.eis_socket is not None:
         return args.node_id, args.eis_socket
 
-    instances = toolkit.find_gamescope_instances()
     if not instances:
         raise SystemExit("未发现 gamescope 实例，请确认 gamescope 正在运行")
 
@@ -182,7 +152,7 @@ def main() -> None:
     args = parse_args()
     if args.checkpoint is None:
         args.checkpoint = ROOT / "runs" / args.run / "best.pt"
-    model = prepare_model(args.checkpoint, args.device)
+    model = load_model(args.checkpoint, device=choose_device(args.device))
 
     try:
         from maa.controller import LinuxController
@@ -193,7 +163,7 @@ def main() -> None:
             "请在项目根目录执行 `uv sync` 更新依赖"
         ) from exc
 
-    node_id, eis_socket = resolve_gamescope(Toolkit, args)
+    node_id, eis_socket = resolve_gamescope(Toolkit.find_gamescope_instances(), args)
     controller = LinuxController(
         {
             "screencap_method": SCREENCAP_PIPEWIRE,
@@ -213,19 +183,21 @@ def main() -> None:
         try:
             frame = controller.post_screencap().get()
         except RuntimeError:
-            continue  # 空帧/截图失败是正常情况，跳过
+            continue  # 空帧/截图失败是正常情况
         if frame.size == 0:
             continue
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        cx, cy, r_in, r_out = polar.scaled_roi(frame.shape[:2])
+        strip = polar.unwrap(rgb, cx, cy, r_in, r_out)
+        angle, norm = predict_angle(model, strip)
+        disc = render_disc(rgb, cx, cy, r_out)
+        cv2.imshow("minimap angle", draw_overlay(disc, angle, norm))
         if not printed_info:
-            _, _, r_out, scale = prepare_input(frame)
             print(
                 f"frame {frame.shape[1]}x{frame.shape[0]}, "
-                f"ring outer radius = {r_out:.1f} px (scale x{scale:.3f})"
+                f"ring outer radius = {r_out:.1f} px (scale x{r_out / polar.OUTER_R:.3f})"
             )
             printed_info = True
-        strip, disc, _, _ = prepare_input(frame)
-        angle, norm = predict(model, strip)
-        cv2.imshow("minimap angle", draw_overlay(disc, angle, norm))
         key = cv2.waitKey(1) & 0xFF
         if key in (ord("q"), 27):
             break
