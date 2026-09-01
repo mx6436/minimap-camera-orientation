@@ -1,11 +1,11 @@
 """数据前处理：从 data/raw 生成极坐标展开样本。
 
 训练/验证划分由 data/val_manifest.json 声明，train = processed 全集减去清单所列验证集。
+train/val 是 processed 的符号链接视图，内容始终反映 processed 当前状态，悬空链接在生成时校验。
 """
 
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
 from PIL import Image
@@ -87,15 +87,16 @@ def manifest_split(processed_names: list[str]) -> tuple[list[str], list[str]]:
     return train_names, val_names
 
 
-def copy_split(train_names: list[str], val_names: list[str]) -> None:
+def link_split(train_names: list[str], val_names: list[str]) -> None:
     clear_pngs(TRAIN)
     clear_pngs(VAL)
-    for name in train_names:
-        shutil.copy2(PROCESSED / name, TRAIN / name)
-    for name in val_names:
-        shutil.copy2(PROCESSED / name, VAL / name)
+    for directory, names in ((TRAIN, train_names), (VAL, val_names)):
+        for name in names:
+            (directory / name).symlink_to(Path("..") / PROCESSED.name / name)
+            if not (directory / name).is_file():
+                raise RuntimeError(f"split link does not resolve: {directory / name}")
     if png_names(TRAIN) != train_names or png_names(VAL) != val_names:
-        raise RuntimeError("copied train/validation files do not match the split")
+        raise RuntimeError("linked train/validation files do not match the split")
     print(f"train={len(train_names)} -> {TRAIN}")
     print(f"val={len(val_names)} -> {VAL}")
 
@@ -105,7 +106,7 @@ def main() -> None:
     train_names, val_names = manifest_split(processed_names)
     if set(train_names) & set(val_names) or sorted(train_names + val_names) != processed_names:
         raise RuntimeError("train/validation split does not exactly cover processed files")
-    copy_split(train_names, val_names)
+    link_split(train_names, val_names)
 
 
 if __name__ == "__main__":
