@@ -1,22 +1,13 @@
 """MaaFw 实时截图 → 极坐标展开 → AngleCNN 角度预测 → 单窗口实时绘制。
 
-截图通道：MaaFramework Python 绑定（MaaFw）的 Linux 控制器，采用与
-MaaEnd 的 Linux-Gamescope 控制器一致的方式：PipeWire 会话 daemon 节点
-截图（screencap_method=PipeWire）+ Libei 输入（input_method=Libei）。
-
 gamescope 实例通过 MaaToolkitGamescopeInstanceFindAll 自动发现：每个实例
 以 $XDG_RUNTIME_DIR 下 gamescope-<n> 命名的 Wayland socket 为键，附带
 PipeWire 节点 ID（gamescope_pipewire 协议）和同名 gamescope-<n>-ei EIS
-socket 路径。默认自动选择唯一的实例，也可用 --display / --node-id 指定。
+socket 路径。
 
-预处理与训练数据完全一致（见 prepare_data.py / polar.py）：按 720p 基准
-ROI（中心 (108,111)、内径 12、外径 56）随实际截图尺寸等比缩放，将环形
-区域极坐标展开为 360x44 RGB 输入模型；实际分辨率恰为 1280x720 时与训练
-预处理逐像素一致。overlay 窗口另绘展示用圆形裁剪（完整圆盘，含中心圆
-与箭头）——仅给人看，不进模型，模型永远看不到位于中心圆内的箭头（见
-CONTEXT.md「采样一致性假象」）。
-
-窗口绘制放大圆盘、一条角度直线（0°=正上方，顺时针增加）与角度文字。
+overlay 窗口另绘展示用圆形裁剪（完整圆盘，含中心圆与箭头）——仅给人看，
+不进模型，模型永远看不到位于中心圆内的箭头（见 CONTEXT.md「采样一致性
+假象」）。
 """
 
 from __future__ import annotations

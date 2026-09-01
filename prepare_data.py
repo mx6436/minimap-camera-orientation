@@ -1,21 +1,7 @@
 """数据前处理：从 data/raw 生成极坐标展开样本并完成训练/验证划分。
 
-流水线（一条命令完成，除 data/raw 与 data/val_manifest.json 外全部输出
-在每次运行时清空重写，见 docs/adr/0001）：
-
-  1. 清空 data/processed，从 data/raw 全量生成极坐标展开样本
-     （360x44 RGB，展开约定见 CONTEXT.md「极坐标展开」与 polar.py）；
-  2. 清空 data/train、data/val，按 --split 指定的模式划分并复制；
-  3. 重写 data/split_manifest.json 记录本次划分结果。
-
-切分模式 --split：
-  random   按 SEED 与 30° 角度分箱随机留出约 15% 作验证集（每箱至少
-           一张验证图）。同输入同种子结果确定，但新增 raw 数据后重跑
-           会重新洗牌，已有验证文件可能被换出。
-  manifest 清单切分：验证集成员由 data/val_manifest.json 直接指定，
-           val = 清单 ∩ processed（清单引用 processed 中不存在的文件名
-           则报错），train = processed 其余全部。用于留出地图（Held-out
-           Map）的跨地图泛化验证：验证地图的样本一律不进入训练集。
+manifest 切分模式用于留出地图（Held-out Map）的跨地图泛化验证：
+验证地图的样本一律不进入训练集。
 """
 
 from __future__ import annotations
@@ -174,7 +160,7 @@ def main() -> None:
         "--split",
         choices=("random", "manifest"),
         default="random",
-        help="split mode: seeded random (default) or val_manifest.json-driven",
+        help="切分模式：随机切分（默认）或清单切分（留出地图验证）",
     )
     args = parser.parse_args()
 

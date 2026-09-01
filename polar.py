@@ -7,12 +7,6 @@
 - 半径 -> y 轴：第 i 行的像素中心对应半径 r_in + (i + 0.5)·step
   （step = (r_out - r_in) / IMG_H；基准分辨率下 step=1，即内径 12、
   外径 56 之间 1:1 采样，内径在上）；
-- 输出像素由源图 (cx + r·sin θ, cy − r·cos θ) 处双线性采样得到（反向
-  映射）。输出无透明区域，天然全有效；全部行半径落在环内，位于中心
-  圆内的箭头被排除在输入之外。
-
-prepare_data.py 在原始分辨率上调用；live.py / predict.py 在按基准分辨率
-等比缩放后的浮点 ROI 上调用。
 """
 
 from __future__ import annotations

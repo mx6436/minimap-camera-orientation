@@ -1,26 +1,9 @@
-"""The angle regression CNN (baseline: 937,872 trainable parameters).
+"""角度回归 CNN。
 
-Input representation: polar unwraps (see CONTEXT.md) — 3 channels, with
-circular padding to bridge the 0/360 seam.
+输入表示：极坐标展开（见 CONTEXT.md）——3 通道，循环填充连通 0/360 接缝。
 
-The constructor defaults are the production baseline:
-(2, 22) readout grid, 64-channel 1x1 compression conv, avg pooling on the
-radius axis, GroupNorm. Structural variants stay parametrized for controlled
-experiments:
-
-- head_grid: readout pooling grid (radius rows, azimuth cols). Default
-  (2, 22) — keeps the full azimuth profile instead of averaging it into
-  90-degree cells.
-- head_channels: 1x1 conv compressing trunk channels before the head pool
-  (None keeps 256). Default 64; keeps the linear head affordable on the fine
-  grid.
-- radius_pool: "max" (MaxPool2d(2) on both axes) or "avg" (radius axis
-  averaged instead of max'd; azimuth stays max). Default "avg".
-- norm: "batch" (BatchNorm2d) or "group" (GroupNorm, 16 groups). Default
-  "group".
-
-This module also owns checkpoint loading (load_model) and device selection
-(choose_device), so the inference scripts never import train.py.
+- head_grid：保留完整方位角剖面，而不是平均成 90 度单元格。
+- head_channels：使线性 head 在细网格上的开销可控。
 """
 
 from __future__ import annotations
@@ -69,7 +52,7 @@ class AngleCNN(nn.Module):
         def trunk_pool() -> nn.Module:
             if radius_pool == "max":
                 return nn.MaxPool2d(2)
-            # radius averaged (evidence across neighbouring radii), azimuth kept max
+            # 半径取平均（聚合相邻半径的证据），方位角仍取 max
             return nn.Sequential(nn.AvgPool2d((2, 1)), nn.MaxPool2d((1, 2)))
 
         channels = [3, 32, 64, 128, 192, 256]
@@ -100,7 +83,7 @@ class AngleCNN(nn.Module):
                 nn.Conv2d(256, head_channels, 1), nn.AdaptiveAvgPool2d((grid_h, grid_w))
             )
             head_in = head_channels * grid_h * grid_w
-        # Preserve coarse spatial layout for direction-sensitive features.
+        # 保留粗粒度空间布局，供方向敏感特征使用
         self.head = nn.Sequential(
             nn.Linear(head_in, 58),
             nn.ReLU(inplace=True),
@@ -146,12 +129,6 @@ EXPECTED_PARAMETER_COUNT = 937_872
 
 
 def model_kwargs_from_config(config: dict) -> dict:
-    """Rebuild constructor kwargs from a checkpoint config dict.
-
-    Missing keys fall back to the current defaults. Checkpoints saved before
-    the architecture keys existed therefore rebuild as the baseline
-    architecture, and their state dicts fail to load loudly instead of
-    silently mismatching."""
     grid = config.get("head_grid", list(DEFAULT_HEAD_GRID))
     return dict(
         dropout=float(config.get("dropout", DEFAULT_DROPOUT)),
@@ -172,14 +149,6 @@ def choose_device(value: str | None = None) -> torch.device:
 
 
 def load_model(path: Path | str, device: torch.device | str = "cpu") -> AngleCNN:
-    """Load a trained AngleCNN from a checkpoint file.
-
-    A checkpoint is {"model": state_dict, "config": architecture kwargs};
-    extra keys left over from pre-refactor checkpoints (optimizer/scheduler/
-    RNG state) are ignored, so existing best.pt files load unchanged. Old
-    checkpoints whose config predates the architecture keys rebuild as the
-    baseline architecture and fail loudly on the state-dict mismatch.
-    """
     checkpoint = torch.load(path, map_location="cpu", weights_only=False)
     if not isinstance(checkpoint, dict) or "model" not in checkpoint:
         raise ValueError(f"invalid checkpoint: {path}")

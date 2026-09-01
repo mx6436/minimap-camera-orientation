@@ -1,11 +1,4 @@
-"""Train the angle regression CNN on data/train and validate on data/val.
-
-Run configuration (model, loss, optimization, augmentation) lives in a TOML
-file, train.toml by default (see --config); the CLI only carries invocation
-plumbing. There is no resume support: a checkpoint holds just the model
-weights and the architecture kwargs, so an interrupted run restarts from
-scratch (see docs/adr/0003).
-"""
+"""在 data/train 上训练角度回归 CNN，在 data/val 上验证。"""
 
 from __future__ import annotations
 
@@ -109,11 +102,6 @@ class AngleDataset(Dataset):
 
 
 def load_config(path: Path) -> dict[str, Any]:
-    """Read the TOML config and merge it over CONFIG_DEFAULTS.
-
-    Unknown keys are fatal: a typo like "norm_lamda" must not silently fall
-    back to the default and waste a run.
-    """
     with path.open("rb") as handle:
         values = tomllib.load(handle)
     unknown = sorted(set(values) - set(CONFIG_DEFAULTS))
@@ -159,14 +147,13 @@ def _spearman(a: np.ndarray, b: np.ndarray) -> float:
 
 
 def norm_metrics(outputs: np.ndarray, targets: np.ndarray) -> dict[str, float]:
-    """Norm statistics plus an exact additive split of the raw MSE.
+    """模长统计 + 原始 MSE 的精确加法分解。
 
-    |v-y|^2 = (||v||-1)^2 + 2*||v||*(1-cos dtheta); both terms are
-    non-negative, so norm_err_share = mean((||v||-1)^2) / mean(|v-y|^2) is an
-    exact decomposition.
+    |v-y|^2 = (||v||-1)^2 + 2*||v||*(1-cos dtheta)；两项均非负，因此
+    norm_err_share = mean((||v||-1)^2) / mean(|v-y|^2) 是精确分解。
 
-    The angle between v and the unit target equals the decoded circular error,
-    so arccos alignment doubles as a per-sample error for norm-dial tracking."""
+    v 与单位目标向量的夹角等于解码后的循环误差，故 arccos 对齐角可兼作
+    逐样本误差，供按模长表盘追踪。"""
     norms = np.linalg.norm(outputs, axis=-1)
     raw_mse = np.sum((outputs - targets) ** 2, axis=-1)
     total = float(np.mean(raw_mse))
@@ -215,11 +202,10 @@ class NamedDataset(Dataset):
 
 
 def combined_loss(outputs: torch.Tensor, targets: torch.Tensor, norm_lambda: float) -> torch.Tensor:
-    """MSE on raw sin/cos plus an optional quadratic norm anchor.
+    """原始 sin/cos 上的 MSE，外加可选的二次模长锚。
 
-    With the anchor, the per-sample equilibrium for direction alignment c is
-    r = (c + 2*lam) / (1 + 2*lam): r = 1 when c = 1, monotone in c, floored at
-    2*lam/(1+2*lam) for fully uncertain samples."""
+    带锚时，方向对齐度为 c 的逐样本均衡模长为 r = (c + 2*lam) / (1 + 2*lam)：
+    c = 1 时 r = 1，随 c 单调，完全不确定的样本下限为 2*lam/(1+2*lam)。"""
     mse = F.mse_loss(outputs, targets)
     if norm_lambda <= 0.0:
         return mse
@@ -309,7 +295,7 @@ def save_checkpoint(path: Path, model: nn.Module, model_config: dict[str, Any]) 
 def plot_loss_curves(output_dir: Path, history: list[dict[str, Any]]) -> None:
     import matplotlib
 
-    matplotlib.use("Agg")  # headless-safe, no display required
+    matplotlib.use("Agg")  # 无显示环境也可用
     import matplotlib.pyplot as plt
 
     epochs = [record["epoch"] for record in history]
@@ -347,20 +333,20 @@ def parse_args() -> argparse.Namespace:
         "--config",
         type=Path,
         default=DEFAULT_CONFIG_PATH,
-        help="training config TOML (model/loss/optimization/augmentation)",
+        help="训练配置 TOML（模型/损失/优化/增强）",
     )
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
-    parser.add_argument("--device", default=None, help="auto, cpu, or cuda")
+    parser.add_argument("--device", default=None, help="auto、cpu 或 cuda")
     parser.add_argument(
         "--threads",
         type=int,
         default=DEFAULT_THREADS,
-        help="CPU core count for torch (torch.set_num_threads)",
+        help="torch 的 CPU 线程数（torch.set_num_threads）",
     )
     parser.add_argument(
         "--smoke",
         action="store_true",
-        help="run one epoch with the normal training path",
+        help="以正常训练路径只跑一个 epoch",
     )
     return parser.parse_args()
 
@@ -531,8 +517,8 @@ def main() -> None:
     if not (output_dir / "best.pt").exists():
         raise RuntimeError("best checkpoint was not produced")
     best_record = min(history, key=lambda record: record["val_circular_mae"])
-    # Settlement: reload best.pt and re-evaluate on the validation set so the
-    # reported numbers are exactly those of the shipped checkpoint.
+    # 结算：重新加载 best.pt 并在验证集上重新评估，确保汇报的数字就是
+    # 交付 checkpoint 的数字。
     settled_model = load_model(output_dir / "best.pt", device=device)
     _, final_metrics = eval_loss(settled_model, val_loader, config["norm_lambda"], device)
     summary: dict[str, Any] = {

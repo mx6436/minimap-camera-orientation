@@ -1,9 +1,4 @@
-"""Predict an angle for one raw screenshot PNG.
-
-The screenshot is preprocessed exactly like the training data (see
-prepare_data.py and polar.py): the ROI is scaled to the actual resolution
-and the ring is unwrapped to a 360x44 RGB polar image.
-"""
+"""对单张原始截图 PNG 预测摄像机角度。"""
 
 from __future__ import annotations
 
