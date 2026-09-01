@@ -10,12 +10,12 @@ from pathlib import Path
 
 from PIL import Image
 
-from data_utils import (
+from endfield.data_utils import (
     load_json,
     png_names,
     validate_manifest_names,
 )
-from polar import (
+from endfield.polar import (
     IMG_H,
     IMG_W,
     INNER_R,

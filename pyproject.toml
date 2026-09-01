@@ -1,3 +1,7 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "endfield-minimap"
 version = "0.1.0"
@@ -11,6 +15,12 @@ dependencies = [
     "torch>=2.13",
     "MaaFw>=5.13.0b5",  # LinuxController + gamescope toolkit 需要 5.13.0b5+
 ]
+
+[project.scripts]
+train = "endfield.train.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["endfield"]
 
 [tool.ruff]
 line-length = 100
@@ -27,13 +37,7 @@ select = [
 ]
 
 [tool.pytest.ini_options]
-# 纯脚本项目：测试直接从仓库根目录导入 polar / data_utils 等模块
 testpaths = ["tests"]
-pythonpath = ["."]
-
-[tool.uv]
-# 纯脚本项目,不需要构建/安装为包
-package = false
 
 [dependency-groups]
 dev = [

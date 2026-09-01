@@ -9,7 +9,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from polar import INNER_R, OUTER_R, unwrap
+from endfield.polar import INNER_R, OUTER_R, unwrap
 
 # 方位角取坐标轴方向、半径取整数：亮点像素坐标可精确计算，展开后该方位角
 # 一列、亮点半径两侧两行上的采样点恰好命中亮点像素，能量（128）严格高于

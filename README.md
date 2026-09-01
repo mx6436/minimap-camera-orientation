@@ -12,7 +12,7 @@
 
 ```bash
 uv run prepare_data.py
-uv run train.py --output-dir runs/<name>
+uv run train --output-dir runs/<name>
 uv run predict.py data/raw/<screenshot>.png --checkpoint runs/<name>/best.pt
 ```
 
@@ -26,7 +26,7 @@ uv run prepare_data.py                    # 极坐标展开 + 清单切分
 
 验证集成员由 `data/val_manifest.json` 直接指定（val = 清单 ∩ processed，清单引用不存在的文件名则报错；train = 其余全部），清单由人维护，是运行脚本的前置条件。每次运行都会清空并重写 `data/processed`、`data/train` 和 `data/val`；只有 `data/raw` 与 `data/val_manifest.json` 永不被脚本改动。角度标签支持一位小数（如 `_r210.9.png`），训练目标保留浮点精度。
 
-`train.py` 只负责训练：读取 `data/train` 和 `data/val`，从不复制、移动或划分图像。全部训练参数集中在根目录 [`train.toml`](./train.toml)：每个键都有代码内默认值，文件明示当前基线，未知键硬报错。CLI 只保留调用管道：`--config`（默认 `train.toml`）、`--output-dir`、`--device`（auto/cpu/cuda）、`--threads`（CPU 线程，默认 16）与 `--smoke`（正常路径只跑一个 epoch，用于验证流程，不能替代完整训练）。数据加载为单进程（num\_workers=0）。
+训练入口是控制台命令 `uv run train`，只负责训练：读取训练/验证目录，从不复制、移动或划分图像。全部训练参数集中在根目录 [`train.toml`](./train.toml)：每个键都有代码内默认值，文件明示当前基线，未知键硬报错。CLI 只保留调用管道：`--config`（默认 `train.toml`）、`--output-dir`、`--device`（auto/cpu/cuda）、`--threads`（CPU 线程，默认 16）与 `--smoke`（正常路径只跑一个 epoch，用于验证流程，不能替代完整训练）。数据加载为单进程（num\_workers=0）。
 
 训练对训练图像以 50% 概率施加一次顺时针旋转，旋转角从 24 个非零的 15 度倍数（15°–345°）中均匀选取，目标角度按模 360 加上相同旋转量；旋转沿 1°/列的角度轴做 `np.roll`，24 个方向全部严格无损。验证图像不做任何增强。
 

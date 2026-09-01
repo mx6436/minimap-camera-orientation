@@ -6,7 +6,8 @@ import os
 import random
 import re
 import tempfile
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import numpy as np
@@ -58,13 +59,14 @@ def load_rgb(path: Path) -> np.ndarray:
         return np.asarray(image, dtype=np.uint8).copy()
 
 
-def atomic_json_dump(path: Path, value: object) -> None:
+@contextmanager
+def atomic_path(path: Path) -> Iterator[Path]:
+    """产出临时文件路径，写毕原子替换到 path；中途失败清理临时文件后原样抛出。"""
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent, text=True)
+    fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    os.close(fd)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as stream:
-            json.dump(value, stream, indent=2, ensure_ascii=True)
-            stream.write("\n")
+        yield Path(temp_name)
         os.replace(temp_name, path)
     except BaseException:
         try:
@@ -72,6 +74,13 @@ def atomic_json_dump(path: Path, value: object) -> None:
         except FileNotFoundError:
             pass
         raise
+
+
+def atomic_json_dump(path: Path, value: object) -> None:
+    with atomic_path(path) as temp:
+        with temp.open("w", encoding="utf-8") as stream:
+            json.dump(value, stream, indent=2, ensure_ascii=True)
+            stream.write("\n")
 
 
 def load_json(path: Path) -> dict:

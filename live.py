@@ -19,8 +19,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-import polar
-from model import choose_device, load_model, predict_angle
+import endfield.polar as polar
+from endfield.model import choose_device, load_model, predict_angle
 
 ROOT = Path(__file__).resolve().parent
 

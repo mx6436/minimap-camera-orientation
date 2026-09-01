@@ -14,7 +14,7 @@ import numpy as np
 import torch
 from torch import nn
 
-from data_utils import decode_angle
+from endfield.data_utils import decode_angle
 
 DEFAULT_HEAD_GRID = (2, 22)
 DEFAULT_HEAD_CHANNELS: int | None = 64
