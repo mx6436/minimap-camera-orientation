@@ -79,24 +79,3 @@ def scaled_roi(frame_shape: tuple[int, int]) -> tuple[float, float, float, float
         print(f"WARNING: non-uniform scale sx={sx:.4f} sy={sy:.4f}; ring will be distorted")
     cx, cy = ROI_CENTER[0] * sx, ROI_CENTER[1] * sy
     return cx, cy, INNER_R * sx, OUTER_R * sx
-
-
-def self_check_azimuth() -> None:
-    size = 224
-    canvas = np.zeros((size, size, 3), dtype=np.uint8)
-    cx, cy = size / 2.0, size / 2.0
-    # 每个方位角用唯一半径，避免不同亮点落在同一展开行上互相干扰
-    dots = ((0.0, 28.0), (90.0, 34.0), (180.0, 40.0), (270.0, 46.0))
-    for azimuth_deg, radius in dots:
-        px = int(round(cx + radius * np.sin(np.deg2rad(azimuth_deg))))
-        py = int(round(cy - radius * np.cos(np.deg2rad(azimuth_deg))))
-        canvas[py, px] = 255
-    out = unwrap(canvas, cx, cy, INNER_R, OUTER_R)
-    for azimuth_deg, radius in dots:
-        row = int(round(radius - 0.5 - INNER_R))
-        col = int(out[row].sum(axis=1).argmax())
-        if abs(col - azimuth_deg) > 1:
-            raise RuntimeError(
-                f"azimuth self-check failed: dot at {azimuth_deg}° landed in column {col}"
-            )
-    print("azimuth self-check ok: 0°->col 0 (north), clockwise, 1°/column")

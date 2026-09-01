@@ -16,6 +16,8 @@ uv run train.py --output-dir runs/<name>
 uv run predict.py data/raw/<screenshot>.png --checkpoint runs/<name>/best.pt
 ```
 
+测试通过 pytest 运行：`uv run pytest`。
+
 `prepare_data.py` 是唯一的前处理脚本，一条命令完成 raw → 极坐标展开 → 划分：
 
 ```bash

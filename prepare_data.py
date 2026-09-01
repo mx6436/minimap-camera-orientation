@@ -42,7 +42,6 @@ from polar import (
     OUTER_R,
     ROI_CENTER,
     load_source_rgb,
-    self_check_azimuth,
     unwrap,
 )
 
@@ -89,7 +88,6 @@ def generate_processed() -> list[str]:
         with Image.open(PROCESSED / name) as im:
             if im.size != (IMG_W, IMG_H) or im.mode != "RGB":
                 raise RuntimeError(f"invalid processed polar image: {name}")
-    self_check_azimuth()
     print(f"processed={len(processed_names)} format=polar -> {PROCESSED}")
     return processed_names
 

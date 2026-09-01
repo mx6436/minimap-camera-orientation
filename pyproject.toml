@@ -26,11 +26,17 @@ select = [
     "B",   # bugbear 常见错误
 ]
 
+[tool.pytest.ini_options]
+# 纯脚本项目：测试直接从仓库根目录导入 polar / data_utils 等模块
+testpaths = ["tests"]
+pythonpath = ["."]
+
 [tool.uv]
 # 纯脚本项目,不需要构建/安装为包
 package = false
 
 [dependency-groups]
 dev = [
+    "pytest>=9.1.1",
     "ruff>=0.16.5",
 ]
