@@ -54,6 +54,17 @@ def test_decode_logits_peaks_at_argmax() -> None:
     assert np.all(confidence > 0.99)
 
 
+def test_confidence_is_resultant_length() -> None:
+    """置信度 = 360 概率方向向量的合成模长：均匀分布趋 0，集中分布趋 1；
+    完美学到的 σ=2° 软标签后验虽宽带但仍应接近 1。"""
+    uniform = torch.zeros(2, 360)
+    broad_probs = smoothed_targets(np.array([90.0, 270.0]), sigma=2.0)
+    broad = torch.log(broad_probs.clamp_min(1e-12))  # softmax(log p) = p
+    _, confidence = decode_logits(torch.cat([uniform, broad]))
+    assert np.all(confidence[:2] < 1e-6)
+    assert np.all(confidence[2:] > 0.99)
+
+
 def test_smoothed_targets_roundtrip() -> None:
     angles = np.array([0.0, 179.5, 359.9])
     targets = smoothed_targets(angles)

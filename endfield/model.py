@@ -203,17 +203,21 @@ def smoothed_targets(angles: np.ndarray, sigma: float = TARGET_SIGMA) -> torch.T
 
 
 def decode_logits(logits: torch.Tensor) -> tuple[np.ndarray, np.ndarray]:
-    """argmax 定峰后取 ±REFINE_RADIUS 窗口内的循环加权平均，得到亚度级角度；
-    置信度为峰值 bin 的 softmax 概率。"""
+    """argmax 定峰后取 ±REFINE_RADIUS 窗口内的循环加权平均，得到亚度级角度。
+
+    置信度为 360 个概率方向向量（方向 = bin 方位角，长度 = softmax 概率）的合成
+    模长：分布集中时接近 1（宽带但单峰同样高分），均匀或多峰对消时趋 0。
+    """
     values = logits.detach().cpu()
-    probs = torch.softmax(values, dim=1)
-    centers = probs.argmax(dim=1).numpy()
-    confidence = probs.numpy()[np.arange(len(centers)), centers]
+    probs = torch.softmax(values, dim=1).numpy()
+    centers = probs.argmax(axis=1)
+    radians = np.deg2rad(np.arange(360))
+    confidence = np.hypot(probs @ np.sin(radians), probs @ np.cos(radians))
     offsets = np.arange(-REFINE_RADIUS, REFINE_RADIUS + 1)
     decoded = np.empty(len(centers), dtype=np.float64)
     for i, center in enumerate(centers):
         cols = (center + offsets) % 360
-        weights = probs[i, cols].numpy()
+        weights = probs[i, cols]
         radians = np.deg2rad(cols)
         angle = np.degrees(
             np.arctan2(np.sum(weights * np.sin(radians)), np.sum(weights * np.cos(radians)))
@@ -281,8 +285,8 @@ def load_model(path: Path | str, device: torch.device | str = "cpu") -> nn.Modul
 
 def predict_angle(model: nn.Module, strip_rgb: np.ndarray) -> tuple[float, float]:
     """strip_rgb: 极坐标展开的输出（RGB uint8，HWC 排布，见 CONTEXT.md）。
-    返回 (角度 [0,360), 置信度)：置信度语义随架构——ConeCNN 为峰值 softmax 概率，
-    AngleCNN 为输出向量范数。
+    返回 (角度 [0,360), 置信度)：置信度语义随架构——ConeCNN 为 360 概率方向向量
+    的合成模长（分布集中度），AngleCNN 为输出向量范数。
     """
     array = strip_rgb.astype(np.float32) / 255.0
     features = torch.from_numpy(array.transpose(2, 0, 1)).unsqueeze(0)
