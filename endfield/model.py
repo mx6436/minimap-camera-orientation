@@ -33,7 +33,11 @@ DEFAULT_ARCHITECTURE = ARCHITECTURE_CONE
 
 # 目标平滑 σ：扇形边缘是软过渡，σ 过小会让交叉熵梯度集中在 bin 边界上抖动
 TARGET_SIGMA = 2.0
-REFINE_RADIUS = 5
+# 解码内插核：softmax 尖峰时概率加权会退化为 argmax 本身，输出按 1° 整数量化跳变，
+# 且窗口内次峰翻转会带动均值跳动；固定核的强中心权重同时抑制这两者，
+# 概率不对称性仍提供亚度级内插
+REFINE_RADIUS = 2
+REFINE_KERNEL = (0.05, 0.15, 0.60, 0.15, 0.05)
 MATCH_DILATIONS = (4, 8, 16)
 
 
@@ -203,17 +207,18 @@ def smoothed_targets(angles: np.ndarray, sigma: float = TARGET_SIGMA) -> torch.T
 
 
 def decode_logits(logits: torch.Tensor) -> tuple[np.ndarray, np.ndarray]:
-    """argmax 定峰后取 ±REFINE_RADIUS 窗口内的循环加权平均，得到亚度级角度；
-    置信度为峰值 bin 的 softmax 概率。"""
+    """argmax 定峰后在 ±REFINE_RADIUS 窗口内以 REFINE_KERNEL 调制 softmax 概率
+    做循环加权平均，得到亚度级角度；置信度为峰值 bin 的 softmax 概率。"""
     values = logits.detach().cpu()
     probs = torch.softmax(values, dim=1)
     centers = probs.argmax(dim=1).numpy()
     confidence = probs.numpy()[np.arange(len(centers)), centers]
+    kernel = np.asarray(REFINE_KERNEL)
     offsets = np.arange(-REFINE_RADIUS, REFINE_RADIUS + 1)
     decoded = np.empty(len(centers), dtype=np.float64)
     for i, center in enumerate(centers):
         cols = (center + offsets) % 360
-        weights = probs[i, cols].numpy()
+        weights = kernel * probs[i, cols].numpy()
         radians = np.deg2rad(cols)
         angle = np.degrees(
             np.arctan2(np.sum(weights * np.sin(radians)), np.sum(weights * np.cos(radians)))
