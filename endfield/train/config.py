@@ -8,6 +8,8 @@ from typing import Any
 
 from endfield.data_utils import SEED
 from endfield.model import (
+    ARCHITECTURES,
+    DEFAULT_ARCHITECTURE,
     DEFAULT_DROPOUT,
     DEFAULT_HEAD_CHANNELS,
     DEFAULT_HEAD_GRID,
@@ -16,6 +18,7 @@ from endfield.model import (
 )
 
 CONFIG_DEFAULTS: dict[str, Any] = {
+    "architecture": DEFAULT_ARCHITECTURE,
     "batch_size": 32,
     "epochs": 200,
     "seed": SEED,
@@ -45,6 +48,11 @@ def load_config(path: Path) -> dict[str, Any]:
 
 
 def validate_config(config: dict[str, Any]) -> None:
+    if config["architecture"] not in ARCHITECTURES:
+        raise SystemExit(
+            f"architecture must be one of {', '.join(ARCHITECTURES)}, "
+            f"got {config['architecture']!r}"
+        )
     if config["epochs"] < 1 or config["batch_size"] < 1:
         raise SystemExit("epochs/batch_size must be positive")
     if not 0.0 <= config["dropout"] < 1.0:

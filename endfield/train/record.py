@@ -6,6 +6,8 @@ from typing import Any
 
 import torch
 
+from endfield.model import ARCHITECTURE_CONE
+
 
 def build_record(
     config: dict[str, Any],
@@ -16,17 +18,23 @@ def build_record(
     train_sha256: str,
     val_sha256: str,
 ) -> dict[str, Any]:
-    loss_description = "MSE([raw_sin, raw_cos], [target_sin, target_cos])"
-    if config["norm_lambda"] > 0.0:
+    cone = config["architecture"] == ARCHITECTURE_CONE
+    loss_description = (
+        "cross entropy over 360 bins, circular gaussian sigma=2 deg"
+        if cone
+        else "MSE([raw_sin, raw_cos], [target_sin, target_cos])"
+    )
+    if not cone and config["norm_lambda"] > 0.0:
         loss_description += f" + {config['norm_lambda']:g}*(||v||-1)^2"
     return {
-        "version": 19,
-        "head_grid": list(config["head_grid"]),
-        "head_channels": config["head_channels"] or None,
-        "radius_pool": config["radius_pool"],
-        "norm": config["norm"],
-        "dropout": config["dropout"],
-        "norm_lambda": config["norm_lambda"],
+        "version": 20,
+        "architecture": config["architecture"],
+        "head_grid": None if cone else list(config["head_grid"]),
+        "head_channels": None if cone else config["head_channels"] or None,
+        "radius_pool": None if cone else config["radius_pool"],
+        "norm": None if cone else config["norm"],
+        "dropout": 0.0 if cone else config["dropout"],
+        "norm_lambda": 0.0 if cone else config["norm_lambda"],
         "loss": loss_description,
         "input_shape": [3, 44, 360],
         "input_scaling": "RGB uint8 / 255",
@@ -38,7 +46,7 @@ def build_record(
         "seed": config["seed"],
         "threads": threads,
         "device": str(device),
-        "model": "AngleCNN",
+        "model": "ConeCNN" if cone else "AngleCNN",
         "trainable_parameters": None,
         "batch_size": config["batch_size"],
         "max_epochs": config["epochs"],

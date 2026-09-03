@@ -11,8 +11,11 @@ import torch
 
 from endfield.data_utils import atomic_json_dump, png_names, seed_everything
 from endfield.model import (
+    ARCHITECTURE_ANGLE_CNN,
+    ARCHITECTURE_CONE,
+    EXPECTED_CONE_PARAMETER_COUNT,
     EXPECTED_PARAMETER_COUNT,
-    AngleCNN,
+    build_model,
     choose_device,
     count_trainable_parameters,
     load_model,
@@ -80,22 +83,21 @@ def main() -> None:
             "choose an empty --output-dir"
         )
 
-    model_config = {
-        "dropout": config["dropout"],
-        "head_grid": list(config["head_grid"]),
-        "head_channels": config["head_channels"] or None,
-        "radius_pool": config["radius_pool"],
-        "norm": config["norm"],
-    }
-    model = AngleCNN(
-        dropout=config["dropout"],
-        head_grid=tuple(config["head_grid"]),
-        head_channels=config["head_channels"] or None,
-        radius_pool=config["radius_pool"],
-        norm=config["norm"],
-    ).to(device)
+    architecture = config["architecture"]
+    model_config = {"architecture": architecture}
+    if architecture == ARCHITECTURE_ANGLE_CNN:
+        model_config |= {
+            "dropout": config["dropout"],
+            "head_grid": list(config["head_grid"]),
+            "head_channels": config["head_channels"] or None,
+            "radius_pool": config["radius_pool"],
+            "norm": config["norm"],
+        }
+    model = build_model(architecture, config).to(device)
     parameter_count = count_trainable_parameters(model)
-    if model.is_default_architecture() and parameter_count != EXPECTED_PARAMETER_COUNT:
+    if architecture == ARCHITECTURE_ANGLE_CNN and parameter_count != EXPECTED_PARAMETER_COUNT:
+        raise RuntimeError(f"unexpected parameter count: {parameter_count}")
+    if architecture == ARCHITECTURE_CONE and parameter_count != EXPECTED_CONE_PARAMETER_COUNT:
         raise RuntimeError(f"unexpected parameter count: {parameter_count}")
     record = build_record(
         config,
@@ -142,8 +144,12 @@ def main() -> None:
     atomic_json_dump(output_dir / "history.json", {"epochs": history})
     max_epochs = 1 if args.smoke else config["epochs"]
     for epoch in range(max_epochs):
-        train_loss = train_epoch(model, train_loader, optimizer, config["norm_lambda"], device)
-        val_loss, val_metrics = eval_loss(model, val_loader, config["norm_lambda"], device)
+        train_loss = train_epoch(
+            model, train_loader, optimizer, config["norm_lambda"], device, architecture
+        )
+        val_loss, val_metrics = eval_loss(
+            model, val_loader, config["norm_lambda"], device, architecture
+        )
         scheduler.step(val_metrics["circular_rmse"])
         history.append(
             {
@@ -178,7 +184,9 @@ def main() -> None:
     # 结算：重新加载 best.pt 并在验证集上重新评估，确保汇报的数字就是
     # 交付 checkpoint 的数字。
     settled_model = load_model(output_dir / "best.pt", device=device)
-    _, final_metrics = eval_loss(settled_model, val_loader, config["norm_lambda"], device)
+    _, final_metrics = eval_loss(
+        settled_model, val_loader, config["norm_lambda"], device, architecture
+    )
     summary: dict[str, Any] = {
         "epoch": int(best_entry["epoch"]),
         "val_count": len(val_names),
@@ -187,7 +195,8 @@ def main() -> None:
     }
     atomic_json_dump(output_dir / "summary.json", summary)
     print(
-        f"best val_circular_rmse={best_entry['val_circular_rmse']:.3f}° (epoch {best_entry['epoch']})"
+        f"best val_circular_rmse={best_entry['val_circular_rmse']:.3f}° "
+        f"(epoch {best_entry['epoch']})"
     )
     print("final evaluation on best.pt (val set):")
     print(

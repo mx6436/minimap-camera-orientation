@@ -13,12 +13,13 @@ scheduler_patience = 8
 early_stop_patience = 25
 
 # 模型与损失
-dropout = 0.0
-norm_lambda = 0.0
-head_grid = [2, 22]
-head_channels = 64
-radius_pool = "avg"
-norm = "group"
+architecture = "cone"  # cone（默认）| angle_cnn（旧基线，供对照复现）
+dropout = 0.0  # 仅 angle_cnn 使用
+norm_lambda = 0.0  # 仅 angle_cnn 使用
+head_grid = [2, 22]  # 仅 angle_cnn 使用
+head_channels = 64  # 仅 angle_cnn 使用
+radius_pool = "avg"  # 仅 angle_cnn 使用
+norm = "group"  # 仅 angle_cnn 使用
 
 # 数据增强（噪声增强固定开启，无开关）
 rotation = true
