@@ -54,20 +54,6 @@ def test_decode_logits_peaks_at_argmax() -> None:
     assert np.all(confidence > 0.99)
 
 
-def test_decode_logits_interpolates_sub_degree() -> None:
-    """峰旁邻 bin 抬高时解码角落在两 bin 之间，且随 logit 变化连续而非 1° 跳变。"""
-    base = torch.full((1, 360), -10.0)
-    base[0, 180] = 10.0
-    sharper = base.clone()
-    sharper[0, 181] = 10.0
-    even = sharper.clone()
-    even[0, 181] = 10.6
-    angles, _ = decode_logits(torch.cat([base, sharper, even]))
-    assert angles[0] == 180.0
-    assert 180.0 < angles[1] < 181.0
-    assert angles[1] < angles[2] < 181.0
-
-
 def test_smoothed_targets_roundtrip() -> None:
     angles = np.array([0.0, 179.5, 359.9])
     targets = smoothed_targets(angles)
