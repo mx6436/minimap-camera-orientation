@@ -1,4 +1,7 @@
-"""MaaFw 实时截图 → 极坐标展开 → AngleCNN 角度预测 → 单窗口实时绘制。
+"""MaaFw 实时截图 → 极坐标展开 → 摄像机角度预测 → 单窗口实时绘制。
+
+模型由 checkpoint 内的架构标记分派，置信度语义随架构（见 predict_angle）：
+ConeCNN 为峰值 softmax 概率，AngleCNN 为输出向量范数。
 
 gamescope 实例通过 MaaToolkitGamescopeInstanceFindAll 自动发现：每个实例
 以 $XDG_RUNTIME_DIR 下 gamescope-<n> 命名的 Wayland socket 为键，附带
@@ -87,8 +90,8 @@ def render_disc(rgb: np.ndarray, cx: float, cy: float, r_out: float) -> np.ndarr
     return disc
 
 
-def draw_overlay(disc: np.ndarray, angle: float, norm: float) -> np.ndarray:
-    color = (0, 255, 255) if norm < CONFIDENCE_THRESHOLD else (0, 0, 255)
+def draw_overlay(disc: np.ndarray, angle: float, confidence: float) -> np.ndarray:
+    color = (0, 255, 255) if confidence < CONFIDENCE_THRESHOLD else (0, 0, 255)
     size = disc.shape[0] * DISPLAY_SCALE
     display = cv2.resize(disc, (size, size), interpolation=cv2.INTER_NEAREST)
     display = cv2.cvtColor(display, cv2.COLOR_RGBA2BGR)
@@ -102,7 +105,7 @@ def draw_overlay(disc: np.ndarray, angle: float, norm: float) -> np.ndarray:
     cv2.line(display, center, tip, color, max(2, DISPLAY_SCALE // 3), cv2.LINE_AA)
     cv2.putText(
         display,
-        f"angle={angle:.1f} norm={norm:.2f}",
+        f"angle={angle:.1f} conf={confidence:.2f}",
         (12, size - 16),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.7,
@@ -189,9 +192,9 @@ def main() -> None:
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         cx, cy, r_in, r_out = polar.scaled_roi(frame.shape[:2])
         strip = polar.unwrap(rgb, cx, cy, r_in, r_out)
-        angle, norm = predict_angle(model, strip)
+        angle, confidence = predict_angle(model, strip)
         disc = render_disc(rgb, cx, cy, r_out)
-        cv2.imshow("minimap angle", draw_overlay(disc, angle, norm))
+        cv2.imshow("minimap angle", draw_overlay(disc, angle, confidence))
         if not printed_info:
             print(
                 f"frame {frame.shape[1]}x{frame.shape[0]}, "
