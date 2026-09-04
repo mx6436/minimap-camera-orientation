@@ -202,22 +202,21 @@ def smoothed_targets(angles: np.ndarray, sigma: float = TARGET_SIGMA) -> torch.T
     return torch.from_numpy(weights.astype(np.float32))
 
 
-def decode_logits(logits: torch.Tensor) -> tuple[np.ndarray, np.ndarray]:
+def decode_probs(probs: torch.Tensor) -> tuple[np.ndarray, np.ndarray]:
     """argmax 定峰后取 ±REFINE_RADIUS 窗口内的循环加权平均，得到亚度级角度。
 
     置信度为 360 个概率方向向量（方向 = bin 方位角，长度 = softmax 概率）的合成
     模长：分布集中时接近 1（宽带但单峰同样高分），均匀或多峰对消时趋 0。
     """
-    values = logits.detach().cpu()
-    probs = torch.softmax(values, dim=1).numpy()
-    centers = probs.argmax(axis=1)
+    values = probs.detach().cpu().numpy()
+    centers = values.argmax(axis=1)
     radians = np.deg2rad(np.arange(360))
-    confidence = np.hypot(probs @ np.sin(radians), probs @ np.cos(radians))
+    confidence = np.hypot(values @ np.sin(radians), values @ np.cos(radians))
     offsets = np.arange(-REFINE_RADIUS, REFINE_RADIUS + 1)
     decoded = np.empty(len(centers), dtype=np.float64)
     for i, center in enumerate(centers):
         cols = (center + offsets) % 360
-        weights = probs[i, cols]
+        weights = values[i, cols]
         radians = np.deg2rad(cols)
         angle = np.degrees(
             np.arctan2(np.sum(weights * np.sin(radians)), np.sum(weights * np.cos(radians)))
@@ -225,6 +224,10 @@ def decode_logits(logits: torch.Tensor) -> tuple[np.ndarray, np.ndarray]:
         value = angle % 360.0
         decoded[i] = 0.0 if value == 360.0 else value
     return decoded, confidence
+
+
+def decode_logits(logits: torch.Tensor) -> tuple[np.ndarray, np.ndarray]:
+    return decode_probs(torch.softmax(logits.detach().cpu(), dim=1))
 
 
 def count_trainable_parameters(model: nn.Module) -> int:
@@ -288,13 +291,23 @@ def predict_angle(model: nn.Module, strip_rgb: np.ndarray) -> tuple[float, float
     返回 (角度 [0,360), 置信度)：置信度语义随架构——ConeCNN 为 360 概率方向向量
     的合成模长（分布集中度），AngleCNN 为输出向量范数。
     """
+    angle, confidence, _ = predict_probs(model, strip_rgb)
+    return angle, confidence
+
+
+def predict_probs(
+    model: nn.Module, strip_rgb: np.ndarray
+) -> tuple[float, float, np.ndarray | None]:
+    """predict_angle 附带第三返回值：ConeCNN 的 360 bin softmax 概率分布；
+    AngleCNN 输出向量无方位角分布语义，为 None。"""
     array = strip_rgb.astype(np.float32) / 255.0
     features = torch.from_numpy(array.transpose(2, 0, 1)).unsqueeze(0)
     features = features.to(next(model.parameters()).device)
     with torch.no_grad():
         output = model(features)
     if isinstance(model, ConeCNN):
-        angles, confidence = decode_logits(output)
-        return float(angles[0]), float(confidence[0])
+        probs = torch.softmax(output.detach().cpu(), dim=1)
+        angles, confidence = decode_probs(probs)
+        return float(angles[0]), float(confidence[0]), probs.numpy()[0]
     output = output.cpu().numpy()
-    return float(decode_angle(output)[0]), float(np.linalg.norm(output[0]))
+    return float(decode_angle(output)[0]), float(np.linalg.norm(output[0])), None
