@@ -104,10 +104,11 @@ def render_disc(rgb: np.ndarray, cx: float, cy: float, r_out: float) -> np.ndarr
 def _nice_step(rough: float) -> float:
     """1/2/5×10^k 中不小于 rough 的最小值，供坐标轴刻度取整。"""
     exponent = math.floor(math.log10(rough))
-    for mantissa in (1, 2, 5, 10):
+    for mantissa in (1, 2, 5):
         candidate = mantissa * 10.0**exponent
         if candidate >= rough:
             return candidate
+    return 10.0 ** (exponent + 1)
 
 
 def draw_distribution(probs: np.ndarray, angle: float, marker_color: tuple) -> np.ndarray:
