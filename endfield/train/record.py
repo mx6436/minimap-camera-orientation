@@ -48,13 +48,17 @@ def build_record(
         },
         "early_stopping_metric": "expected_rmse",
         "early_stopping_patience": config["early_stop_patience"],
-        "augmentation": {
-            "rgb_gaussian_noise": {
-                "probability": 0.5,
-                "sigma": 0.02,
-                "masked_to_ring_alpha": False,
-            },
-        },
+        "augmentation": (
+            {
+                "rgb_gaussian_noise": {
+                    "probability": 0.5,
+                    "sigma": 0.02,
+                    "masked_to_ring_alpha": False,
+                },
+            }
+            if config["noise_augment"]
+            else {}
+        ),
         "train_count": train_count,
         "val_count": val_count,
         "train_files_sha256": train_sha256,

@@ -10,3 +10,6 @@ lr = 1e-3
 weight_decay = 1e-4
 scheduler_patience = 8
 early_stop_patience = 25
+
+# 数据增强
+noise_augment = false

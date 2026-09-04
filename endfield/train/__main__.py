@@ -108,7 +108,7 @@ def main() -> None:
     train_generator = torch.Generator()
     train_generator.manual_seed(config["seed"])
     train_loader = make_loader(
-        AngleDataset(TRAIN_DIR, train_names, augment=True),
+        AngleDataset(TRAIN_DIR, train_names, augment=config["noise_augment"]),
         config["batch_size"],
         True,
         config["seed"],

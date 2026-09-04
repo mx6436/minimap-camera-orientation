@@ -16,6 +16,7 @@ CONFIG_DEFAULTS: dict[str, Any] = {
     "weight_decay": 1e-4,
     "scheduler_patience": 8,
     "early_stop_patience": 25,
+    "noise_augment": False,
 }
 
 
@@ -37,3 +38,5 @@ def validate_config(config: dict[str, Any]) -> None:
         raise SystemExit("lr must be positive and weight_decay non-negative")
     if config["scheduler_patience"] < 1 or config["early_stop_patience"] < 1:
         raise SystemExit("scheduler_patience/early_stop_patience must be positive")
+    if not isinstance(config["noise_augment"], bool):
+        raise SystemExit("noise_augment must be a boolean")
