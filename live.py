@@ -1,8 +1,7 @@
 """MaaFw 实时截图 → 极坐标展开 → 摄像机角度预测 → 单窗口实时绘制。
 
-模型由 checkpoint 内的架构标记分派，置信度语义随架构（见 predict_angle）：
-ConeCNN 为 360 概率方向向量的合成模长乘以解码方向与合成方向夹角的余弦，
-AngleCNN 为输出向量范数。
+置信度为 AzimuthNet 输出的 360 概率方向向量的合成模长乘以解码方向与合成
+方向夹角的余弦（见 predict_angle）。
 
 gamescope 实例通过 MaaToolkitGamescopeInstanceFindAll 自动发现：每个实例
 以 $XDG_RUNTIME_DIR 下 gamescope-<n> 命名的 Wayland socket 为键，附带
@@ -11,9 +10,8 @@ socket 路径。
 
 overlay 窗口另绘展示用圆形裁剪（完整圆盘，含中心圆与箭头）——仅给人看，
 不进模型，模型永远看不到位于中心圆内的箭头（见 CONTEXT.md「采样一致性
-假象」）。圆盘下方以函数曲线绘制 ConeCNN 输出的 360 bin 概率分布：
-横轴为定义域 [0,360)°，纵轴为概率，竖线标记解码角（AngleCNN 无此输出，
-只画圆盘）。
+假象」）。圆盘下方以函数曲线绘制 AzimuthNet 输出的 360 bin 概率分布：
+横轴为定义域 [0,360)°，纵轴为概率，竖线标记解码角。
 """
 
 from __future__ import annotations
@@ -130,15 +128,27 @@ def draw_distribution(probs: np.ndarray, angle: float, marker_color: tuple) -> n
         label = f"{tick:g}"
         (_, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
         cv2.putText(
-            canvas, label, (x0 - 10, y + th // 2),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.45, AXIS_COLOR, 1, cv2.LINE_AA,
+            canvas,
+            label,
+            (x0 - 10, y + th // 2),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.45,
+            AXIS_COLOR,
+            1,
+            cv2.LINE_AA,
         )
         tick += step
     cv2.line(canvas, (x0, y1), (x1, y1), AXIS_COLOR, 1, cv2.LINE_AA)
     cv2.line(canvas, (x0, y0), (x0, y1), AXIS_COLOR, 1, cv2.LINE_AA)
     cv2.putText(
-        canvas, "0", (x0 - 10, y1 + 6),
-        cv2.FONT_HERSHEY_SIMPLEX, 0.45, AXIS_COLOR, 1, cv2.LINE_AA,
+        canvas,
+        "0",
+        (x0 - 10, y1 + 6),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.45,
+        AXIS_COLOR,
+        1,
+        cv2.LINE_AA,
     )
     for deg in range(90, 361, 90):
         x = round(x0 + deg * PLOT_WIDTH / 360)
@@ -146,8 +156,14 @@ def draw_distribution(probs: np.ndarray, angle: float, marker_color: tuple) -> n
         label = str(deg)
         (tw, _), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
         cv2.putText(
-            canvas, label, (x - tw // 2, y1 + 18),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.45, AXIS_COLOR, 1, cv2.LINE_AA,
+            canvas,
+            label,
+            (x - tw // 2, y1 + 18),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.45,
+            AXIS_COLOR,
+            1,
+            cv2.LINE_AA,
         )
     # 分布以 bin 0/359 为循环接缝，函数在 360° 处取 p(0) 补全定义域端点
     values = np.append(probs, probs[0])
@@ -161,7 +177,7 @@ def draw_distribution(probs: np.ndarray, angle: float, marker_color: tuple) -> n
 
 
 def draw_overlay(
-    disc: np.ndarray, angle: float, confidence: float, probs: np.ndarray | None
+    disc: np.ndarray, angle: float, confidence: float, probs: np.ndarray
 ) -> np.ndarray:
     color = (0, 255, 255) if confidence < CONFIDENCE_THRESHOLD else (0, 0, 255)
     size = disc.shape[0] * DISPLAY_SCALE
@@ -186,8 +202,6 @@ def draw_overlay(
         2,
         cv2.LINE_AA,
     )
-    if probs is None:
-        return display
     plot = draw_distribution(probs, angle, color)
     width = max(display.shape[1], plot.shape[1])
     padded = np.zeros((display.shape[0] + plot.shape[0], width, 3), dtype=np.uint8)

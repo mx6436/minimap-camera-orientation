@@ -1,4 +1,4 @@
-"""训练角度回归 CNN 并在验证集上评估（`uv run train`，见 ADR 0004）。"""
+"""训练 AzimuthNet 并在验证集上评估（`uv run train`，见 ADR 0004）。"""
 
 from __future__ import annotations
 
@@ -11,11 +11,8 @@ import torch
 
 from endfield.data_utils import atomic_json_dump, png_names, seed_everything
 from endfield.model import (
-    ARCHITECTURE_ANGLE_CNN,
-    ARCHITECTURE_CONE,
-    EXPECTED_CONE_PARAMETER_COUNT,
     EXPECTED_PARAMETER_COUNT,
-    build_model,
+    AzimuthNet,
     choose_device,
     count_trainable_parameters,
     load_model,
@@ -83,22 +80,10 @@ def main() -> None:
             "choose an empty --output-dir"
         )
 
-    architecture = config["architecture"]
-    track_metric = "expected_rmse" if architecture == ARCHITECTURE_CONE else "circular_rmse"
-    model_config = {"architecture": architecture}
-    if architecture == ARCHITECTURE_ANGLE_CNN:
-        model_config |= {
-            "dropout": config["dropout"],
-            "head_grid": list(config["head_grid"]),
-            "head_channels": config["head_channels"] or None,
-            "radius_pool": config["radius_pool"],
-            "norm": config["norm"],
-        }
-    model = build_model(architecture, config).to(device)
+    model = AzimuthNet().to(device)
+    track_metric = "expected_rmse"
     parameter_count = count_trainable_parameters(model)
-    if architecture == ARCHITECTURE_ANGLE_CNN and parameter_count != EXPECTED_PARAMETER_COUNT:
-        raise RuntimeError(f"unexpected parameter count: {parameter_count}")
-    if architecture == ARCHITECTURE_CONE and parameter_count != EXPECTED_CONE_PARAMETER_COUNT:
+    if parameter_count != EXPECTED_PARAMETER_COUNT:
         raise RuntimeError(f"unexpected parameter count: {parameter_count}")
     record = build_record(
         config,
@@ -123,7 +108,7 @@ def main() -> None:
     train_generator = torch.Generator()
     train_generator.manual_seed(config["seed"])
     train_loader = make_loader(
-        AngleDataset(TRAIN_DIR, train_names, augment=True, rotate=config["rotation"]),
+        AngleDataset(TRAIN_DIR, train_names, augment=True),
         config["batch_size"],
         True,
         config["seed"],
@@ -145,12 +130,8 @@ def main() -> None:
     atomic_json_dump(output_dir / "history.json", {"epochs": history})
     max_epochs = 1 if args.smoke else config["epochs"]
     for epoch in range(max_epochs):
-        train_loss = train_epoch(
-            model, train_loader, optimizer, config["norm_lambda"], device, architecture
-        )
-        val_loss, val_metrics = eval_loss(
-            model, val_loader, config["norm_lambda"], device, architecture
-        )
+        train_loss = train_epoch(model, train_loader, optimizer, device)
+        val_loss, val_metrics = eval_loss(model, val_loader, device)
         scheduler.step(val_metrics[track_metric])
         history.append(
             {
@@ -165,7 +146,7 @@ def main() -> None:
         if improved:
             best_val = val_metrics[track_metric]
             bad_epochs = 0
-            save_checkpoint(output_dir / "best.pt", model, model_config)
+            save_checkpoint(output_dir / "best.pt", model)
         else:
             bad_epochs += 1
         atomic_json_dump(output_dir / "history.json", {"epochs": history})
@@ -183,9 +164,7 @@ def main() -> None:
     # 结算：重新加载 best.pt 并在验证集上重新评估，确保汇报的数字就是
     # 交付 checkpoint 的数字。
     settled_model = load_model(output_dir / "best.pt", device=device)
-    final_loss, final_metrics = eval_loss(
-        settled_model, val_loader, config["norm_lambda"], device, architecture
-    )
+    final_loss, final_metrics = eval_loss(settled_model, val_loader, device)
     summary: dict[str, Any] = {
         "epoch": int(best_entry["epoch"]),
         "val_count": len(val_names),

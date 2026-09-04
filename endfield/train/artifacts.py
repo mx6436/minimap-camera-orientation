@@ -13,8 +13,8 @@ from endfield.data_utils import atomic_path
 ARTIFACT_NAMES = ("best.pt", "record.json", "history.json", "summary.json")
 
 
-def save_checkpoint(path: Path, model: nn.Module, model_config: dict[str, Any]) -> None:
-    checkpoint = {"model": model.state_dict(), "config": model_config}
+def save_checkpoint(path: Path, model: nn.Module) -> None:
+    checkpoint = {"model": model.state_dict()}
     with atomic_path(path) as temp:
         torch.save(checkpoint, temp)
 
@@ -32,7 +32,7 @@ def plot_loss_curves(output_dir: Path, history: list[dict[str, Any]]) -> None:
     ax.plot(epochs, train_loss, label="train loss", color="#1f77b4")
     ax.plot(epochs, val_loss, label="val loss", color="#ff7f0e")
     ax.set_xlabel("epoch")
-    ax.set_ylabel("loss (MSE)")
+    ax.set_ylabel("loss (KL)")
     ax.set_title("Training and validation loss")
     ax.legend()
     ax.grid(True, alpha=0.3)

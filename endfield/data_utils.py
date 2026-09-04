@@ -38,16 +38,6 @@ def circular_error(predicted: np.ndarray, target: np.ndarray) -> np.ndarray:
     return np.abs((predicted - target + 180.0) % 360.0 - 180.0)
 
 
-def decode_angle(outputs: np.ndarray) -> np.ndarray:
-    outputs = np.asarray(outputs, dtype=np.float64)
-    if outputs.shape[-1] != 2:
-        raise ValueError(f"expected final dimension of 2, got {outputs.shape}")
-    norms = np.linalg.norm(outputs, axis=-1, keepdims=True)
-    normalized = outputs / np.maximum(norms, 1e-8)
-    angles = np.degrees(np.arctan2(normalized[..., 0], normalized[..., 1])) % 360.0
-    return angles
-
-
 def load_rgb(path: Path) -> np.ndarray:
     with Image.open(path) as image:
         if image.format != "PNG":

@@ -1,28 +1,29 @@
-"""ConeCNN 的构造保证与配套解码/目标编码。"""
+"""AzimuthNet 的构造保证与配套解码/目标编码。"""
 
 from __future__ import annotations
 
 import numpy as np
+import pytest
 import torch
 
 from endfield.model import (
-    EXPECTED_CONE_PARAMETER_COUNT,
-    ConeCNN,
-    build_model,
+    EXPECTED_PARAMETER_COUNT,
+    AzimuthNet,
     count_trainable_parameters,
     decode_logits,
+    load_model,
     smoothed_targets,
     target_angles,
 )
 
 
 def test_parameter_count_matches_expected() -> None:
-    model = ConeCNN()
-    assert count_trainable_parameters(model) == EXPECTED_CONE_PARAMETER_COUNT
+    model = AzimuthNet()
+    assert count_trainable_parameters(model) == EXPECTED_PARAMETER_COUNT
 
 
 def test_forward_shape() -> None:
-    model = ConeCNN().eval()
+    model = AzimuthNet().eval()
     with torch.no_grad():
         logits = model(torch.zeros(2, 3, 44, 360))
     assert logits.shape == (2, 360)
@@ -30,7 +31,7 @@ def test_forward_shape() -> None:
 
 def test_shift_equivariance() -> None:
     """输入沿方位角轴平移 δ° 时 logits 与解码角都精确平移 δ°。"""
-    model = ConeCNN().eval()
+    model = AzimuthNet().eval()
     x = torch.rand(2, 3, 44, 360)
     with torch.no_grad():
         base = model(x)
@@ -87,6 +88,15 @@ def test_smoothed_targets_roundtrip() -> None:
     assert np.allclose(recovered, angles % 360.0, atol=1e-4)
 
 
-def test_build_model_dispatch() -> None:
-    assert isinstance(build_model("cone", {}), ConeCNN)
-    assert not isinstance(build_model("angle_cnn", {}), ConeCNN)
+def test_load_model_rejects_invalid_checkpoint(tmp_path) -> None:
+    path = tmp_path / "bad.pt"
+    torch.save({"weights": {}}, path)
+    with pytest.raises(ValueError, match="invalid checkpoint"):
+        load_model(path)
+
+
+def test_load_model_rejects_legacy_checkpoint(tmp_path) -> None:
+    path = tmp_path / "legacy.pt"
+    torch.save({"model": {"stale": torch.zeros(1)}, "config": {"architecture": "cone"}}, path)
+    with pytest.raises(ValueError, match="incompatible checkpoint weights"):
+        load_model(path)

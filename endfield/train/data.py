@@ -18,17 +18,10 @@ VAL_DIR = REPO_ROOT / "data" / "val"
 
 
 class AngleDataset(Dataset):
-    def __init__(
-        self,
-        directory: Path,
-        names: list[str],
-        augment: bool = False,
-        rotate: bool = True,
-    ) -> None:
+    def __init__(self, directory: Path, names: list[str], augment: bool = False) -> None:
         self.directory = directory
         self.names = names
         self.augment = augment
-        self.rotate = rotate
 
     def __len__(self) -> int:
         return len(self.names)
@@ -38,11 +31,6 @@ class AngleDataset(Dataset):
         angle = parse_angle(Path(name))
         array = load_rgb(self.directory / name).astype(np.float32) / 255.0
         if self.augment:
-            if self.rotate and random.random() < 0.5:
-                delta = 15 * random.randint(1, 23)
-                # 1°/列角度轴：内容顺时针转 delta 度 == 列右移 delta（严格无损）。
-                array = np.roll(array, delta, axis=1)
-                angle = (angle + delta) % 360
             if random.random() < 0.5:
                 array = array + np.random.normal(0.0, 0.02, array.shape).astype(np.float32)
             array = np.clip(array, 0.0, 1.0)
