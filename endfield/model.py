@@ -206,12 +206,15 @@ def decode_probs(probs: torch.Tensor) -> tuple[np.ndarray, np.ndarray]:
     """argmax 定峰后取 ±REFINE_RADIUS 窗口内的循环加权平均，得到亚度级角度。
 
     置信度为 360 个概率方向向量（方向 = bin 方位角，长度 = softmax 概率）的合成
-    模长：分布集中时接近 1（宽带但单峰同样高分），均匀或多峰对消时趋 0。
+    模长，再乘以解码方向与合成方向夹角的余弦：分布集中且窗口均值对准合成方向时
+    接近 1，均匀、多峰对消或窗口均值被次要峰拉偏时趋 0。
     """
     values = probs.detach().cpu().numpy()
     centers = values.argmax(axis=1)
     radians = np.deg2rad(np.arange(360))
-    confidence = np.hypot(values @ np.sin(radians), values @ np.cos(radians))
+    sin_sum = values @ np.sin(radians)
+    cos_sum = values @ np.cos(radians)
+    confidence = np.hypot(sin_sum, cos_sum)
     offsets = np.arange(-REFINE_RADIUS, REFINE_RADIUS + 1)
     decoded = np.empty(len(centers), dtype=np.float64)
     for i, center in enumerate(centers):
@@ -223,6 +226,8 @@ def decode_probs(probs: torch.Tensor) -> tuple[np.ndarray, np.ndarray]:
         )
         value = angle % 360.0
         decoded[i] = 0.0 if value == 360.0 else value
+        resultant = np.degrees(np.arctan2(sin_sum[i], cos_sum[i]))
+        confidence[i] *= np.cos(np.deg2rad(decoded[i] - resultant))
     return decoded, confidence
 
 
@@ -289,7 +294,7 @@ def load_model(path: Path | str, device: torch.device | str = "cpu") -> nn.Modul
 def predict_angle(model: nn.Module, strip_rgb: np.ndarray) -> tuple[float, float]:
     """strip_rgb: 极坐标展开的输出（RGB uint8，HWC 排布，见 CONTEXT.md）。
     返回 (角度 [0,360), 置信度)：置信度语义随架构——ConeCNN 为 360 概率方向向量
-    的合成模长（分布集中度），AngleCNN 为输出向量范数。
+    的合成模长乘以解码方向与合成方向夹角的余弦，AngleCNN 为输出向量范数。
     """
     angle, confidence, _ = predict_probs(model, strip_rgb)
     return angle, confidence

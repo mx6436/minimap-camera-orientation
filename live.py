@@ -1,7 +1,8 @@
 """MaaFw 实时截图 → 极坐标展开 → 摄像机角度预测 → 单窗口实时绘制。
 
 模型由 checkpoint 内的架构标记分派，置信度语义随架构（见 predict_angle）：
-ConeCNN 为 360 概率方向向量的合成模长，AngleCNN 为输出向量范数。
+ConeCNN 为 360 概率方向向量的合成模长乘以解码方向与合成方向夹角的余弦，
+AngleCNN 为输出向量范数。
 
 gamescope 实例通过 MaaToolkitGamescopeInstanceFindAll 自动发现：每个实例
 以 $XDG_RUNTIME_DIR 下 gamescope-<n> 命名的 Wayland socket 为键，附带
