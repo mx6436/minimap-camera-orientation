@@ -84,6 +84,7 @@ def main() -> None:
         )
 
     architecture = config["architecture"]
+    track_metric = "expected_rmse" if architecture == ARCHITECTURE_CONE else "circular_rmse"
     model_config = {"architecture": architecture}
     if architecture == ARCHITECTURE_ANGLE_CNN:
         model_config |= {
@@ -150,20 +151,19 @@ def main() -> None:
         val_loss, val_metrics = eval_loss(
             model, val_loader, config["norm_lambda"], device, architecture
         )
-        scheduler.step(val_metrics["circular_rmse"])
+        scheduler.step(val_metrics[track_metric])
         history.append(
             {
                 "epoch": epoch + 1,
                 "train_loss": train_loss,
                 "val_loss": val_loss,
-                "val_circular_mae": val_metrics["circular_mae"],
-                "val_circular_rmse": val_metrics["circular_rmse"],
+                **{f"val_{k}": v for k, v in val_metrics.items()},
                 "learning_rate": optimizer.param_groups[0]["lr"],
             }
         )
-        improved = val_metrics["circular_rmse"] < best_val
+        improved = val_metrics[track_metric] < best_val
         if improved:
-            best_val = val_metrics["circular_rmse"]
+            best_val = val_metrics[track_metric]
             bad_epochs = 0
             save_checkpoint(output_dir / "best.pt", model, model_config)
         else:
@@ -171,8 +171,7 @@ def main() -> None:
         atomic_json_dump(output_dir / "history.json", {"epochs": history})
         print(
             f"epoch={epoch + 1}/{max_epochs} train_loss={train_loss:.6f} "
-            f"val_mae={val_metrics['circular_mae']:.3f}° "
-            f"val_rmse={val_metrics['circular_rmse']:.3f}°"
+            f"val_{track_metric}={val_metrics[track_metric]:.3f}°"
         )
         if not args.smoke and bad_epochs >= config["early_stop_patience"]:
             print("early stopping")
@@ -180,35 +179,28 @@ def main() -> None:
 
     if not (output_dir / "best.pt").exists():
         raise RuntimeError("best checkpoint was not produced")
-    best_entry = min(history, key=lambda entry: entry["val_circular_rmse"])
+    best_entry = min(history, key=lambda entry: entry[f"val_{track_metric}"])
     # 结算：重新加载 best.pt 并在验证集上重新评估，确保汇报的数字就是
     # 交付 checkpoint 的数字。
     settled_model = load_model(output_dir / "best.pt", device=device)
-    _, final_metrics = eval_loss(
+    final_loss, final_metrics = eval_loss(
         settled_model, val_loader, config["norm_lambda"], device, architecture
     )
     summary: dict[str, Any] = {
         "epoch": int(best_entry["epoch"]),
         "val_count": len(val_names),
-        "best_val_circular_rmse": best_entry["val_circular_rmse"],
+        f"best_val_{track_metric}": best_entry[f"val_{track_metric}"],
+        "val_loss": final_loss,
         **{f"val_{k}": v for k, v in final_metrics.items()},
     }
     atomic_json_dump(output_dir / "summary.json", summary)
     print(
-        f"best val_circular_rmse={best_entry['val_circular_rmse']:.3f}° "
+        f"best val_{track_metric}={best_entry[f'val_{track_metric}']:.3f}° "
         f"(epoch {best_entry['epoch']})"
     )
     print("final evaluation on best.pt (val set):")
-    print(
-        f"  val_circular_mae={final_metrics['circular_mae']:.3f}°  "
-        f"val_circular_median={final_metrics['circular_median']:.3f}°"
-    )
-    print(
-        f"  within_1_degree={final_metrics['within_1_degree']:.2%}  "
-        f"within_3_degrees={final_metrics['within_3_degrees']:.2%}  "
-        f"within_5_degrees={final_metrics['within_5_degrees']:.2%}  "
-        f"within_10_degrees={final_metrics['within_10_degrees']:.2%}"
-    )
+    print(f"  val_loss={final_loss:.4f}")
+    print("  " + "  ".join(f"{k}={v:.4f}" for k, v in final_metrics.items()))
     plot_loss_curves(output_dir, history)
 
 

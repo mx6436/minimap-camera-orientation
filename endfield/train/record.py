@@ -20,12 +20,14 @@ def build_record(
 ) -> dict[str, Any]:
     cone = config["architecture"] == ARCHITECTURE_CONE
     loss_description = (
-        "cross entropy over 360 bins, circular gaussian sigma=2 deg"
+        "KL(q||p) over 360 bins, q = circular gaussian sigma=2 deg"
+        " (= cross entropy minus constant target entropy H(q))"
         if cone
         else "MSE([raw_sin, raw_cos], [target_sin, target_cos])"
     )
     if not cone and config["norm_lambda"] > 0.0:
         loss_description += f" + {config['norm_lambda']:g}*(||v||-1)^2"
+    track_metric = "expected_rmse" if cone else "circular_rmse"
     return {
         "version": 20,
         "architecture": config["architecture"],
@@ -55,12 +57,12 @@ def build_record(
         "weight_decay": config["weight_decay"],
         "scheduler": {
             "name": "ReduceLROnPlateau",
-            "metric": "circular_rmse",
+            "metric": track_metric,
             "patience": config["scheduler_patience"],
             "factor": 0.5,
             "min_lr": 1e-6,
         },
-        "early_stopping_metric": "circular_rmse",
+        "early_stopping_metric": track_metric,
         "early_stopping_patience": config["early_stop_patience"],
         "augmentation": {
             "rgb_gaussian_noise": {

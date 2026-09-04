@@ -20,6 +20,22 @@ def _spearman(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.corrcoef(_rank_data(a), _rank_data(b))[0, 1])
 
 
+def distribution_metrics(probs: np.ndarray, angles: np.ndarray) -> dict[str, float]:
+    """分布级指标：在概率质量函数上直接评价，不经过 argmax 解码。"""
+    if probs.shape[-1] != 360:
+        raise ValueError(f"expected final dimension of 360, got {probs.shape}")
+    diff = (np.arange(360.0) - angles[:, None] + 180.0) % 360.0 - 180.0
+    dist = np.abs(diff)
+    log_p = np.log(probs + 1e-12)
+    return {
+        "expected_mae": float(np.mean(np.sum(probs * dist, axis=1))),
+        "expected_rmse": float(np.sqrt(np.mean(np.sum(probs * diff**2, axis=1)))),
+        "entropy": float(np.mean(-np.sum(probs * log_p, axis=1))),
+        "target_mass_5deg": float(np.mean(np.sum(probs * (dist <= 5.0), axis=1))),
+        "peak_prob": float(np.mean(probs.max(axis=1))),
+    }
+
+
 def norm_metrics(outputs: np.ndarray, targets: np.ndarray) -> dict[str, float]:
     """模长统计 + 原始 MSE 的精确加法分解。
 

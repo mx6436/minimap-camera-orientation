@@ -8,14 +8,12 @@ import torch.nn.functional as F
 from torch import nn
 from torch.utils.data import DataLoader
 
-from endfield.data_utils import circular_error
 from endfield.model import (
     ARCHITECTURE_CONE,
-    decode_logits,
     smoothed_targets,
     target_angles,
 )
-from endfield.train.metrics import metrics_from_outputs, norm_metrics
+from endfield.train.metrics import distribution_metrics, metrics_from_outputs, norm_metrics
 
 
 def combined_loss(outputs: torch.Tensor, targets: torch.Tensor, norm_lambda: float) -> torch.Tensor:
@@ -39,7 +37,12 @@ def loss_from_outputs(
 ) -> torch.Tensor:
     if architecture == ARCHITECTURE_CONE:
         labels = smoothed_targets(target_angles(targets.numpy())).to(device)
-        return F.cross_entropy(outputs, labels)
+        log_probs = F.log_softmax(outputs, dim=-1)
+        cross_entropy = -(labels * log_probs).sum(dim=-1)
+        target_entropy = -(labels * torch.log(labels + 1e-12)).sum(dim=-1)
+        # 交叉熵的下确界是目标分布自身的熵 H(q) > 0；减去这一定值即得
+        # KL(q||p)，梯度不变而下确界为 0，loss 才能直接读作"距理想分布还差多少"
+        return (cross_entropy - target_entropy).mean()
     return combined_loss(outputs, targets.to(device), norm_lambda)
 
 
@@ -77,6 +80,7 @@ def eval_loss(
     total = 0.0
     samples = 0
     outputs: list[np.ndarray] = []
+    probs_list: list[np.ndarray] = []
     targets_list: list[np.ndarray] = []
     with torch.no_grad():
         for features, targets in loader:
@@ -88,8 +92,7 @@ def eval_loss(
             )
             samples += batch_size
             if architecture == ARCHITECTURE_CONE:
-                decoded, _ = decode_logits(prediction)
-                outputs.append(decoded)
+                probs_list.append(torch.softmax(prediction, dim=1).cpu().numpy())
             else:
                 outputs.append(prediction.cpu().numpy())
             targets_list.append(targets.numpy())
@@ -97,17 +100,7 @@ def eval_loss(
     # 目标是单位圆上的 [sin, cos]，反解回的角度与文件名标注等价（往返误差 ~1e-5°）
     angles = np.degrees(np.arctan2(target_array[:, 0], target_array[:, 1])) % 360.0
     if architecture == ARCHITECTURE_CONE:
-        decoded = np.concatenate(outputs)
-        errors = circular_error(decoded, angles)
-        return total / samples, {
-            "circular_mae": float(np.mean(errors)),
-            "circular_rmse": float(np.sqrt(np.mean(errors**2))),
-            "circular_median": float(np.median(errors)),
-            "within_1_degree": float(np.mean(errors <= 1.0)),
-            "within_3_degrees": float(np.mean(errors <= 3.0)),
-            "within_5_degrees": float(np.mean(errors <= 5.0)),
-            "within_10_degrees": float(np.mean(errors <= 10.0)),
-        }
+        return total / samples, distribution_metrics(np.concatenate(probs_list), angles)
     output_array = np.concatenate(outputs)
     metrics = metrics_from_outputs(output_array, angles)
     metrics.update(norm_metrics(output_array, target_array))
