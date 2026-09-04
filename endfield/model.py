@@ -13,8 +13,9 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-# 目标平滑 σ：扇形边缘是软过渡，σ 过小会让交叉熵梯度集中在 bin 边界上抖动
-TARGET_SIGMA = 2.0
+# 目标平滑 σ：扇形边缘是软过渡，σ 过小会让交叉熵梯度集中在 bin 边界上抖动。
+# 仅作 train.toml 未配置时的默认值；实际训练经 target_sigma 配置项传入。
+TARGET_SIGMA = 3.0
 REFINE_RADIUS = 5
 MATCH_DILATIONS = (4, 8, 16)
 
@@ -30,7 +31,7 @@ class CircularConv1d(nn.Module):
 
 
 class AzimuthNet(nn.Module):
-    """逐像素评分 -> 径向聚合 -> 角向匹配滤波，输出 360 bin logits。
+    """逐像素评分 -> 径向聚合 -> 角向匹配滤波，输出 Z/360Z 上逐方位角的 logits。
 
     方位角轴不做下采样、只做循环卷积，因此对输入平移精确等变。
     """
@@ -77,7 +78,7 @@ def target_angles(targets: np.ndarray) -> np.ndarray:
 
 
 def smoothed_targets(angles: np.ndarray, sigma: float = TARGET_SIGMA) -> torch.Tensor:
-    """角度 -> 360 bin 循环高斯分布，供交叉熵使用。"""
+    """角度 -> Z/360Z 上的循环高斯概率质量函数，供交叉熵使用。"""
     bins = np.arange(360, dtype=np.float64)
     dist = (bins[None, :] - angles[:, None] + 180.0) % 360.0 - 180.0
     weights = np.exp(-0.5 * (dist / sigma) ** 2)
@@ -159,7 +160,7 @@ def predict_angle(model: nn.Module, strip_rgb: np.ndarray) -> tuple[float, float
 
 
 def predict_probs(model: nn.Module, strip_rgb: np.ndarray) -> tuple[float, float, np.ndarray]:
-    """predict_angle 附带第三返回值：360 bin softmax 概率分布。"""
+    """predict_angle 附带第三返回值：Z/360Z 上的 softmax 概率质量函数。"""
     array = strip_rgb.astype(np.float32) / 255.0
     features = torch.from_numpy(array.transpose(2, 0, 1)).unsqueeze(0)
     features = features.to(next(model.parameters()).device)

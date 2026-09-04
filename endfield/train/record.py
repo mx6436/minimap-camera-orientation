@@ -17,10 +17,12 @@ def build_record(
     val_sha256: str,
 ) -> dict[str, Any]:
     return {
-        "version": 22,
+        "version": 23,
+        "target_sigma": config["target_sigma"],
         "loss": (
-            "KL(q||p) over 360 bins, q = circular gaussian sigma=2 deg"
-            " (= cross entropy minus constant target entropy H(q))"
+            f"KL(q||p) between circular categorical distributions on Z/360Z, "
+            f"q = wrapped gaussian pmf with sigma={config['target_sigma']:g} deg "
+            "(= cross entropy minus constant target entropy H(q))"
         ),
         "input_shape": [3, 44, 360],
         "input_scaling": "RGB uint8 / 255",

@@ -11,5 +11,8 @@ weight_decay = 1e-4
 scheduler_patience = 8
 early_stop_patience = 25
 
+# 损失目标：360 bin 软标签的循环高斯 σ（度）
+target_sigma = 3.0
+
 # 数据增强
 noise_augment = false

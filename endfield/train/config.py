@@ -7,11 +7,13 @@ from pathlib import Path
 from typing import Any
 
 from endfield.data_utils import SEED
+from endfield.model import TARGET_SIGMA
 
 CONFIG_DEFAULTS: dict[str, Any] = {
     "batch_size": 32,
     "epochs": 200,
     "seed": SEED,
+    "target_sigma": TARGET_SIGMA,
     "lr": 1e-3,
     "weight_decay": 1e-4,
     "scheduler_patience": 8,
@@ -38,5 +40,7 @@ def validate_config(config: dict[str, Any]) -> None:
         raise SystemExit("lr must be positive and weight_decay non-negative")
     if config["scheduler_patience"] < 1 or config["early_stop_patience"] < 1:
         raise SystemExit("scheduler_patience/early_stop_patience must be positive")
+    if config["target_sigma"] <= 0.0 or config["target_sigma"] >= 90.0:
+        raise SystemExit("target_sigma must be in degrees, 0 < target_sigma < 90")
     if not isinstance(config["noise_augment"], bool):
         raise SystemExit("noise_augment must be a boolean")

@@ -130,8 +130,8 @@ def main() -> None:
     atomic_json_dump(output_dir / "history.json", {"epochs": history})
     max_epochs = 1 if args.smoke else config["epochs"]
     for epoch in range(max_epochs):
-        train_loss = train_epoch(model, train_loader, optimizer, device)
-        val_loss, val_metrics = eval_loss(model, val_loader, device)
+        train_loss = train_epoch(model, train_loader, optimizer, device, config["target_sigma"])
+        val_loss, val_metrics = eval_loss(model, val_loader, device, config["target_sigma"])
         scheduler.step(val_metrics[track_metric])
         history.append(
             {
@@ -164,7 +164,7 @@ def main() -> None:
     # 结算：重新加载 best.pt 并在验证集上重新评估，确保汇报的数字就是
     # 交付 checkpoint 的数字。
     settled_model = load_model(output_dir / "best.pt", device=device)
-    final_loss, final_metrics = eval_loss(settled_model, val_loader, device)
+    final_loss, final_metrics = eval_loss(settled_model, val_loader, device, config["target_sigma"])
     summary: dict[str, Any] = {
         "epoch": int(best_entry["epoch"]),
         "val_count": len(val_names),

@@ -16,8 +16,9 @@ def loss_from_outputs(
     outputs: torch.Tensor,
     targets: torch.Tensor,
     device: torch.device,
+    sigma: float,
 ) -> torch.Tensor:
-    labels = smoothed_targets(target_angles(targets.numpy())).to(device)
+    labels = smoothed_targets(target_angles(targets.numpy()), sigma=sigma).to(device)
     log_probs = F.log_softmax(outputs, dim=-1)
     cross_entropy = -(labels * log_probs).sum(dim=-1)
     target_entropy = -(labels * torch.log(labels + 1e-12)).sum(dim=-1)
@@ -31,6 +32,7 @@ def train_epoch(
     loader: DataLoader,
     optimizer: torch.optim.Optimizer,
     device: torch.device,
+    sigma: float,
 ) -> float:
     model.train()
     total = 0.0
@@ -38,7 +40,7 @@ def train_epoch(
     for features, targets in loader:
         optimizer.zero_grad(set_to_none=True)
         outputs = model(features.to(device))
-        loss = loss_from_outputs(outputs, targets, device)
+        loss = loss_from_outputs(outputs, targets, device, sigma)
         loss.backward()
         optimizer.step()
         batch_size = len(features)
@@ -51,6 +53,7 @@ def eval_loss(
     model: nn.Module,
     loader: DataLoader,
     device: torch.device,
+    sigma: float,
 ) -> tuple[float, dict[str, float]]:
     model.eval()
     total = 0.0
@@ -61,7 +64,7 @@ def eval_loss(
         for features, targets in loader:
             prediction = model(features.to(device))
             batch_size = len(features)
-            total += loss_from_outputs(prediction, targets, device).item() * batch_size
+            total += loss_from_outputs(prediction, targets, device, sigma).item() * batch_size
             samples += batch_size
             probs_list.append(torch.softmax(prediction, dim=1).cpu().numpy())
             targets_list.append(targets.numpy())
