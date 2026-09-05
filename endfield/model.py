@@ -13,11 +13,15 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
+from endfield.polar import IMG_H
+
 # 目标平滑 σ：扇形边缘是软过渡，σ 过小会让交叉熵梯度集中在 bin 边界上抖动。
 # 仅作 train.toml 未配置时的默认值；实际训练经 target_sigma 配置项传入。
 TARGET_SIGMA = 3.0
 REFINE_RADIUS = 5
 MATCH_DILATIONS = (4, 8, 16)
+# 径向 softmax 须覆盖 trunk 输出的全部半径行
+RADIAL_KERNEL = IMG_H // 4
 
 
 class CircularConv1d(nn.Module):
@@ -52,7 +56,7 @@ class AzimuthNet(nn.Module):
                 layers.append(nn.AvgPool2d((2, 1)))
         self.trunk = nn.Sequential(*layers)
         self.score = nn.Conv2d(trunk_channels, score_channels, 1)
-        self.radial = nn.Parameter(torch.zeros(score_channels, 11))
+        self.radial = nn.Parameter(torch.zeros(score_channels, RADIAL_KERNEL))
         d1, d2, d3 = MATCH_DILATIONS
         self.filter = nn.Sequential(
             CircularConv1d(score_channels, 32, 9, d1),
@@ -123,7 +127,7 @@ def count_trainable_parameters(model: nn.Module) -> int:
     return sum(parameter.numel() for parameter in model.parameters() if parameter.requires_grad)
 
 
-EXPECTED_PARAMETER_COUNT = 110_017
+EXPECTED_PARAMETER_COUNT = 110_001
 
 
 def choose_device(value: str | None = None) -> torch.device:

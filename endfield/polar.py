@@ -1,4 +1,4 @@
-"""极坐标展开几何：环形小地图 -> 360x44 RGB 模型输入的唯一共享实现。
+"""极坐标展开几何：环形小地图 -> 360x42 RGB 模型输入的唯一共享实现。
 
 约定（见 CONTEXT.md「极坐标展开」词条）：
 - 极点为 ROI 中心，角度零点为正北，顺时针为正；
@@ -6,7 +6,7 @@
   0/360 接缝位于第 359 列与第 0 列之间）；
 - 半径 -> y 轴：第 i 行的像素中心对应半径 r_in + (i + 0.5)·step
   （step = (r_out - r_in) / IMG_H；基准分辨率下 step=1，即内径 12、
-  外径 56 之间 1:1 采样，内径在上）；
+  外径 54 之间 1:1 采样，内径在上）；
 """
 
 from __future__ import annotations
@@ -20,10 +20,10 @@ from PIL import Image
 BASE_SIZE = (1280, 720)
 ROI_CENTER = (108.0, 111.0)
 INNER_R = 12.0
-OUTER_R = 56.0
+OUTER_R = 54.0
 
 IMG_W = 360
-IMG_H = 44
+IMG_H = 42
 
 
 def load_source_rgb(path: Path) -> np.ndarray:

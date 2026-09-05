@@ -15,6 +15,7 @@ from endfield.model import (
     smoothed_targets,
     target_angles,
 )
+from endfield.polar import IMG_H, IMG_W
 
 
 def test_parameter_count_matches_expected() -> None:
@@ -25,14 +26,14 @@ def test_parameter_count_matches_expected() -> None:
 def test_forward_shape() -> None:
     model = AzimuthNet().eval()
     with torch.no_grad():
-        logits = model(torch.zeros(2, 3, 44, 360))
+        logits = model(torch.zeros(2, 3, IMG_H, IMG_W))
     assert logits.shape == (2, 360)
 
 
 def test_shift_equivariance() -> None:
     """输入沿方位角轴平移 δ° 时 logits 与解码角都精确平移 δ°。"""
     model = AzimuthNet().eval()
-    x = torch.rand(2, 3, 44, 360)
+    x = torch.rand(2, 3, IMG_H, IMG_W)
     with torch.no_grad():
         base = model(x)
         rolled = model(torch.roll(x, 10, dims=3))

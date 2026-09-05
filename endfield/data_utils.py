@@ -13,9 +13,11 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from endfield.polar import IMG_H, IMG_W
+
 ANGLE_RE = re.compile(r"_r(\d+(?:\.\d+)?)\.png$")
 SEED = 42
-POLAR_IMAGE_SIZE = (360, 44)
+POLAR_IMAGE_SIZE = (IMG_W, IMG_H)
 
 
 def parse_angle(path: Path) -> float:
@@ -43,7 +45,7 @@ def load_rgb(path: Path) -> np.ndarray:
         if image.format != "PNG":
             raise ValueError(f"{path}: expected PNG, got {image.format}")
         if image.size != POLAR_IMAGE_SIZE:
-            raise ValueError(f"{path}: expected 360x44, got {image.size}")
+            raise ValueError(f"{path}: expected {IMG_W}x{IMG_H}, got {image.size}")
         if image.mode != "RGB":
             raise ValueError(f"{path}: expected RGB, got {image.mode}")
         return np.asarray(image, dtype=np.uint8).copy()

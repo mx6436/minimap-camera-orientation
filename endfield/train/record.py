@@ -6,6 +6,8 @@ from typing import Any
 
 import torch
 
+from endfield.polar import IMG_H, IMG_W
+
 
 def build_record(
     config: dict[str, Any],
@@ -24,10 +26,10 @@ def build_record(
             f"q = wrapped gaussian pmf with sigma={config['target_sigma']:g} deg "
             "(= cross entropy minus constant target entropy H(q))"
         ),
-        "input_shape": [3, 44, 360],
+        "input_shape": [3, IMG_H, IMG_W],
         "input_scaling": "RGB uint8 / 255",
         "input_representation": (
-            "polar_unwrap_rgb_360x44 (angle->x, 1 deg/column, clockwise, north at column 0; "
+            f"polar_unwrap_rgb_{IMG_W}x{IMG_H} (angle->x, 1 deg/column, clockwise, north at column 0; "
             "radius->y, inner at top)"
         ),
         "conv_padding_mode": "azimuth-circular; radius-zero (radius boundaries are ring-outside)",

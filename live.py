@@ -29,7 +29,7 @@ from endfield.model import choose_device, load_model, predict_probs
 
 ROOT = Path(__file__).resolve().parent
 
-DISPLAY_BOX = 112  # 外径 56 的外接正方形，720p 基准
+DISPLAY_BOX = 108  # 外径 54 的外接正方形，720p 基准
 DISPLAY_SCALE = 6
 ARROW_LENGTH = 42
 CONFIDENCE_THRESHOLD = 0.7
