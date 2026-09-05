@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import time
 from pathlib import Path
 
 import cv2
@@ -62,6 +63,12 @@ def parse_args() -> argparse.Namespace:
         help="模型 checkpoint 完整路径；省略时使用 runs/<run>/best.pt",
     )
     parser.add_argument("--device", default=None, help="推理设备，默认自动选择")
+    parser.add_argument(
+        "--fps",
+        type=float,
+        default=30.0,
+        help="绘制帧率上限（fps），默认 30；设为 0 表示不限速",
+    )
     parser.add_argument(
         "--display",
         type=int,
@@ -278,7 +285,9 @@ def main() -> None:
     print(f"connected: pw_node_id={node_id}, eis_socket={eis_socket}")
 
     printed_info = False
+    interval = 1.0 / args.fps if args.fps > 0 else 0.0
     while True:
+        started = time.monotonic()
         try:
             frame = controller.post_screencap().get()
         except RuntimeError:
@@ -297,7 +306,8 @@ def main() -> None:
                 f"ring outer radius = {r_out:.1f} px (scale x{r_out / polar.OUTER_R:.3f})"
             )
             printed_info = True
-        key = cv2.waitKey(1) & 0xFF
+        remaining_ms = round((interval - (time.monotonic() - started)) * 1000)
+        key = cv2.waitKey(max(1, remaining_ms)) & 0xFF
         if key in (ord("q"), 27):
             break
 
