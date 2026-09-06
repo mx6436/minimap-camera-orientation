@@ -7,6 +7,7 @@ import pytest
 import torch
 
 from endfield.model import (
+    ARCH_VERSION,
     EXPECTED_PARAMETER_COUNT,
     AzimuthNet,
     count_trainable_parameters,
@@ -98,7 +99,14 @@ def test_load_model_rejects_invalid_checkpoint(tmp_path) -> None:
 
 def test_load_model_rejects_legacy_checkpoint(tmp_path) -> None:
     path = tmp_path / "legacy.pt"
-    torch.save({"model": {"stale": torch.zeros(1)}, "config": {"architecture": "cone"}}, path)
+    torch.save(
+        {
+            "model": {"stale": torch.zeros(1)},
+            "arch": ARCH_VERSION,
+            "config": {"architecture": "cone"},
+        },
+        path,
+    )
     with pytest.raises(ValueError, match="incompatible checkpoint weights"):
         load_model(path)
 

@@ -19,7 +19,10 @@ from endfield.polar import IMG_H, IMG_W
 # 仅作 train.toml 未配置时的默认值；实际训练经 target_sigma 配置项传入。
 TARGET_SIGMA = 3.0
 REFINE_RADIUS = 5
-MATCH_DILATIONS = (4, 8, 16)
+# 匹配滤波的线性支撑集是三层跨度的和集 {d1·a+d2·b+d3·c}；首层跨度必须为 1，
+# 否则和集只落在公因子的格点上（如 (4,8,16) 时仅模 4 同余列），线性部分
+# 分解为互不相干的剩余类滤波器，输出带周期性纹波且无法经训练消除
+MATCH_DILATIONS = (1, 8, 16)
 # trunk 角向 dilation 逐层加倍：零参数地把逐像素打分的上下文扩到
 # ±15°（图标在 r≈30px 处张角约 ±11°），径向保持无 dilation。
 TRUNK_AZIMUTH_DILATIONS = (2, 4, 8)
@@ -33,6 +36,11 @@ class CircularConv1d(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.conv(F.pad(x, (self.pad, self.pad), mode="circular"))
+
+
+# 架构版本：checkpoint 缺失或不一致即拒绝加载；跨度等不影响参数量与键集的
+# 变更必须递增此值，否则旧权重会被静默加载后输出无效结果
+ARCH_VERSION = 2
 
 
 class AzimuthNet(nn.Module):
@@ -51,8 +59,12 @@ class AzimuthNet(nn.Module):
                 nn.CircularPad2d((dilation, dilation, 0, 0)),
                 nn.ZeroPad2d((0, 0, 1, 1)),
                 nn.Conv2d(
-                    channels[i], channels[i + 1], 3,
-                    dilation=(1, dilation), padding=0, bias=False,
+                    channels[i],
+                    channels[i + 1],
+                    3,
+                    dilation=(1, dilation),
+                    padding=0,
+                    bias=False,
                 ),
                 nn.GroupNorm(16, channels[i + 1]),
                 nn.ReLU(inplace=True),
@@ -155,6 +167,10 @@ def load_model(path: Path | str, device: torch.device | str = "cpu") -> nn.Modul
     checkpoint = torch.load(path, map_location="cpu", weights_only=False)
     if not isinstance(checkpoint, dict) or "model" not in checkpoint:
         raise ValueError(f"invalid checkpoint: {path}")
+    if checkpoint.get("arch") != ARCH_VERSION:
+        raise ValueError(
+            f"checkpoint arch version {checkpoint.get('arch')!r} != {ARCH_VERSION}: {path}"
+        )
     model = AzimuthNet()
     if count_trainable_parameters(model) != EXPECTED_PARAMETER_COUNT:
         raise RuntimeError("unexpected model parameter count")

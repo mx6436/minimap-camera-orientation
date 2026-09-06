@@ -9,12 +9,13 @@ import torch
 from torch import nn
 
 from endfield.data_utils import atomic_path
+from endfield.model import ARCH_VERSION
 
 ARTIFACT_NAMES = ("best.pt", "record.json", "history.json", "summary.json")
 
 
 def save_checkpoint(path: Path, model: nn.Module) -> None:
-    checkpoint = {"model": model.state_dict()}
+    checkpoint = {"model": model.state_dict(), "arch": ARCH_VERSION}
     with atomic_path(path) as temp:
         torch.save(checkpoint, temp)
 

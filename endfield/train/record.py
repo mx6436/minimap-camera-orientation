@@ -46,7 +46,8 @@ def build_record(
         "input_shape": [3, IMG_H, IMG_W],
         "input_scaling": "RGB uint8 / 255",
         "input_representation": (
-            f"polar_unwrap_rgb_{IMG_W}x{IMG_H} (angle->x, 1 deg/column, clockwise, north at column 0; "
+            f"polar_unwrap_rgb_{IMG_W}x{IMG_H} (angle->x, 1 deg/column, clockwise, "
+            "north at column 0; "
             "radius->y, inner at top)"
         ),
         "conv_padding_mode": "azimuth-circular; radius-zero (radius boundaries are ring-outside)",
