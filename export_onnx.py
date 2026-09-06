@@ -1,8 +1,10 @@
-"""将训练好的 AzimuthNet checkpoint 导出为 ONNX（MaaEnd cpp-algo 交付格式）。
+"""将训练好的 AzimuthNet checkpoint 导出为 ONNX 交付格式。
 
-图内 bake /255 归一化与 softmax：输入 uint8 极坐标条带 [1,3,42,360]，
-输出 Z/360Z 上的离散概率质量函数 [1,360]。循环 pad 原样导出为 Pad(wrap)，
-由消费侧运行时（MaaEnd ONNX Runtime）支持。
+输入为 uint8 BGR HWC [1,42,360,3] 极坐标条带，即 OpenCV remap 的原生输出
+布局，消费方无需任何格式转换即可零拷贝建张量。BGR→RGB 通道翻转与 /255
+归一化对卷积均为线性变换，折入首层卷积权重；图内仅保留 HWC→CHW 转置与
+softmax。输出 Z/360Z 上的离散概率质量函数 [1,360]。循环 pad 原样导出为
+Pad(wrap)，由 ONNX Runtime 支持。
 """
 
 from __future__ import annotations
@@ -24,13 +26,26 @@ ROOT = Path(__file__).resolve().parent
 DESCRIPTION = "AzimuthNet: Endfield minimap camera angle classifier on polar-unwrapped ring strips"
 
 
+def fold_input_conventions(net: nn.Module) -> None:
+    """把 BGR→RGB 通道翻转与 /255 折入首层卷积权重。
+
+    两者对卷积输入都是线性变换（翻转 = 逆序输入通道，/255 = 标量缩放），
+    模型首层卷积无偏置，折叠精确无损。模型内部训练契约仍是 RGB NCHW [0,1]。
+    """
+    conv0 = next(m for m in net.trunk if isinstance(m, nn.Conv2d))
+    if conv0.bias is not None:
+        raise ValueError("first conv is expected to be bias-free for exact folding")
+    weight = conv0.weight.detach()
+    conv0.weight.data = weight[:, [2, 1, 0]] / 255.0
+
+
 class ExportWrapper(nn.Module):
     def __init__(self, net: nn.Module) -> None:
         super().__init__()
         self.net = net
 
-    def forward(self, strip_uint8: torch.Tensor) -> torch.Tensor:
-        features = strip_uint8.float() / 255.0
+    def forward(self, strip_bgr: torch.Tensor) -> torch.Tensor:
+        features = strip_bgr.permute(0, 3, 1, 2).float()
         return torch.softmax(self.net(features), dim=1)
 
 
@@ -48,10 +63,11 @@ def attach_metadata(path: Path, record: dict, summary: dict, checkpoint: Path) -
     metadata = {
         "description": DESCRIPTION,
         "input_spec": (
-            "uint8 [1,3,42,360] NCHW RGB. Polar unwrap of the world-anchored minimap ring: "
+            "uint8 [1,42,360,3] NHWC BGR. Polar unwrap of the world-anchored minimap ring: "
             "angle->x (1 deg/column, clockwise, north = column 0); radius->y, inner radius on top. "
             "r_in=12, r_out=54 at the 720p baseline (1280x720), ring center at (108,111); "
-            "values in [0,255]; /255 is applied inside the graph"
+            "values in [0,255]; BGR->RGB flip and /255 are folded into the first convolution "
+            "weights, HWC->CHW is a Transpose inside the graph"
         ),
         "output_spec": (
             "float32 [1,360] discrete probability mass function over azimuth bins, softmax "
@@ -74,6 +90,7 @@ def attach_metadata(path: Path, record: dict, summary: dict, checkpoint: Path) -
 
 def export(checkpoint: Path, output: Path) -> None:
     net = load_model(checkpoint, device="cpu")
+    fold_input_conventions(net)
     wrapper = ExportWrapper(net).eval()
 
     run_dir = checkpoint.parent
@@ -82,7 +99,7 @@ def export(checkpoint: Path, output: Path) -> None:
     with open(run_dir / "summary.json") as f:
         summary = json.load(f)
 
-    dummy = torch.zeros(1, 3, POLAR_H, POLAR_W, dtype=torch.uint8)
+    dummy = torch.zeros(1, POLAR_H, POLAR_W, 3, dtype=torch.uint8)
     torch.onnx.export(
         wrapper,
         (dummy,),
