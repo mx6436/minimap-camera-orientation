@@ -81,7 +81,7 @@ def main() -> None:
         )
 
     model = AzimuthNet().to(device)
-    track_metric = "expected_rmse"
+    track_metric = "rms_error"
     parameter_count = count_trainable_parameters(model)
     if parameter_count != EXPECTED_PARAMETER_COUNT:
         raise RuntimeError(f"unexpected parameter count: {parameter_count}")

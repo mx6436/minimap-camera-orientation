@@ -76,8 +76,8 @@ def attach_metadata(path: Path, record: dict, summary: dict, checkpoint: Path) -
         ),
         "source_checkpoint": str(checkpoint),
         "git_commit": git_commit(),
-        "val_expected_mae_deg": f"{summary['val_expected_mae']:.6f}",
-        "val_expected_rmse_deg": f"{summary['val_expected_rmse']:.6f}",
+        "val_expected_abs_error_deg": f"{summary['val_expected_abs_error']:.6f}",
+        "val_rms_error_deg": f"{summary['val_rms_error']:.6f}",
         "target_sigma_deg": str(record["target_sigma"]),
         "trainable_parameters": str(record["trainable_parameters"]),
     }

@@ -36,7 +36,7 @@ def build_record(
     val_sha256: str,
 ) -> dict[str, Any]:
     return {
-        "version": 24,
+        "version": 25,
         "target_sigma": config["target_sigma"],
         "loss": (
             f"KL(q||p) between circular categorical distributions on Z/360Z, "
@@ -62,12 +62,12 @@ def build_record(
         "weight_decay": config["weight_decay"],
         "scheduler": {
             "name": "ReduceLROnPlateau",
-            "metric": "expected_rmse",
+            "metric": "rms_error",
             "patience": config["scheduler_patience"],
             "factor": 0.5,
             "min_lr": 1e-6,
         },
-        "early_stopping_metric": "expected_rmse",
+        "early_stopping_metric": "rms_error",
         "early_stopping_patience": config["early_stop_patience"],
         "augmentation": augmentation(config),
         "train_count": train_count,
