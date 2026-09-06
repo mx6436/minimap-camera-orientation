@@ -101,3 +101,14 @@ def test_load_model_rejects_legacy_checkpoint(tmp_path) -> None:
     torch.save({"model": {"stale": torch.zeros(1)}, "config": {"architecture": "cone"}}, path)
     with pytest.raises(ValueError, match="incompatible checkpoint weights"):
         load_model(path)
+
+
+def test_outermost_radius_rows_reach_output() -> None:
+    """回归：最外圈半径行的证据不得被径向池化丢弃。"""
+    model = AzimuthNet().eval()
+    base = torch.zeros(1, 3, IMG_H, IMG_W)
+    perturbed = base.clone()
+    perturbed[:, :, IMG_H - 1, :] = 1.0
+    with torch.no_grad():
+        difference = (model(perturbed) - model(base)).abs().max().item()
+    assert difference > 1e-4

@@ -18,10 +18,17 @@ VAL_DIR = REPO_ROOT / "data" / "val"
 
 
 class AngleDataset(Dataset):
-    def __init__(self, directory: Path, names: list[str], augment: bool = False) -> None:
+    def __init__(
+        self,
+        directory: Path,
+        names: list[str],
+        noise_augment: bool = False,
+        roll_augment: bool = False,
+    ) -> None:
         self.directory = directory
         self.names = names
-        self.augment = augment
+        self.noise_augment = noise_augment
+        self.roll_augment = roll_augment
 
     def __len__(self) -> int:
         return len(self.names)
@@ -30,7 +37,13 @@ class AngleDataset(Dataset):
         name = self.names[index]
         angle = parse_angle(Path(name))
         array = load_rgb(self.directory / name).astype(np.float32) / 255.0
-        if self.augment:
+        if self.roll_augment:
+            # 架构对角向平移精确等变，滚动后的样本严格有效；随机 δ 同时
+            # 平衡各 bin 的有效样本量，不受标注角度分布影响
+            delta = random.randrange(360)
+            array = np.roll(array, delta, axis=1)
+            angle = (angle + delta) % 360.0
+        if self.noise_augment:
             if random.random() < 0.5:
                 array = array + np.random.normal(0.0, 0.02, array.shape).astype(np.float32)
             array = np.clip(array, 0.0, 1.0)

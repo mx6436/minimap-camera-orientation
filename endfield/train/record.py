@@ -9,6 +9,23 @@ import torch
 from endfield.polar import IMG_H, IMG_W
 
 
+def augmentation(config: dict[str, Any]) -> dict[str, Any]:
+    values: dict[str, Any] = {}
+    if config["noise_augment"]:
+        values["rgb_gaussian_noise"] = {
+            "probability": 0.5,
+            "sigma": 0.02,
+            "masked_to_ring_alpha": False,
+        }
+    if config["roll_augment"]:
+        values["azimuth_roll"] = {
+            "axis": "azimuth",
+            "delta_sample": "uniform integer [0, 360)",
+            "label_shift": "same delta mod 360",
+        }
+    return values
+
+
 def build_record(
     config: dict[str, Any],
     threads: int,
@@ -19,7 +36,7 @@ def build_record(
     val_sha256: str,
 ) -> dict[str, Any]:
     return {
-        "version": 23,
+        "version": 24,
         "target_sigma": config["target_sigma"],
         "loss": (
             f"KL(q||p) between circular categorical distributions on Z/360Z, "
@@ -52,17 +69,7 @@ def build_record(
         },
         "early_stopping_metric": "expected_rmse",
         "early_stopping_patience": config["early_stop_patience"],
-        "augmentation": (
-            {
-                "rgb_gaussian_noise": {
-                    "probability": 0.5,
-                    "sigma": 0.02,
-                    "masked_to_ring_alpha": False,
-                },
-            }
-            if config["noise_augment"]
-            else {}
-        ),
+        "augmentation": augmentation(config),
         "train_count": train_count,
         "val_count": val_count,
         "train_files_sha256": train_sha256,

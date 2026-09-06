@@ -19,6 +19,7 @@ CONFIG_DEFAULTS: dict[str, Any] = {
     "scheduler_patience": 8,
     "early_stop_patience": 25,
     "noise_augment": False,
+    "roll_augment": True,
 }
 
 
@@ -44,3 +45,5 @@ def validate_config(config: dict[str, Any]) -> None:
         raise SystemExit("target_sigma must be in degrees, 0 < target_sigma < 90")
     if not isinstance(config["noise_augment"], bool):
         raise SystemExit("noise_augment must be a boolean")
+    if not isinstance(config["roll_augment"], bool):
+        raise SystemExit("roll_augment must be a boolean")

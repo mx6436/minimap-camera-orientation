@@ -16,3 +16,5 @@ target_sigma = 3.0
 
 # 数据增强
 noise_augment = false
+# 角向滚动：架构精确等变下的严格有效增广，同时平衡各 bin 的标注分布
+roll_augment = true

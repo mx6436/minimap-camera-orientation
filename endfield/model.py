@@ -13,15 +13,16 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from endfield.polar import IMG_H
+from endfield.polar import IMG_H, IMG_W
 
 # 目标平滑 σ：扇形边缘是软过渡，σ 过小会让交叉熵梯度集中在 bin 边界上抖动。
 # 仅作 train.toml 未配置时的默认值；实际训练经 target_sigma 配置项传入。
 TARGET_SIGMA = 3.0
 REFINE_RADIUS = 5
 MATCH_DILATIONS = (4, 8, 16)
-# 径向 softmax 须覆盖 trunk 输出的全部半径行
-RADIAL_KERNEL = IMG_H // 4
+# trunk 角向 dilation 逐层加倍：零参数地把逐像素打分的上下文扩到
+# ±15°（图标在 r≈30px 处张角约 ±11°），径向保持无 dilation。
+TRUNK_AZIMUTH_DILATIONS = (2, 4, 8)
 
 
 class CircularConv1d(nn.Module):
@@ -44,19 +45,30 @@ class AzimuthNet(nn.Module):
         super().__init__()
         channels = [3, 32, 64, trunk_channels]
         layers: list[nn.Module] = []
-        for i in range(3):
+        for i, dilation in enumerate(TRUNK_AZIMUTH_DILATIONS):
+            # 角向 pad 量随 dilation 增大，径向边界仍补零：内外径边界不连通
             layers += [
-                nn.CircularPad2d((1, 1, 0, 0)),
+                nn.CircularPad2d((dilation, dilation, 0, 0)),
                 nn.ZeroPad2d((0, 0, 1, 1)),
-                nn.Conv2d(channels[i], channels[i + 1], 3, padding=0, bias=False),
+                nn.Conv2d(
+                    channels[i], channels[i + 1], 3,
+                    dilation=(1, dilation), padding=0, bias=False,
+                ),
                 nn.GroupNorm(16, channels[i + 1]),
                 nn.ReLU(inplace=True),
             ]
-            if i < 2:
+            # 仅块 1 后池化：42→21 行全数保留，不再丢弃最外圈半径行
+            if i == 0:
                 layers.append(nn.AvgPool2d((2, 1)))
         self.trunk = nn.Sequential(*layers)
-        self.score = nn.Conv2d(trunk_channels, score_channels, 1)
-        self.radial = nn.Parameter(torch.zeros(score_channels, RADIAL_KERNEL))
+        self.score = nn.Sequential(
+            nn.CircularPad2d((1, 1, 0, 0)),
+            nn.ZeroPad2d((0, 0, 1, 1)),
+            nn.Conv2d(trunk_channels, score_channels, 3),
+        )
+        with torch.no_grad():
+            radial_rows = self.trunk(torch.zeros(1, 3, IMG_H, IMG_W)).shape[-2]
+        self.radial = nn.Parameter(torch.zeros(score_channels, radial_rows))
         d1, d2, d3 = MATCH_DILATIONS
         self.filter = nn.Sequential(
             CircularConv1d(score_channels, 32, 9, d1),
@@ -127,7 +139,7 @@ def count_trainable_parameters(model: nn.Module) -> int:
     return sum(parameter.numel() for parameter in model.parameters() if parameter.requires_grad)
 
 
-EXPECTED_PARAMETER_COUNT = 110_001
+EXPECTED_PARAMETER_COUNT = 126_561
 
 
 def choose_device(value: str | None = None) -> torch.device:
