@@ -12,8 +12,8 @@
 
 ```bash
 uv run prepare_data.py
-uv run train --output-dir runs/<name>
-uv run predict.py data/raw/<screenshot>.png --checkpoint runs/<name>/best.pt
+uv run train --run-dir runs/<name>
+uv run predict.py data/raw/<screenshot>.png --run-dir runs/<name>
 ```
 
 测试通过 pytest 运行：`uv run pytest`。
@@ -26,9 +26,9 @@ uv run prepare_data.py                    # 极坐标展开 + 清单切分
 
 验证集成员由 `data/val_manifest.json` 直接指定（val = 清单 ∩ processed，清单引用不存在的文件名则报错；train = 其余全部），清单由人维护，是运行脚本的前置条件。每次运行都会清空并重写 `data/processed`、`data/train` 和 `data/val`；只有 `data/raw` 与 `data/val_manifest.json` 永不被脚本改动。角度标签支持一位小数（如 `_r210.9.png`），训练目标保留浮点精度。
 
-训练入口是控制台命令 `uv run train`，只负责训练：读取训练/验证目录，从不复制、移动或划分图像。全部训练参数集中在根目录 [`train.toml`](./train.toml)：每个键都有代码内默认值，文件明示当前基线，未知键硬报错。CLI 只保留调用管道：`--config`（默认 `train.toml`）、`--output-dir`、`--device`（auto/cpu/cuda）、`--threads`（CPU 线程，默认 16）与 `--smoke`（正常路径只跑一个 epoch，用于验证流程，不能替代完整训练）。
+训练入口是控制台命令 `uv run train`，只负责训练：读取训练/验证目录，从不复制、移动或划分图像。全部训练参数集中在根目录 [`train.toml`](./train.toml)：每个键都有代码内默认值，文件明示当前基线，未知键硬报错。CLI 只保留调用管道：`--config`（默认 `train.toml`）、`--run-dir`（必填，run 产物目录）、`--device`（auto/cpu/cuda）、`--threads`（CPU 线程，默认 16）与 `--smoke`（正常路径只跑一个 epoch，用于验证流程，不能替代完整训练）。
 
-`predict.py` 接受恰好一张原始截图 PNG（任意分辨率，按 720p 基准等比缩放 ROI 后极坐标展开），不要求预先裁剪。默认读取 `runs/production_001/best.pt`；需要时传 `--checkpoint` 和 `--device`。
+`predict.py` 接受恰好一张原始截图 PNG（任意分辨率，按 720p 基准等比缩放 ROI 后极坐标展开），不要求预先裁剪。`--run-dir` 必填，模型读取其中的 `best.pt`；设备可用 `--device` 指定。
 
 ## 数据目录
 

@@ -27,8 +27,6 @@ import numpy as np
 import endfield.polar as polar
 from endfield.model import choose_device, load_model, predict_probs
 
-ROOT = Path(__file__).resolve().parent
-
 DISPLAY_BOX = 108  # 外径 54 的外接正方形，720p 基准
 DISPLAY_SCALE = 6
 ARROW_LENGTH = 42
@@ -52,15 +50,10 @@ INPUT_LIBEI = 4
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--run",
-        default="production_001",
-        help="runs 目录下的模型子目录名（读取 runs/<run>/best.pt，默认 production_001）",
-    )
-    parser.add_argument(
-        "--checkpoint",
+        "--run-dir",
         type=Path,
-        default=None,
-        help="模型 checkpoint 完整路径；省略时使用 runs/<run>/best.pt",
+        required=True,
+        help="run 产物目录，读取其中的 best.pt",
     )
     parser.add_argument("--device", default=None, help="推理设备，默认自动选择")
     parser.add_argument(
@@ -256,9 +249,7 @@ def resolve_gamescope(instances: list, args: argparse.Namespace) -> tuple[int, s
 
 def main() -> None:
     args = parse_args()
-    if args.checkpoint is None:
-        args.checkpoint = ROOT / "runs" / args.run / "best.pt"
-    model = load_model(args.checkpoint, device=choose_device(args.device))
+    model = load_model(args.run_dir / "best.pt", device=choose_device(args.device))
 
     try:
         from maa.controller import LinuxController

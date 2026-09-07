@@ -114,10 +114,8 @@ def export(checkpoint: Path, output: Path) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--checkpoint", type=Path, default=ROOT / "runs" / "production_001" / "best.pt"
-    )
+    parser.add_argument("--run-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, default=None)
     args = parser.parse_args()
-    output = args.output or args.checkpoint.parent / "cameraorientation.onnx"
-    export(args.checkpoint, output)
+    output = args.output or args.run_dir / "cameraorientation.onnx"
+    export(args.run_dir / "best.pt", output)
