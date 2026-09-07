@@ -1,11 +1,12 @@
-"""摄像机角度预测模型（AzimuthNet）：逐像素预测颜色类别后验，沿半径聚合为
-360 维方位角剖面，再经循环一维卷积匹配滤波输出每个方位角的 logits；
-交叉熵训练，argmax 解码。方位角轴全程不下采样、只做循环卷积，对输入平移
-精确等变。
+"""摄像机角度预测模型（AzimuthNet）：逐像素预测颜色类别后验，沿半径以
+加权和与跨半径 soft-min 双路聚合为 2×16 通道方位角剖面，再经循环一维卷积
+匹配滤波输出每个方位角的 logits；交叉熵训练，argmax 解码。方位角轴全程
+不下采样、只做循环卷积，对输入平移精确等变。
 """
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import numpy as np
@@ -26,6 +27,11 @@ MATCH_DILATIONS = (1, 8, 16)
 # trunk 角向 dilation 逐层加倍：零参数地把逐像素打分的上下文扩到
 # ±15°（图标在 r≈30px 处张角约 ±11°），径向保持无 dilation。
 TRUNK_AZIMUTH_DILATIONS = (2, 4, 8)
+# 覆盖分支温度：sigmoid 分数落在 (0,1)，τ 决定最弱行主导 soft-min 的过渡
+# 宽度。扇形是跨全部半径的覆盖层，地形平台（屋顶/路面）只占部分半径；
+# 加权和路径对两者同样响应，覆盖分支只在全半径一致时才高，二者拼接后
+# 匹配滤波才能区分覆盖层与平台。
+COVERAGE_TAU = 0.15
 
 
 class CircularConv1d(nn.Module):
@@ -40,11 +46,12 @@ class CircularConv1d(nn.Module):
 
 # 架构版本：checkpoint 缺失或不一致即拒绝加载；跨度等不影响参数量与键集的
 # 变更必须递增此值，否则旧权重会被静默加载后输出无效结果
-ARCH_VERSION = 2
+ARCH_VERSION = 3
 
 
 class AzimuthNet(nn.Module):
-    """逐像素评分 -> 径向聚合 -> 角向匹配滤波，输出 Z/360Z 上逐方位角的 logits。
+    """逐像素评分 -> 径向双路聚合 -> 角向匹配滤波，输出 Z/360Z 上逐方位角的
+    logits。
 
     方位角轴不做下采样、只做循环卷积，因此对输入平移精确等变。
     """
@@ -83,7 +90,7 @@ class AzimuthNet(nn.Module):
         self.radial = nn.Parameter(torch.zeros(score_channels, radial_rows))
         d1, d2, d3 = MATCH_DILATIONS
         self.filter = nn.Sequential(
-            CircularConv1d(score_channels, 32, 9, d1),
+            CircularConv1d(2 * score_channels, 32, 9, d1),
             nn.GroupNorm(8, 32),
             nn.ReLU(inplace=True),
             CircularConv1d(32, 32, 9, d2),
@@ -96,7 +103,11 @@ class AzimuthNet(nn.Module):
         features = self.trunk(x)
         scores = torch.sigmoid(self.score(features))
         radial_weights = torch.softmax(self.radial, dim=1)
-        profile = torch.einsum("bcrw,cr->bcw", scores, radial_weights)
+        mean_profile = torch.einsum("bcrw,cr->bcw", scores, radial_weights)
+        cover_profile = COVERAGE_TAU * (
+            math.log(scores.shape[2]) - torch.logsumexp(-scores / COVERAGE_TAU, dim=2)
+        )
+        profile = torch.cat((mean_profile, cover_profile), dim=1)
         return self.filter(profile).squeeze(1)
 
 
@@ -151,7 +162,7 @@ def count_trainable_parameters(model: nn.Module) -> int:
     return sum(parameter.numel() for parameter in model.parameters() if parameter.requires_grad)
 
 
-EXPECTED_PARAMETER_COUNT = 126_561
+EXPECTED_PARAMETER_COUNT = 131_169
 
 
 def choose_device(value: str | None = None) -> torch.device:
