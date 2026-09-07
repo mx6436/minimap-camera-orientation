@@ -1,13 +1,15 @@
 # AGENTS.md
 
-## 尊重 `gitignore`
+## Agent skills
 
-禁止在文档、代码注释中引用 `.gitignore` 排除文件中的内容
+### Issue tracker
 
-## Avoid instruction-to-output leakage
+Issue 存放在本仓库的 GitHub Issues，通过 `gh` CLI 操作。见 `docs/agents/issue-tracker.md`。
 
-Distinguish instructions from deliverable content. Embody the requirements; never restate them unless explicitly requested.
+### Triage labels
 
-## 注释规范
+使用五个规范 triage 角色的默认标签（标签名即角色名）。见 `docs/agents/triage-labels.md`。
 
-代码是自解释的，注释必须能提供额外的信息，否则不应提供注释
+### Domain docs
+
+单上下文布局：根目录 `CONTEXT.md` + `docs/adr/`。见 `docs/agents/domain.md`。
