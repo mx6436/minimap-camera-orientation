@@ -4,9 +4,7 @@
 
 领域术语与核心约束（小地图世界锚定、方向指示器、视野扇形、箭头等）见 [CONTEXT.md](./CONTEXT.md)。
 
-模型输入是**极坐标展开**（选型依据见 [docs/adr/0002](./docs/adr/0002-polar-unwrap-only-input.md)）：把小地图环形区域展开为 360x42 RGB 图像——角度映射到 x 轴（1°/列，正北为第 0 列，顺时针为正），半径映射到 y 轴（内径在上）。展开输出天然全有效，位于中心圆内的箭头被排除在输入之外；0/360 接缝以循环卷积（circular padding）连通。
-
-模型 AzimuthNet 先把极坐标条带逐像素评分，沿半径聚合为 360 维方位角剖面，再经循环一维卷积匹配滤波定位视野扇形，输出每个方位角的 logits 后 argmax 解码；方位角轴全程不下采样、只做循环卷积，对输入平移精确等变。
+模型输入是**极坐标展开**：把小地图环形区域展开为 360x42 RGB 图像——角度映射到 x 轴（1°/列，正北为第 0 列，顺时针为正），半径映射到 y 轴（内径在上）。位于中心圆内的箭头被排除在输入之外；0/360 接缝以循环卷积（circular padding）连通。
 
 ## 工作流
 
@@ -28,9 +26,7 @@ uv run prepare_data.py                    # 极坐标展开 + 清单切分
 
 验证集成员由 `data/val_manifest.json` 直接指定（val = 清单 ∩ processed，清单引用不存在的文件名则报错；train = 其余全部），清单由人维护，是运行脚本的前置条件。每次运行都会清空并重写 `data/processed`、`data/train` 和 `data/val`；只有 `data/raw` 与 `data/val_manifest.json` 永不被脚本改动。角度标签支持一位小数（如 `_r210.9.png`），训练目标保留浮点精度。
 
-训练入口是控制台命令 `uv run train`，只负责训练：读取训练/验证目录，从不复制、移动或划分图像。全部训练参数集中在根目录 [`train.toml`](./train.toml)：每个键都有代码内默认值，文件明示当前基线，未知键硬报错。CLI 只保留调用管道：`--config`（默认 `train.toml`）、`--output-dir`、`--device`（auto/cpu/cuda）、`--threads`（CPU 线程，默认 16）与 `--smoke`（正常路径只跑一个 epoch，用于验证流程，不能替代完整训练）。数据加载为单进程（num\_workers=0）。
-
-训练对训练图像以 50% 概率叠加高斯噪声（σ=0.02）；不再使用旋转增广——AzimuthNet 对方位角轴平移精确等变，滚动输入并同步滚动目标角得到的样本与原样本损失逐比特相同，是零信息量的冗余计算。验证图像不做任何增强。
+训练入口是控制台命令 `uv run train`，只负责训练：读取训练/验证目录，从不复制、移动或划分图像。全部训练参数集中在根目录 [`train.toml`](./train.toml)：每个键都有代码内默认值，文件明示当前基线，未知键硬报错。CLI 只保留调用管道：`--config`（默认 `train.toml`）、`--output-dir`、`--device`（auto/cpu/cuda）、`--threads`（CPU 线程，默认 16）与 `--smoke`（正常路径只跑一个 epoch，用于验证流程，不能替代完整训练）。
 
 `predict.py` 接受恰好一张原始截图 PNG（任意分辨率，按 720p 基准等比缩放 ROI 后极坐标展开），不要求预先裁剪。默认读取 `runs/production_001/best.pt`；需要时传 `--checkpoint` 和 `--device`。
 
