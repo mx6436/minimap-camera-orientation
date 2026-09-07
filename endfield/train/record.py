@@ -12,7 +12,7 @@ from endfield.polar import IMG_H, IMG_W
 def augmentation(config: dict[str, Any]) -> dict[str, Any]:
     values: dict[str, Any] = {}
     if config["noise_augment"]:
-        values["rgb_gaussian_noise"] = {
+        values["bgr_gaussian_noise"] = {
             "probability": 0.5,
             "sigma": 0.02,
             "masked_to_ring_alpha": False,
@@ -36,7 +36,7 @@ def build_record(
     val_sha256: str,
 ) -> dict[str, Any]:
     return {
-        "version": 25,
+        "version": 26,
         "target_sigma": config["target_sigma"],
         "loss": (
             f"KL(q||p) between circular categorical distributions on Z/360Z, "
@@ -44,9 +44,9 @@ def build_record(
             "(= cross entropy minus constant target entropy H(q))"
         ),
         "input_shape": [3, IMG_H, IMG_W],
-        "input_scaling": "RGB uint8 / 255",
+        "input_scaling": "BGR uint8 / 255",
         "input_representation": (
-            f"polar_unwrap_rgb_{IMG_W}x{IMG_H} (angle->x, 1 deg/column, clockwise, "
+            f"polar_unwrap_bgr_{IMG_W}x{IMG_H} (angle->x, 1 deg/column, clockwise, "
             "north at column 0; "
             "radius->y, inner at top)"
         ),

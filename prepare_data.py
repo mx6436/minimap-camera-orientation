@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PIL import Image
+import cv2
 
 from endfield.data_utils import (
     load_json,
@@ -21,7 +21,8 @@ from endfield.polar import (
     INNER_R,
     OUTER_R,
     ROI_CENTER,
-    load_source_rgb,
+    imread_png,
+    load_source_bgr,
     unwrap,
 )
 
@@ -48,10 +49,9 @@ def generate_processed() -> list[str]:
     clear_pngs(PROCESSED)
 
     for i, src in enumerate(pngs, 1):
-        arr = load_source_rgb(src)
-        Image.fromarray(unwrap(arr, *ROI_CENTER, INNER_R, OUTER_R), "RGB").save(
-            PROCESSED / src.name
-        )
+        strip = unwrap(load_source_bgr(src), *ROI_CENTER, INNER_R, OUTER_R)
+        if not cv2.imwrite(str(PROCESSED / src.name), strip):
+            raise RuntimeError(f"failed to write {PROCESSED / src.name}")
         if i % 250 == 0 or i == len(pngs):
             print(f"[{i}/{len(pngs)}] {src.name}")
 
@@ -60,9 +60,8 @@ def generate_processed() -> list[str]:
     if processed_names != input_names:
         raise RuntimeError("processed PNG names do not exactly match raw PNG names")
     for name in processed_names:
-        with Image.open(PROCESSED / name) as im:
-            if im.size != (IMG_W, IMG_H) or im.mode != "RGB":
-                raise RuntimeError(f"invalid processed polar image: {name}")
+        if imread_png(PROCESSED / name).shape != (IMG_H, IMG_W, 3):
+            raise RuntimeError(f"invalid processed polar image: {name}")
     print(f"processed={len(processed_names)} format=polar -> {PROCESSED}")
     return processed_names
 

@@ -22,7 +22,7 @@ def main() -> None:
     device = choose_device(args.device)
     model = load_model(args.checkpoint, device=device)
 
-    frame = polar.load_source_rgb(args.image)
+    frame = polar.load_source_bgr(args.image)
     cx, cy, r_in, r_out = polar.scaled_roi(frame.shape[:2])
     angle, _ = predict_angle(model, polar.unwrap(frame, cx, cy, r_in, r_out))
     print(f"angle: {angle:.6f}")

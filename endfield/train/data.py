@@ -1,4 +1,4 @@
-"""数据集与加载器：文件名角度标注 → (RGB 张量, sin/cos 目标)。"""
+"""数据集与加载器：文件名角度标注 → (BGR 张量, sin/cos 目标)。"""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset
 
-from endfield.data_utils import angle_target, load_rgb, parse_angle
+from endfield.data_utils import angle_target, load_bgr, parse_angle
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TRAIN_DIR = REPO_ROOT / "data" / "train"
@@ -36,7 +36,7 @@ class AngleDataset(Dataset):
     def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
         name = self.names[index]
         angle = parse_angle(Path(name))
-        array = load_rgb(self.directory / name).astype(np.float32) / 255.0
+        array = load_bgr(self.directory / name).astype(np.float32) / 255.0
         if self.roll_augment:
             # 架构对角向平移精确等变，滚动后的样本严格有效；随机 δ 同时
             # 平衡各 bin 的有效样本量，不受标注角度分布影响

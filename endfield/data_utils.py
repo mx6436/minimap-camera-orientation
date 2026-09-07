@@ -11,13 +11,11 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import numpy as np
-from PIL import Image
 
-from endfield.polar import IMG_H, IMG_W
+from endfield.polar import IMG_H, IMG_W, imread_png
 
 ANGLE_RE = re.compile(r"_r(\d+(?:\.\d+)?)\.png$")
 SEED = 42
-POLAR_IMAGE_SIZE = (IMG_W, IMG_H)
 
 
 def parse_angle(path: Path) -> float:
@@ -40,15 +38,11 @@ def circular_error(predicted: np.ndarray, target: np.ndarray) -> np.ndarray:
     return np.abs((predicted - target + 180.0) % 360.0 - 180.0)
 
 
-def load_rgb(path: Path) -> np.ndarray:
-    with Image.open(path) as image:
-        if image.format != "PNG":
-            raise ValueError(f"{path}: expected PNG, got {image.format}")
-        if image.size != POLAR_IMAGE_SIZE:
-            raise ValueError(f"{path}: expected {IMG_W}x{IMG_H}, got {image.size}")
-        if image.mode != "RGB":
-            raise ValueError(f"{path}: expected RGB, got {image.mode}")
-        return np.asarray(image, dtype=np.uint8).copy()
+def load_bgr(path: Path) -> np.ndarray:
+    image = imread_png(path)
+    if image.shape != (IMG_H, IMG_W, 3):
+        raise ValueError(f"{path}: expected {IMG_W}x{IMG_H} BGR, got shape {image.shape}")
+    return image
 
 
 @contextmanager

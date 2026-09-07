@@ -1,4 +1,4 @@
-"""极坐标展开几何：环形小地图 -> 360x42 RGB 模型输入的唯一共享实现。
+"""极坐标展开几何：环形小地图 -> 360x42 BGR 模型输入的唯一共享实现。
 
 约定（见 CONTEXT.md「极坐标展开」词条）：
 - 极点为 ROI 中心，角度零点为正北，顺时针为正；
@@ -13,8 +13,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import cv2
 import numpy as np
-from PIL import Image
 
 # ROI 几何（训练数据采集的 720p 基准）
 BASE_SIZE = (1280, 720)
@@ -25,44 +25,53 @@ OUTER_R = 54.0
 IMG_W = 360
 IMG_H = 42
 
-
-def load_source_rgb(path: Path) -> np.ndarray:
-    with Image.open(path) as im:
-        if im.format != "PNG":
-            raise ValueError(f"{path}: expected PNG data, got {im.format}")
-        rgba = np.asarray(im.convert("RGBA"), dtype=np.uint8).copy()
-    rgba[rgba[..., 3] == 0, :3] = 0
-    return rgba[..., :3]
+PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
 
-def unwrap(rgb: np.ndarray, cx: float, cy: float, r_in: float, r_out: float) -> np.ndarray:
-    height, width = rgb.shape[:2]
+def imread_png(path: Path) -> np.ndarray:
+    """PNG -> cv2 原生布局 BGR uint8 HWC；按 magic bytes 拒绝非 PNG 输入。"""
+    with path.open("rb") as stream:
+        if stream.read(8) != PNG_MAGIC:
+            raise ValueError(f"{path}: expected PNG data")
+    image = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
+    if image is None:
+        raise ValueError(f"{path}: cannot decode PNG image")
+    return image
+
+
+def load_source_bgr(path: Path) -> np.ndarray:
+    """原始截图 PNG -> BGR uint8 HWC；全透明像素置 0，保留原 RGBA 约定。"""
+    image = imread_png(path)
+    if image.ndim != 3 or image.shape[2] not in (3, 4):
+        raise ValueError(f"{path}: expected 3/4-channel PNG, got shape {image.shape}")
+    if image.shape[2] == 4:
+        image[image[..., 3] == 0, :3] = 0
+        image = image[..., :3]
+    return image
+
+
+def unwrap(bgr: np.ndarray, cx: float, cy: float, r_in: float, r_out: float) -> np.ndarray:
+    height, width = bgr.shape[:2]
     step = (r_out - r_in) / IMG_H
-    # 双线性插值需要在源图内取到邻居像素：要求整个圆盘加一圈邻居都在图内。
+    # BORDER_REPLICATE 只是兜底；圆盘加一圈邻居必须在图内，否则说明 ROI
+    # 几何本身错了，直接失败。
     if not (r_out + 1 <= cx <= width - r_out - 1 and r_out + 1 <= cy <= height - r_out - 1):
         raise ValueError(
             f"image {width}x{height} too small for ROI center "
             f"({cx}, {cy}) with outer radius {r_out}"
         )
 
-    radii = r_in + step * (np.arange(IMG_H, dtype=np.float64) + 0.5)
-    theta = np.deg2rad(np.arange(IMG_W, dtype=np.float64))
-    src_x = cx + radii[:, None] * np.sin(theta)[None, :]
-    src_y = cy - radii[:, None] * np.cos(theta)[None, :]
-
-    x0 = np.floor(src_x).astype(np.int64)
-    y0 = np.floor(src_y).astype(np.int64)
-    fx = (src_x - x0)[..., None]
-    fy = (src_y - y0)[..., None]
-    x0c = np.clip(x0, 0, width - 1)
-    x1c = np.clip(x0 + 1, 0, width - 1)
-    y0c = np.clip(y0, 0, height - 1)
-    y1c = np.clip(y0 + 1, 0, height - 1)
-
-    top = rgb[y0c, x0c] * (1.0 - fx) + rgb[y0c, x1c] * fx
-    bottom = rgb[y1c, x0c] * (1.0 - fx) + rgb[y1c, x1c] * fx
-    out = top * (1.0 - fy) + bottom * fy
-    return np.clip(np.rint(out), 0, 255).astype(np.uint8)
+    radii = r_in + step * (np.arange(IMG_H, dtype=np.float32) + 0.5)
+    theta = np.deg2rad(np.arange(IMG_W, dtype=np.float32))
+    map_x = cx + radii[:, None] * np.sin(theta)[None, :]
+    map_y = cy - radii[:, None] * np.cos(theta)[None, :]
+    return cv2.remap(
+        bgr,
+        map_x.astype(np.float32),
+        map_y.astype(np.float32),
+        interpolation=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_REPLICATE,
+    )
 
 
 def scaled_roi(frame_shape: tuple[int, int]) -> tuple[float, float, float, float]:

@@ -5,12 +5,11 @@ build-backend = "hatchling.build"
 [project]
 name = "endfield-minimap"
 version = "0.1.0"
-description = "RGBA angle CNN predicting the Endfield camera angle from the world-anchored minimap"
+description = "Angle CNN predicting the Endfield camera angle from the world-anchored minimap"
 requires-python = ">=3.14"
 dependencies = [
     "numpy>=2.5",
     "opencv-python>=5.0",
-    "pillow>=12.3",
     "matplotlib>=3.11",
     "torch>=2.13",
     "onnx>=1.18",

@@ -193,18 +193,18 @@ def load_model(path: Path | str, device: torch.device | str = "cpu") -> nn.Modul
     return model.to(device).eval()
 
 
-def predict_angle(model: nn.Module, strip_rgb: np.ndarray) -> tuple[float, float]:
-    """strip_rgb: 极坐标展开的输出（RGB uint8，HWC 排布，见 CONTEXT.md）。
+def predict_angle(model: nn.Module, strip_bgr: np.ndarray) -> tuple[float, float]:
+    """strip_bgr: 极坐标展开的输出（BGR uint8，HWC 排布，见 CONTEXT.md）。
     返回 (角度 [0,360), 置信度)：置信度为 360 概率方向向量的合成模长
     乘以解码方向与合成方向夹角的余弦。
     """
-    angle, confidence, _ = predict_probs(model, strip_rgb)
+    angle, confidence, _ = predict_probs(model, strip_bgr)
     return angle, confidence
 
 
-def predict_probs(model: nn.Module, strip_rgb: np.ndarray) -> tuple[float, float, np.ndarray]:
+def predict_probs(model: nn.Module, strip_bgr: np.ndarray) -> tuple[float, float, np.ndarray]:
     """predict_angle 附带第三返回值：Z/360Z 上的 softmax 概率质量函数。"""
-    array = strip_rgb.astype(np.float32) / 255.0
+    array = strip_bgr.astype(np.float32) / 255.0
     features = torch.from_numpy(array.transpose(2, 0, 1)).unsqueeze(0)
     features = features.to(next(model.parameters()).device)
     with torch.no_grad():

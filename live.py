@@ -89,13 +89,13 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def render_disc(rgb: np.ndarray, cx: float, cy: float, r_out: float) -> np.ndarray:
+def render_disc(bgr: np.ndarray, cx: float, cy: float, r_out: float) -> np.ndarray:
     """polar.unwrap 已保证 r_out + 1 的边距落在图内，故此处裁剪无需越界检查。"""
     left = int(round(cx - r_out))
     top = int(round(cy - r_out))
     right = int(round(cx + r_out))
     bottom = int(round(cy + r_out))
-    box = rgb[top:bottom, left:right].copy()
+    box = bgr[top:bottom, left:right].copy()
     xs = np.arange(right - left) + left + 0.5 - cx
     ys = np.arange(bottom - top) + top + 0.5 - cy
     d2 = xs[None, :] ** 2 + ys[:, None] ** 2
@@ -190,7 +190,7 @@ def draw_overlay(
     color = (0, 255, 255) if confidence < CONFIDENCE_THRESHOLD else (0, 0, 255)
     size = disc.shape[0] * DISPLAY_SCALE
     display = cv2.cvtColor(
-        cv2.resize(disc, (size, size), interpolation=cv2.INTER_NEAREST), cv2.COLOR_RGBA2BGR
+        cv2.resize(disc, (size, size), interpolation=cv2.INTER_NEAREST), cv2.COLOR_BGRA2BGR
     )
     center = (size // 2, size // 2)
     radians = math.radians(angle)
@@ -294,11 +294,10 @@ def main() -> None:
             continue  # 空帧/截图失败是正常情况
         if frame.size == 0:
             continue
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         cx, cy, r_in, r_out = polar.scaled_roi(frame.shape[:2])
-        strip = polar.unwrap(rgb, cx, cy, r_in, r_out)
+        strip = polar.unwrap(frame, cx, cy, r_in, r_out)
         angle, confidence, probs = predict_probs(model, strip)
-        disc = render_disc(rgb, cx, cy, r_out)
+        disc = render_disc(frame, cx, cy, r_out)
         cv2.imshow("minimap angle", draw_overlay(disc, angle, confidence, probs))
         if not printed_info:
             print(
