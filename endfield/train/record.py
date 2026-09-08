@@ -36,7 +36,7 @@ def build_record(
     val_sha256: str,
 ) -> dict[str, Any]:
     return {
-        "version": 26,
+        "version": 27,
         "target_sigma": config["target_sigma"],
         "loss": (
             f"KL(q||p) between circular categorical distributions on Z/360Z, "
@@ -54,6 +54,8 @@ def build_record(
         "seed": config["seed"],
         "threads": threads,
         "device": str(device),
+        "precision": config["precision"],
+        "compile": config["compile"],
         "model": "AzimuthNet",
         "trainable_parameters": None,
         "batch_size": config["batch_size"],

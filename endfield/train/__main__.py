@@ -25,7 +25,8 @@ from endfield.train.record import build_record
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG_PATH = REPO_ROOT / "train.toml"
-DEFAULT_THREADS = 16
+# 8 物理核：SMT 线程对 conv 负载无增益反有争用
+DEFAULT_THREADS = 8
 
 
 def parse_args() -> argparse.Namespace:
@@ -43,6 +44,11 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=DEFAULT_THREADS,
         help="torch 的 CPU 线程数（torch.set_num_threads）",
+    )
+    parser.add_argument(
+        "--no-compile",
+        action="store_true",
+        help="禁用 torch.compile",
     )
     parser.add_argument(
         "--smoke",
@@ -80,6 +86,9 @@ def main() -> None:
         )
 
     model = AzimuthNet().to(device)
+    # compile 只包前向；checkpoint/优化器用原模型，state_dict 键不带 _orig_mod. 前缀
+    compile_enabled = config["compile"] and not args.no_compile
+    runtime_model = torch.compile(model) if compile_enabled else model
     track_metric = "rms_error"
     parameter_count = count_trainable_parameters(model)
     if parameter_count != EXPECTED_PARAMETER_COUNT:
@@ -134,8 +143,21 @@ def main() -> None:
     atomic_json_dump(output_dir / "history.json", {"epochs": history})
     max_epochs = 1 if args.smoke else config["epochs"]
     for epoch in range(max_epochs):
-        train_loss = train_epoch(model, train_loader, optimizer, device, config["target_sigma"])
-        val_loss, val_metrics = eval_loss(model, val_loader, device, config["target_sigma"])
+        train_loss = train_epoch(
+            runtime_model,
+            train_loader,
+            optimizer,
+            device,
+            config["target_sigma"],
+            config["precision"],
+        )
+        val_loss, val_metrics = eval_loss(
+            runtime_model,
+            val_loader,
+            device,
+            config["target_sigma"],
+            config["precision"],
+        )
         scheduler.step(val_metrics[track_metric])
         history.append(
             {
@@ -168,7 +190,10 @@ def main() -> None:
     # 结算：重新加载 best.pt 并在验证集上重新评估，确保汇报的数字就是
     # 交付 checkpoint 的数字。
     settled_model = load_model(output_dir / "best.pt", device=device)
-    final_loss, final_metrics = eval_loss(settled_model, val_loader, device, config["target_sigma"])
+    # 与训练期验证同精度，数字才可比
+    final_loss, final_metrics = eval_loss(
+        settled_model, val_loader, device, config["target_sigma"], config["precision"]
+    )
     summary: dict[str, Any] = {
         "epoch": int(best_entry["epoch"]),
         "val_count": len(val_names),

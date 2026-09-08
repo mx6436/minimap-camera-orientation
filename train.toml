@@ -1,7 +1,7 @@
 # 训练配置——所有键都有代码内默认值，此处明示当前基线；
 
 # 训练规模
-batch_size = 32
+batch_size = 128
 epochs = 200
 seed = 42
 
@@ -13,6 +13,10 @@ early_stop_patience = 25
 
 # 损失目标：360 bin 软标签的循环高斯 σ（度）
 target_sigma = 3.0
+
+# 运行时性能：bf16+compile 本机实测约 5x
+precision = "bf16"  # conv 走 bf16，损失始终 fp32；无 avx512_bf16/amx 时不提速
+compile = true      # 启动多花 ~2min 编译
 
 # 数据增强
 noise_augment = false

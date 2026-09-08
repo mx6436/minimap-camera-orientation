@@ -10,7 +10,7 @@ from endfield.data_utils import SEED
 from endfield.model import TARGET_SIGMA
 
 CONFIG_DEFAULTS: dict[str, Any] = {
-    "batch_size": 32,
+    "batch_size": 128,
     "epochs": 200,
     "seed": SEED,
     "target_sigma": TARGET_SIGMA,
@@ -20,6 +20,8 @@ CONFIG_DEFAULTS: dict[str, Any] = {
     "early_stop_patience": 25,
     "noise_augment": False,
     "roll_augment": True,
+    "precision": "bf16",
+    "compile": True,
 }
 
 
@@ -47,3 +49,7 @@ def validate_config(config: dict[str, Any]) -> None:
         raise SystemExit("noise_augment must be a boolean")
     if not isinstance(config["roll_augment"], bool):
         raise SystemExit("roll_augment must be a boolean")
+    if config["precision"] not in ("fp32", "bf16"):
+        raise SystemExit('precision must be "fp32" or "bf16"')
+    if not isinstance(config["compile"], bool):
+        raise SystemExit("compile must be a boolean")
