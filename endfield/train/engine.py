@@ -8,7 +8,7 @@ import torch.nn.functional as F
 from torch import nn
 from torch.utils.data import DataLoader
 
-from endfield.model import smoothed_targets, target_angles
+from endfield.model import smoothed_targets
 from endfield.train.metrics import distribution_metrics
 
 
@@ -18,7 +18,7 @@ def loss_from_outputs(
     device: torch.device,
     sigma: float,
 ) -> torch.Tensor:
-    labels = smoothed_targets(target_angles(targets.numpy()), sigma=sigma).to(device)
+    labels = smoothed_targets(targets.numpy(), sigma=sigma).to(device)
     log_probs = F.log_softmax(outputs, dim=-1)
     cross_entropy = -(labels * log_probs).sum(dim=-1)
     target_entropy = -(labels * torch.log(labels + 1e-12)).sum(dim=-1)
@@ -69,6 +69,4 @@ def eval_loss(
             probs_list.append(torch.softmax(prediction, dim=1).cpu().numpy())
             targets_list.append(targets.numpy())
     target_array = np.concatenate(targets_list).astype(np.float64)
-    # 目标是单位圆上的 [sin, cos]，反解回的角度与文件名标注等价（往返误差 ~1e-5°）
-    angles = np.degrees(np.arctan2(target_array[:, 0], target_array[:, 1])) % 360.0
-    return total / samples, distribution_metrics(np.concatenate(probs_list), angles)
+    return total / samples, distribution_metrics(np.concatenate(probs_list), target_array % 360.0)

@@ -1,4 +1,4 @@
-"""数据集与加载器：文件名角度标注 → (BGR 张量, sin/cos 目标)。"""
+"""数据集与加载器：文件名角度标注 → (BGR 张量, 角度标量)。"""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset
 
-from endfield.data_utils import angle_target, load_bgr, parse_angle
+from endfield.data_utils import load_bgr, parse_angle
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TRAIN_DIR = REPO_ROOT / "data" / "train"
@@ -48,8 +48,7 @@ class AngleDataset(Dataset):
                 array = array + np.random.normal(0.0, 0.02, array.shape).astype(np.float32)
             array = np.clip(array, 0.0, 1.0)
         tensor = torch.from_numpy(array.transpose(2, 0, 1)).contiguous()
-        target = torch.from_numpy(angle_target(angle))
-        return tensor, target
+        return tensor, torch.tensor(angle, dtype=torch.float32)
 
 
 def names_fingerprint(names: list[str]) -> str:

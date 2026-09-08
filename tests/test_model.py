@@ -14,7 +14,6 @@ from endfield.model import (
     decode_logits,
     load_model,
     smoothed_targets,
-    target_angles,
 )
 from endfield.polar import IMG_H, IMG_W
 
@@ -86,8 +85,6 @@ def test_smoothed_targets_roundtrip() -> None:
     peaks = targets.argmax(dim=1).numpy()
     # 179.5° 在 bin 179/180 正中，平局由浮点打破
     assert np.allclose(peaks, [0, 179, 0])
-    recovered = target_angles(np.stack([np.sin(np.deg2rad(angles)), np.cos(np.deg2rad(angles))], 1))
-    assert np.allclose(recovered, angles % 360.0, atol=1e-4)
 
 
 def test_load_model_rejects_invalid_checkpoint(tmp_path) -> None:

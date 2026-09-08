@@ -98,11 +98,6 @@ class AzimuthNet(nn.Module):
         return self.filter(profile).squeeze(1)
 
 
-def target_angles(targets: np.ndarray) -> np.ndarray:
-    """sin/cos 目标反解回角度（往返误差 ~1e-5°，见 engine.py 同样用法）。"""
-    return np.degrees(np.arctan2(targets[:, 0], targets[:, 1])) % 360.0
-
-
 def smoothed_targets(angles: np.ndarray, sigma: float = TARGET_SIGMA) -> torch.Tensor:
     """角度 -> Z/360Z 上的循环高斯概率质量函数，供交叉熵使用。"""
     bins = np.arange(360, dtype=np.float64)

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import math
 import os
 import random
 import re
@@ -27,11 +26,6 @@ def parse_angle(path: Path) -> float:
     if not 0 <= angle < 360:
         raise ValueError(f"angle out of range in filename: {path.name}")
     return angle
-
-
-def angle_target(angle: float) -> np.ndarray:
-    radians = math.radians(angle)
-    return np.asarray([math.sin(radians), math.cos(radians)], dtype=np.float32)
 
 
 def circular_error(predicted: np.ndarray, target: np.ndarray) -> np.ndarray:
