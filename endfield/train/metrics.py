@@ -1,4 +1,4 @@
-"""验证指标：在循环组 Z/360Z 上的概率质量函数直接评价（纯 numpy，不触 torch）。"""
+"""验证指标：在循环组 Z/360Z 上的概率质量函数直接评价"""
 
 from __future__ import annotations
 

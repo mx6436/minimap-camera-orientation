@@ -16,21 +16,10 @@ from torch import nn
 
 from endfield.polar import IMG_H, IMG_W
 
-# 目标平滑 σ：扇形边缘是软过渡，σ 过小会让交叉熵梯度集中在 bin 边界上抖动。
-# 仅作 train.toml 未配置时的默认值；实际训练经 target_sigma 配置项传入。
 TARGET_SIGMA = 3.0
 REFINE_RADIUS = 5
-# 匹配滤波的线性支撑集是三层跨度的和集 {d1·a+d2·b+d3·c}；首层跨度必须为 1，
-# 否则和集只落在公因子的格点上（如 (4,8,16) 时仅模 4 同余列），线性部分
-# 分解为互不相干的剩余类滤波器，输出带周期性纹波且无法经训练消除
 MATCH_DILATIONS = (1, 8, 16)
-# trunk 角向 dilation 逐层加倍：零参数地把逐像素打分的上下文扩到
-# ±15°（图标在 r≈30px 处张角约 ±11°），径向保持无 dilation。
 TRUNK_AZIMUTH_DILATIONS = (2, 4, 8)
-# 覆盖分支温度：sigmoid 分数落在 (0,1)，τ 决定最弱行主导 soft-min 的过渡
-# 宽度。扇形是跨全部半径的覆盖层，地形平台（屋顶/路面）只占部分半径；
-# 加权和路径对两者同样响应，覆盖分支只在全半径一致时才高，二者拼接后
-# 匹配滤波才能区分覆盖层与平台。
 COVERAGE_TAU = 0.15
 
 
@@ -61,7 +50,6 @@ class AzimuthNet(nn.Module):
         channels = [3, 32, 64, trunk_channels]
         layers: list[nn.Module] = []
         for i, dilation in enumerate(TRUNK_AZIMUTH_DILATIONS):
-            # 角向 pad 量随 dilation 增大，径向边界仍补零：内外径边界不连通
             layers += [
                 nn.CircularPad2d((dilation, dilation, 0, 0)),
                 nn.ZeroPad2d((0, 0, 1, 1)),
@@ -76,7 +64,6 @@ class AzimuthNet(nn.Module):
                 nn.GroupNorm(16, channels[i + 1]),
                 nn.ReLU(inplace=True),
             ]
-            # 仅块 1 后池化：42→21 行全数保留，不再丢弃最外圈半径行
             if i == 0:
                 layers.append(nn.AvgPool2d((2, 1)))
         self.trunk = nn.Sequential(*layers)
@@ -194,9 +181,8 @@ def load_model(path: Path | str, device: torch.device | str = "cpu") -> nn.Modul
 
 
 def predict_angle(model: nn.Module, strip_bgr: np.ndarray) -> tuple[float, float]:
-    """strip_bgr: 极坐标展开的输出（BGR uint8，HWC 排布，见 CONTEXT.md）。
-    返回 (角度 [0,360), 置信度)：置信度为 360 概率方向向量的合成模长
-    乘以解码方向与合成方向夹角的余弦。
+    """strip_bgr: 极坐标展开的输出，返回 (角度 [0,360), 置信度)：
+    置信度为 360 概率方向向量的合成模长，乘以解码方向与合成方向夹角的余弦。
     """
     angle, confidence, _ = predict_probs(model, strip_bgr)
     return angle, confidence

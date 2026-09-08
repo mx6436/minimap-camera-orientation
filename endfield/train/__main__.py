@@ -1,4 +1,4 @@
-"""训练 AzimuthNet 并在验证集上评估（`uv run train`，见 ADR 0004）。"""
+"""训练 AzimuthNet 并在验证集上评估"""
 
 from __future__ import annotations
 
