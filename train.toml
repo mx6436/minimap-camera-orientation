@@ -1,7 +1,7 @@
 # 训练配置——所有键都有代码内默认值，此处明示当前基线；
 
 # 训练规模
-batch_size = 128
+batch_size = 32
 epochs = 200
 seed = 42
 
