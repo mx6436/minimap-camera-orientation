@@ -170,7 +170,8 @@ uv run locate_dataset.py                 # 默认 4 个并行进程；已成功�
 
 `uv run prepare_data.py --mode ref` 消费上节的定位产物，把观测与参考各自展开后落盘为两路：
 
-- **姿态来源**：`locate.jsonl` 中 `accepted=true` 的记录；`(zone, x, y)` 一律取自 MapLocator 输出，不从文件名解析（文件名只提供样本标识与角度标签 `r`）。
+- **姿态来源**：`locate.jsonl` 中 `accepted=true` 的记录；参考裁剪的 `(zone, x, y, scale)` 一律取自 MapLocator 输出。文件名的 `(map, x, y)` **不参与裁剪**，只用于坐标一致性核对（见下）。
+- **坐标一致性过滤（#33）**：文件名标注与定位记录是两批独立采集（MapLocator 命名族、MapTracker 命名族）；`endfield/coord_filter.py` 把标标注换算到定位记录所在资产帧（region↔前缀表、ZmdMap level 矩形、`SCALE_MAP_FACTOR=0.1625`、`Base.png` 尺寸，均取自上游既有约定），`max(|Δx|, |Δy|) > 5`、zone/区域对不上、以及命名不在支持范围内的样本**不进入数据集**（计入 skipped 原因 `coord_delta` / `coord_zone` / `coord_unsupported`）。换算需要 `local/maplocator/data/ZmdMap/`（MaaEnd `assets/data/ZmdMap/*_layout.json` 的镜像）；只有出现 MapTracker 命名样本时才读，可用 `--zmdmap-data-root` 指定。
 - **样本范围**：定位失败 / held / 低分（`accepted=false`）与 zone 资产缺失的样本跳过并计数，不算错误。
 - **参考底图**：按 `zone` 反解资产路径（`{P}_Base → {P}/Base.png`、`{P}_L{n}_{m} → {P}/Lv{int(n):03d}Tier{m}.png`、其它 → 任意子目录下 stem 同名文件）；tier zone 的 `(x,y)` 就是切片自身像素空间（实测与观测小地图 1:1，直接裁切片，无需仿射）。
 - **参考裁剪**：由定义模块一次采样完成：资产坐标 = `(x, y) + (q_roi - 极点) * scale`（精确亚像素中心与精确 `scale`），尺度取定位记录的 `scale` 字段（即 MapLocator 的 `ZoneTemplateScale`）：绝大多数 zone 是 1:1；`ValleyIV_Base` 的底图相对观测缩放过 6.7%（15/16）。越界处读 0 = 参考缺失，不失败。
@@ -180,7 +181,7 @@ uv run locate_dataset.py                 # 默认 4 个并行进程；已成功�
 - **模型输入**：两路按通道拼接为 42x360x7；训练侧由 `train.toml` 的 `input_mode = "ref"` 选择数据根；`record.json` 记 `ref_reference_assets_root`；`live.py` 的 ref 推理路径与 `prepare_data.py` 共用定义模块 `endfield/preprocess.py`，产物同源。
 - **确定性**：重复运行产物逐字节一致。
 - **缓存**：`data/processed_ref/.preprocess.json` 挂定义哈希 + 图版本 + 输入指纹（样本名与 `zone`/`x`/`y`/`scale`，其他定位字段不入指纹）；命中且两路产物齐全即跳过重写，定义 / 定位记录 / 样本变更或 `--force` 触发重生成。
-- **训练样本过滤（可选）**：`train.toml` 的 `max_ref_missing`（0~1）在读取训练集时排除环内 `ref.A<255` 占比**严格大于**阈值的样本（等于阈值保留），只影响训练集，val 不变；`prepare_data.py` 始终全量落盘，过滤不改磁盘数据。
+- **训练样本过滤（可选；与上条数据层过滤不同层，两层同时生效）**：`train.toml` 的 `max_ref_missing`（0~1）在读取训练集时排除环内 `ref.A<255` 占比**严格大于**阈值的样本（等于阈值保留），只影响训练集，val 不变；`prepare_data.py` 始终按数据层过滤后的集合落盘，`max_ref_missing` 不改磁盘数据。
 
 ## 数据目录
 

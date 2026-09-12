@@ -17,6 +17,11 @@ accepted=true 的记录；定位不可用（失败/held/低分）与资产缺失
 val = manifest ∩ processed，manifest 引用但无 ref 输出的样本跳过并计数；引用
 data/raw 中不存在的名字仍报错。
 
+坐标一致性过滤（#33，`endfield/coord_filter.py`）：文件名标注的 (map, x, y) 与定位记录的
+(zone, x, y) 换算到同一资产帧后相差超过 5 个单位、或 zone/区域对不上的样本，在数据管线
+层直接跳过（不进 processed / train / val，计入 skipped 原因）；训练层的
+`max_ref_missing` 缺口过滤在其后独立生效。
+
 每种模式各自清空并重写自己的 processed/train/val 目录；data/raw 与
 data/val_manifest.json 永不被脚本改动。ref 模式的定位产物单独维护在 data/locator/
 （不随脚本清空）。两种模式的 processed 目录都挂 `.preprocess.json` 缓存戳
@@ -38,7 +43,7 @@ import cv2
 import numpy as np
 import torch
 
-from endfield import preprocess, preprocess_cache
+from endfield import coord_filter, preprocess, preprocess_cache
 from endfield.data_utils import (
     load_json,
     png_names,
@@ -68,6 +73,8 @@ TRAIN_REF = ROOT / "data" / "train_ref"
 VAL_REF = ROOT / "data" / "val_ref"
 VAL_MANIFEST = ROOT / "data" / "val_manifest.json"
 LOCATE_PATH = ROOT / "data" / "locator" / "locate.jsonl"
+# ZmdMap 标注数据（MaaEnd assets/data/ZmdMap 的本地镜像；坐标一致性过滤用）
+ZMDMAP_DATA_ROOT = ROOT / "local" / "maplocator" / "data" / "ZmdMap"
 
 VAL_MANIFEST_VERSION = 1
 
@@ -287,6 +294,30 @@ def _skip_reasons(skipped: dict[str, str]) -> dict[str, int]:
     return dict(sorted(Counter(skipped.values()).items()))
 
 
+def filter_coord_consistent(
+    resolved: list[tuple[str, dict, Path]], zmdmap_root: Path, assets_root: Path
+) -> tuple[list[tuple[str, dict, Path]], dict[str, str]]:
+    """标注坐标一致性过滤（#33）：返回 (保留样本, name -> 拒绝原因)。
+
+    只在出现 MapTracker 命名样本时才读 ZmdMap/Base 换算数据（纯 zone 命名的数据
+    集不需要镜像数据）。
+    """
+    kept: list[tuple[str, dict, Path]] = []
+    rejected: dict[str, str] = {}
+    data: coord_filter.FilterData | None = None
+    for item in resolved:
+        name, record, _ = item
+        annotation = coord_filter.parse_annotation(name)
+        if data is None and coord_filter.needs_conversion(annotation.zone):
+            data = coord_filter.load_filter_data(zmdmap_root, assets_root)
+        decision = coord_filter.evaluate(annotation, record, data)
+        if decision.keep:
+            kept.append(item)
+        else:
+            rejected[name] = decision.reason
+    return kept, rejected
+
+
 def generate_processed_ref(
     raw_dir: Path = RAW_DIR,
     locate_path: Path = LOCATE_PATH,
@@ -294,6 +325,7 @@ def generate_processed_ref(
     processed_dir: Path = PROCESSED_REF,
     force: bool = False,
     workers: int = IO_WORKERS,
+    zmdmap_root: Path = ZMDMAP_DATA_ROOT,
 ) -> tuple[list[str], dict[str, str]]:
     """对 accepted 定位记录生成 ref 两路展开条带（观测 3ch / 参考 BGRA）。
 
@@ -304,6 +336,8 @@ def generate_processed_ref(
     """
     accepted, skipped = accepted_records(locate_path)
     resolved = _resolve_ref_inputs(accepted, assets_root, skipped)
+    resolved, coord_rejected = filter_coord_consistent(resolved, zmdmap_root, assets_root)
+    skipped.update(coord_rejected)
     entries = ref_input_entries(resolved)
     names = [name for name, _, _ in resolved]
     if (
@@ -386,6 +420,15 @@ def parse_args() -> argparse.Namespace:
         help="MapLocator 底图资产目录（ref 模式；默认本地 MaaEnd 工作副本）",
     )
     parser.add_argument(
+        "--zmdmap-data-root",
+        type=Path,
+        default=ZMDMAP_DATA_ROOT,
+        help=(
+            "ZmdMap layout 数据目录（ref 坐标一致性过滤；"
+            "默认 local/maplocator/data/ZmdMap，MaaEnd assets/data/ZmdMap 的镜像）"
+        ),
+    )
+    parser.add_argument(
         "--force",
         action="store_true",
         help="忽略 processed 缓存戳命中，强制重生成",
@@ -412,13 +455,14 @@ def run_ref(
     val_dir: Path = VAL_REF,
     force: bool = False,
     workers: int = IO_WORKERS,
+    zmdmap_root: Path = ZMDMAP_DATA_ROOT,
 ) -> None:
     """ref 全管线：两路展开产物 -> manifest 划分 -> train/val 符号链接视图。"""
     raw_names = sorted(path.name for path in raw_dir.glob("*.png"))
     if not raw_names:
         raise SystemExit(f"no png found in {raw_dir}")
     processed_names, skipped = generate_processed_ref(
-        raw_dir, locate_path, assets_root, processed_dir, force, workers
+        raw_dir, locate_path, assets_root, processed_dir, force, workers, zmdmap_root
     )
     train_names, val_names, manifest_skipped = accepted_split(
         processed_names, raw_names, manifest_path
@@ -457,7 +501,12 @@ def run_polar(
 def main() -> None:
     args = parse_args()
     if args.mode == "ref":
-        run_ref(args.map_assets_root, force=args.force, workers=args.workers)
+        run_ref(
+            args.map_assets_root,
+            force=args.force,
+            workers=args.workers,
+            zmdmap_root=args.zmdmap_data_root,
+        )
         return
     run_polar(force=args.force, workers=args.workers)
 
