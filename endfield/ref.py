@@ -11,8 +11,9 @@ ref = 7 通道 `[obs.BGR, ref.BGR, ref.A]`：观测与参考各自展开后拼�
 裁剪越界与资产透明同为「参考缺失」= 0；观测侧无 alpha，保持 3 通道。
 
 几何约定（见 map #8 的决策票）：
-- 参考裁剪与观测同视野：118x120、中心 = MapLocator 的 (x, y)；尺度按 zone 的
-  ZoneTemplateScale（绝大多数 1:1 直接裁，ValleyIV_Base 15/16）；
+- 参考裁剪与观测同视野：118x120、中心 = MapLocator 的 (x, y)；尺度按定位记录的
+  `scale` 字段（ZoneTemplateScale，绝大多数 1:1 直接裁，ValleyIV_Base 15/16），
+  不在本模块镜像 zone -> scale 表；
 - 越界处裁到边界、外侧填 0（黑），不失败；
 - 极坐标展开：先在笛卡尔域裁 ROI，再套 polar.unwrap（极点 = ROI 中心）。
 """
@@ -38,18 +39,6 @@ ROI_POLE = (ROI_W / 2.0, ROI_H / 2.0)
 REF_CHANNELS = 7
 # 数据根中参考流的并行子目录（processed_ref/ref、train_ref/ref 等）
 REF_SUBDIR = "ref"
-
-# 底图资产与观测小地图的像素尺度比，镜像 MapLocator.cpp 的 ZoneTemplateScale：匹配时
-# MapLocator 把观测模板按该比例缩放到底图尺度，参考裁剪必须镜像同一比例（裁
-# ROI*s 的资产窗口再缩回 ROI），否则 ValleyIV_Base 的 6.7% 尺度差会在边缘累积成
-# 数像素错位。来源：MapLocator 源码复核 + 全量 accepted 样本上的梯度 NCC 峰值实测
-# （ValleyIV_Base s=15/16 显著优于 1.0，其余 zone 1.0 显著优于 15/16）。
-ZONE_SCALES: dict[str, float] = {"ValleyIV_Base": 15.0 / 16.0}
-
-
-def zone_scale(zone_id: str) -> float:
-    """zone 的底图尺度比（1.0 = 底图与观测 1:1）。"""
-    return ZONE_SCALES.get(zone_id, 1.0)
 
 
 def composite_on_black(image: np.ndarray) -> np.ndarray:
@@ -82,8 +71,9 @@ def crop_centered(image: np.ndarray, cx: float, cy: float, width: int, height: i
 def reference_crop(asset: np.ndarray, x: float, y: float, scale: float = 1.0) -> np.ndarray:
     """zone 资产在 (x,y) 处的参考裁剪：裁 ROI*scale 的窗口再缩回 ROI 几何。
 
-    scale=1.0（绝大多数 zone）就是 118x120 的 1:1 直接裁剪；ValleyIV_Base 的底图
-    相对观测缩放过，必须按 zone_scale 缩小窗口后放大回 ROI，与观测同视野。
+    scale 取定位记录的 `scale` 字段（ZoneTemplateScale）。scale=1.0（绝大多数
+    zone）就是 118x120 的 1:1 直接裁剪；ValleyIV_Base 的底图相对观测缩放过，必须
+    按 scale 缩小窗口后放大回 ROI，与观测同视野。
     """
     width, height = round(ROI_W * scale), round(ROI_H * scale)
     crop = crop_centered(asset, x, y, width, height)

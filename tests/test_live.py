@@ -150,7 +150,7 @@ def test_to_base_frame_scales_non_base_frames_to_720p() -> None:
 
 def test_ref_strip_at_rejects_missing_zone_asset(tmp_path: Path) -> None:
     frame = np.zeros((BASE_SIZE[1], BASE_SIZE[0], 3), dtype=np.uint8)
-    record = {"zone": "Nowhere_Base", "x": 1.0, "y": 2.0}
+    record = {"zone": "Nowhere_Base", "x": 1.0, "y": 2.0, "scale": 1.0}
     with pytest.raises(MissingZoneAsset, match="Nowhere_Base"):
         ref_strip_at(frame, record, tmp_path)
 
@@ -163,7 +163,19 @@ def test_ref_strip_at_rejects_record_without_xy(tmp_path: Path) -> None:
     assert cv2.imwrite(str(assets / "Test" / "Base.png"), asset)
     frame = np.zeros((BASE_SIZE[1], BASE_SIZE[0], 3), dtype=np.uint8)
     with pytest.raises(ValueError, match="lacks x/y"):
-        ref_strip_at(frame, {"zone": "Test_Base"}, assets)
+        ref_strip_at(frame, {"zone": "Test_Base", "scale": 1.0}, assets)
+
+
+def test_ref_strip_at_rejects_record_without_scale(tmp_path: Path) -> None:
+    """scale 是定位记录契约的一部分：旧产物缺字段必须暴露，而不是静默按 1.0 处理。"""
+    assets = tmp_path / "assets"
+    (assets / "Test").mkdir(parents=True)
+    asset = np.zeros((120, 120, 4), dtype=np.uint8)
+    asset[..., 3] = 255
+    assert cv2.imwrite(str(assets / "Test" / "Base.png"), asset)
+    frame = np.zeros((BASE_SIZE[1], BASE_SIZE[0], 3), dtype=np.uint8)
+    with pytest.raises(KeyError, match="scale"):
+        ref_strip_at(frame, {"zone": "Test_Base", "x": 1.0, "y": 2.0}, assets)
 
 
 def test_ref_strip_at_reads_raw_bgra_asset_alpha(tmp_path: Path) -> None:
@@ -175,7 +187,7 @@ def test_ref_strip_at_reads_raw_bgra_asset_alpha(tmp_path: Path) -> None:
     asset[..., 3] = 7  # 中心 118x120 裁剪窗口内 alpha 恒为 7
     assert cv2.imwrite(str(assets / "Test" / "Base.png"), asset)
     frame = rng.integers(0, 256, (BASE_SIZE[1], BASE_SIZE[0], 3), dtype=np.uint8)
-    record = {"zone": "Test_Base", "x": 120.0, "y": 120.0}
+    record = {"zone": "Test_Base", "x": 120.0, "y": 120.0, "scale": 1.0}
 
     strip = ref_strip_at(frame, record, assets)
 
@@ -197,7 +209,7 @@ def test_ref_strip_at_copies_observed_where_reference_is_missing(tmp_path: Path)
     asset[:, 110:130, 3] = 0  # 中心 (120,120) 裁剪窗口内一条成片透明带
     assert cv2.imwrite(str(assets / "Test" / "Base.png"), asset)
     frame = rng.integers(0, 256, (BASE_SIZE[1], BASE_SIZE[0], 3), dtype=np.uint8)
-    record = {"zone": "Test_Base", "x": 120.0, "y": 120.0}
+    record = {"zone": "Test_Base", "x": 120.0, "y": 120.0, "scale": 1.0}
 
     strip = ref_strip_at(frame, record, assets)
     alpha = strip[..., 6]
@@ -214,12 +226,27 @@ def test_ref_strip_at_reuses_cached_asset(tmp_path: Path) -> None:
     asset = rng.integers(0, 256, (240, 240, 4), dtype=np.uint8)
     assert cv2.imwrite(str(assets / "Test" / "Base.png"), asset)
     frame = rng.integers(0, 256, (BASE_SIZE[1], BASE_SIZE[0], 3), dtype=np.uint8)
-    record = {"zone": "Test_Base", "x": 120.0, "y": 120.0}
+    record = {"zone": "Test_Base", "x": 120.0, "y": 120.0, "scale": 1.0}
     cache: dict[Path, np.ndarray] = {}
 
     first = ref_strip_at(frame, record, assets, cache)
     assert len(cache) == 1
     assert np.array_equal(first, ref_strip_at(frame, record, assets, cache))
+
+
+def test_ref_strip_at_uses_record_scale(tmp_path: Path) -> None:
+    """实机参考裁剪的尺度取自定位记录 scale 字段（不再按 zone 查表）。"""
+    assets = tmp_path / "assets"
+    (assets / "Test").mkdir(parents=True)
+    rng = np.random.default_rng(11)
+    asset = rng.integers(0, 256, (400, 400, 4), dtype=np.uint8)
+    assert cv2.imwrite(str(assets / "Test" / "Base.png"), asset)
+    frame = rng.integers(0, 256, (BASE_SIZE[1], BASE_SIZE[0], 3), dtype=np.uint8)
+
+    strip = ref_strip_at(frame, {"zone": "Test_Base", "x": 200.0, "y": 200.0, "scale": 2.0}, assets)
+
+    expected = ref_strip(observed_roi(frame), asset, 200.0, 200.0, 2.0)
+    assert np.array_equal(strip, expected)
 
 
 @pytest.mark.skipif(

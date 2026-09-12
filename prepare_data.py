@@ -5,8 +5,9 @@ train = processed 全集减去清单所列验证集。train/val 是 processed �
 内容始终反映 processed 当前状态，悬空链接在生成时校验。
 
 ref：以 MapLocator 批量定位产物（data/locator/locate.jsonl）为姿态来源，参考底图 =
-zone 资产在 (x, y) 处、与观测同视野的裁剪（按 zone 的 ZoneTemplateScale：
-ValleyIV_Base 裁 ROI*15/16 再缩回 118x120，其余 1:1 直接裁）；观测与参考各自极坐标
+zone 资产在 (x, y) 处、与观测同视野的裁剪（尺度取定位记录的 `scale` 字段，即
+ZoneTemplateScale：ValleyIV_Base 裁 ROI*15/16 再缩回 118x120，其余 1:1 直接裁）；
+观测与参考各自极坐标
 展开后拼接为 7 通道 [obs.BGR, ref.BGR, ref.A]（不预先相减）。参考 BGR = 观测背底合成
 black_ref + obs_roi*(1 - alpha/255)（ROI 域、四舍五入回 uint8；alpha==0 处逐像素等于
 观测），ref.A = 资产原始连续 alpha（0 = 参考缺失）。样本范围 = 定位产物中
@@ -32,7 +33,7 @@ from endfield.data_utils import (
     png_names,
     validate_manifest_names,
 )
-from endfield.locate import accept, load_records, zone_asset_path
+from endfield.locate import accept, load_records, record_scale, zone_asset_path
 from endfield.polar import (
     IMG_H,
     IMG_W,
@@ -49,7 +50,6 @@ from endfield.ref import (
     load_reference_image,
     observed_roi,
     ref_strip,
-    zone_scale,
 )
 
 ROOT = Path(__file__).resolve().parent
@@ -225,7 +225,7 @@ def generate_processed_ref(
             assets[asset_path] = asset
         observed = observed_roi(load_source_bgr(raw_dir / name))
         ref = ref_strip(
-            observed, asset, float(record["x"]), float(record["y"]), zone_scale(zone)
+            observed, asset, float(record["x"]), float(record["y"]), record_scale(record)
         )
         observed_path, reference_path = processed_dir / name, processed_dir / REF_SUBDIR / name
         if not cv2.imwrite(str(observed_path), ref[..., :3]):

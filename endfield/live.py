@@ -18,9 +18,9 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from endfield.locate import zone_asset_path
+from endfield.locate import record_scale, zone_asset_path
 from endfield.polar import BASE_SIZE
-from endfield.ref import load_reference_image, observed_roi, ref_strip, zone_scale
+from endfield.ref import load_reference_image, observed_roi, ref_strip
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 INPUT_MODES = ("polar", "ref")
@@ -122,7 +122,8 @@ def ref_strip_at(
 ) -> np.ndarray:
     """720p 基准帧 + MapLocator 定位记录 -> 42x360x7 ref 张量 `[obs.BGR, ref.BGR, ref.A]`。
 
-    同一 (zone, x, y) 下与 prepare_data.py --mode ref 的两路产物逐字节一致。
+    参考裁剪的尺度取定位记录的 `scale` 字段；同一 (zone, x, y, scale) 下与
+    prepare_data.py --mode ref 的两路产物逐字节一致。
     """
     zone, asset = _reference_asset(record, assets_root, cache)
     if "x" not in record or "y" not in record:
@@ -132,5 +133,5 @@ def ref_strip_at(
         asset,
         float(record["x"]),
         float(record["y"]),
-        zone_scale(zone),
+        record_scale(record),
     )

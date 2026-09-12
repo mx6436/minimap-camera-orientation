@@ -22,6 +22,7 @@ from endfield.locate import (
     merge_records,
     parse_record,
     pending_names,
+    record_scale,
     run_cli,
     split_shards,
     summarize,
@@ -38,6 +39,7 @@ OK = {
     "x": 1.0,
     "y": 2.0,
     "rot": 3.0,
+    "scale": 1.0,
     "locConf": 0.9,
     "isHeld": False,
     "latencyMs": 10,
@@ -62,6 +64,20 @@ def test_parse_record_requires_name_and_status() -> None:
     record = parse_record(json.dumps(OK))
     assert record["name"] == OK["name"]
     assert record["status"] == 0
+
+
+def test_record_scale_reads_cli_scale_field() -> None:
+    assert record_scale({**OK, "scale": 15.0 / 16.0}) == 15.0 / 16.0
+    assert record_scale({**OK, "scale": 1}) == 1.0
+
+
+def test_record_scale_rejects_missing_or_invalid_scale() -> None:
+    """scale 是定位记录契约的一部分：旧产物缺字段必须暴露，而不是静默按 1.0 处理。"""
+    without_scale = {key: value for key, value in OK.items() if key != "scale"}
+    with pytest.raises(KeyError, match="scale"):
+        record_scale(without_scale)
+    with pytest.raises(ValueError):
+        record_scale({**OK, "scale": "1.0"})
 
 
 def test_classify_maps_status_and_message() -> None:

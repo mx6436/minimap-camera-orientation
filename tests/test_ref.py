@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 
 import prepare_data
-from endfield.locate import accept, load_records, write_jsonl, zone_asset_path
+from endfield.locate import accept, load_records, record_scale, write_jsonl, zone_asset_path
 from endfield.polar import IMG_H, IMG_W, INNER_R, OUTER_R, imread_png, load_source_bgr, unwrap
 from endfield.ref import (
     MAP_ASSETS_ROOT,
@@ -29,7 +29,6 @@ from endfield.ref import (
     reference_gap_fraction,
     reference_planes,
     reference_strip,
-    zone_scale,
 )
 
 
@@ -196,6 +195,7 @@ def locate_record(name: str, **overrides: object) -> dict:
         "x": 100.0,
         "y": 100.0,
         "rot": 0.0,
+        "scale": 1.0,
         "locConf": 0.9,
         "isHeld": False,
         "attempts": 1,
@@ -304,6 +304,43 @@ def test_generate_processed_ref_is_deterministic_on_rerun(tmp_path: Path) -> Non
     assert set(first) == {names["ok"], names["ok2"], f"ref/{names['ok']}", f"ref/{names['ok2']}"}
 
 
+def test_generate_processed_ref_uses_record_scale(tmp_path: Path) -> None:
+    """参考裁剪的尺度取自定位记录 scale 字段（不再按 zone 查表）。"""
+    raw_dir, assets_root, locate_path, names = ref_fixture(tmp_path)
+    write_jsonl(
+        locate_path,
+        [
+            locate_record(names["ok"], scale=2.0),
+            locate_record(names["ok2"], scale=1.0),
+        ],
+    )
+    processed_dir = tmp_path / "processed_ref"
+
+    prepare_data.generate_processed_ref(raw_dir, locate_path, assets_root, processed_dir)
+
+    asset = load_reference_image(assets_root / "Test" / "Base.png")
+    frame = load_source_bgr(raw_dir / names["ok"])
+    observed = observed_roi(frame)
+    expected = ref_strip(observed, asset, 100.0, 100.0, 2.0)
+    assert np.array_equal(imread_png(processed_dir / names["ok"]), expected[..., :3])
+    assert np.array_equal(imread_png(processed_dir / REF_SUBDIR / names["ok"]), expected[..., 3:])
+    # scale=1.0 的样本仍走 1:1 直接裁剪
+    plain = imread_png(processed_dir / names["ok2"])
+    assert plain.shape == (IMG_H, IMG_W, 3)
+
+
+def test_generate_processed_ref_rejects_records_without_scale(tmp_path: Path) -> None:
+    """旧 CLI 产物（无 scale）不得静默按 1.0 处理，否则出错样本无法察觉。"""
+    raw_dir, assets_root, locate_path, names = ref_fixture(tmp_path)
+    record = locate_record(names["ok"])
+    record.pop("scale")
+    write_jsonl(locate_path, [record])
+    with pytest.raises(KeyError, match="scale"):
+        prepare_data.generate_processed_ref(
+            raw_dir, locate_path, assets_root, tmp_path / "processed_ref"
+        )
+
+
 def test_run_ref_splits_both_streams_and_skips_manifest_entries_without_output(
     tmp_path: Path,
 ) -> None:
@@ -389,11 +426,13 @@ def test_real_accepted_sample_builds_ref_strip() -> None:
     x, y = float(record["x"]), float(record["y"])
     observed = observed_roi(load_source_bgr(REAL_RAW_DIR / name))
 
-    ref = ref_strip(observed, load_reference_image(asset_path), x, y, zone_scale(zone))
+    ref = ref_strip(observed, load_reference_image(asset_path), x, y, record_scale(record))
     assert ref.shape == (IMG_H, IMG_W, REF_CHANNELS)
     assert ref.dtype == np.uint8
     # 参考 BGR 流 = 黑底裁剪 + 观测背底合成；alpha 流与 BGR 同几何
-    black_ref, alpha = reference_planes(load_reference_image(asset_path), x, y, zone_scale(zone))
+    black_ref, alpha = reference_planes(
+        load_reference_image(asset_path), x, y, record_scale(record)
+    )
     composed = compose_observed_backdrop(black_ref, alpha, observed)
     assert np.array_equal(ref[..., 3:6], unwrap(composed, *ROI_POLE, INNER_R, OUTER_R))
     assert np.array_equal(ref[..., 6], unwrap(alpha, *ROI_POLE, INNER_R, OUTER_R))

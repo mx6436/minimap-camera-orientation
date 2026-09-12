@@ -5,8 +5,10 @@
 供 live.py 之类的实时消费方使用）。真正的进程编排（分片、并行、进度）在
 `locate_dataset.py`。
 
-记录字段见 local/maplocator/README.local.md：name/status/message/zone/x/y/rot/
-locConf/isHeld/latencyMs/attempts/elapsedMs。
+记录字段见 local/maplocator/README.local.md：name/status/message/zone/x/y/rot/scale/
+locConf/isHeld/latencyMs/attempts/elapsedMs。其中 `scale` 是 zone 的
+`ZoneTemplateScale`（底图与观测的像素尺度比，无缩放 zone 为 1.0），由定位侧携带，
+训练/实机侧据此裁剪参考底图，不在消费方镜像 zone -> scale 表。
 """
 
 from __future__ import annotations
@@ -103,6 +105,23 @@ def merge_records(existing: Iterable[Record], new: Iterable[Record]) -> list[Rec
     by_name: dict[str, Record] = {record["name"]: record for record in existing}
     by_name.update({record["name"]: record for record in new})
     return [by_name[name] for name in sorted(by_name)]
+
+
+def record_scale(record: Record) -> float:
+    """定位记录的 `scale`（zone 的 ZoneTemplateScale）：参考底图裁剪的尺度真源。
+
+    缺失或非数值即产物与消费端契约不符（旧 CLI 产物），直接报错而非静默按 1.0
+    处理，否则尺度错误的样本会混进训练数据。
+    """
+    try:
+        value = record["scale"]
+    except KeyError:
+        raise KeyError(
+            f"locate record lacks scale (regenerate with the scale-aware CLI): {record!r}"
+        ) from None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"locate record scale must be a number, got {value!r}")
+    return float(value)
 
 
 def accept(record: Record) -> tuple[bool, str]:

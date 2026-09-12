@@ -143,6 +143,7 @@ uv run locate_dataset.py                 # 默认 4 个并行进程；已成功�
 | `zone` | 定位到的 MapLocator zone（如 `Wuling_Base`、`ValleyIV_L6_109`；tier zone 的 x/y 为切片坐标） |
 | `x`, `y` | zone 图上的像素坐标 |
 | `rot` | MapLocator 输出的箭头朝向，**不是**摄像机角度 |
+| `scale` | 该 zone 的 `ZoneTemplateScale`（参考底图与观测的像素尺度比；无缩放 zone 为 1.0）。定位侧携带的尺度真源：训练/实机侧的参考裁剪消费此字段，不在消费方镜像 zone -> scale 表 |
 | `locConf` | 匹配分数（原始值，未加工） |
 | `isHeld` | 全局搜索没有过线峰、放行裸峰的标记 |
 | `latencyMs` / `elapsedMs` | 单次 locate 内部耗时 / 单图端到端耗时 |
@@ -158,7 +159,7 @@ uv run locate_dataset.py                 # 默认 4 个并行进程；已成功�
 - **姿态来源**：`locate.jsonl` 中 `accepted=true` 的记录；`(zone, x, y)` 一律取自 MapLocator 输出，不从文件名解析（文件名只提供样本标识与角度标签 `r`）。
 - **样本范围**：定位失败 / held / 低分（`accepted=false`）与 zone 资产缺失的样本跳过并计数，不算错误。
 - **参考底图**：按 `zone` 反解资产路径（`{P}_Base → {P}/Base.png`、`{P}_L{n}_{m} → {P}/Lv{int(n):03d}Tier{m}.png`、其它 → 任意子目录下 stem 同名文件）；tier zone 的 `(x,y)` 就是切片自身像素空间（实测与观测小地图 1:1，直接裁切片，无需仿射）。
-- **参考裁剪**：与观测同一视野（`endfield/polar.py` 的 `ROI_CENTER`，尺寸 118x120，中心 `(x,y)`），按 zone 的尺度比缩放：绝大多数 zone 是 1:1 直接裁；`ValleyIV_Base` 的底图相对观测缩放过 6.7%，按 MapLocator 的 `ZoneTemplateScale`（15/16）裁 `ROI*15/16` 再缩回 118x120。越界处外侧填 0（黑），不失败。
+- **参考裁剪**：与观测同一视野（`endfield/polar.py` 的 `ROI_CENTER`，尺寸 118x120，中心 `(x,y)`），尺度取定位记录的 `scale` 字段（即 MapLocator 的 `ZoneTemplateScale`）：绝大多数 zone 是 1:1 直接裁；`ValleyIV_Base` 的底图相对观测缩放过 6.7%（15/16），裁 `ROI*15/16` 再缩回 118x120。越界处外侧填 0（黑），不失败。
 - **观测流**：原始截图按 `polar.unwrap` 展开，输出 42x360x3 BGR，与 polar 模式的 `data/processed` 同源同几何。
 - **参考流**：`ref.A` 为资产原始连续 alpha（不二值化、不设阈值），裁剪越界与资产 `alpha<255` 统一为「参考缺失」，`ref.A = 0`。`ref.BGR` 为观测背底合成 `black_ref + obs_roi*(1 - alpha/255)`（在 118x120 ROI 域、`unwrap` 之前，四舍五入回 uint8，>255 饱和）：alpha==0 处逐像素等于观测（缺失处 copy 观测）、alpha==255 处等于黑底合成 `rgb*alpha/255`。
 - **产物布局**（两路分别落盘）：`data/processed_ref/<name>.png` 为观测流（42x360x3 BGR），`data/processed_ref/ref/<name>.png` 为参考流（42x360x4 BGRA，B/G/R = 参考 BGR，A = 原始 alpha）；`data/train_ref`、`data/val_ref` 是同一布局的符号链接视图，`ref/` 子树一并链接。
