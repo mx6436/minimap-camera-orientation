@@ -19,6 +19,7 @@ uv run prepare_data.py --mode ref         # ref：观测/参考各自展开 + �
 uv run train --run-dir runs/<name>        # 输入由 train.toml 的 input_mode 选择
 uv run export_preprocess.py --out runs/<name>/bundle/preprocess.onnx   # 前处理图（定义模块导出）
 uv run export_onnx.py --run-dir runs/<name>                            # 分类器图 polar.onnx / polar_with_ref.onnx
+uv run export_artifact.py --out runs/<name>/bundle --polar-run runs/<polar_run> --ref-run runs/<ref_run>   # 交付三图 + manifest
 ```
 
 测试通过 pytest 运行：`uv run pytest`。
@@ -38,6 +39,14 @@ uv run export_onnx.py --run-dir runs/<name>                            # 分类�
 ```bash
 uv run export_onnx.py --run-dir runs/<name>                        # 输出 runs/<name>/polar.onnx 或 polar_with_ref.onnx
 uv run export_onnx.py --run-dir runs/<name> --output /tmp/model.onnx
+```
+
+`export_artifact.py` 是交付入口：把定义模块导出的 `preprocess.onnx` 与两个 run 的分类器图装进同一个 bundle，并写 `manifest.json`（git commit、definition hash、每图 sha256 与模型指标、fixture 清单、容差剖面）。导出后做结构自检（manifest ↔ 图 metadata ↔ 文件哈希互证、ORT 1.19.2 可加载），失败退出码 1。polar 与 polar_with_ref 分属不同 run，两个 run 在调用处必填；交付实例的来源由 bundle 自身的 `run_dir` / `metrics` 记录（本机产物，不进文档）。同一 run + 同一定义 + 同一工具链重复导出，图与 manifest 逐字节一致。
+
+```bash
+uv run export_artifact.py --out runs/<name>/bundle \
+    --polar-run runs/<polar_run> --ref-run runs/<ref_run>
+uv run verify_artifact.py --bundle runs/<name>/bundle --report <report.json>   # 数值 conformance（证据落报告）
 ```
 
 `live.py` 对运行中的游戏做实时推理：从 `--run-dir` 的 `record.json` 读取 `input_mode`（旧 record 无此字段时按 polar 兼容），polar 每帧经定义模块展开；ref 起 `map-locate --stream` 常驻子进程做流式定位（定位在独立线程，显示循环不阻塞），按定位 `(zone, x, y, scale)` 由定义模块裁参考、合成后拼 `[obs.BGR, ref.BGR, ref.A]` 7 通道张量，再喂模型；定位不可用（失败 / held / 低分 / 资产缺失）时 overlay 显示等待态。overlay 展示圆盘、当前模型输入（极坐标展开 / ref 的 obs 与 ref 两路）与 360 bin 概率曲线；`--snapshot <path>` 在拿到首个有效定位后保存一张 overlay 并退出（实机 smoke 取证用）。ref 实机推理依赖 gitignored 的 `local/maplocator/`（含 `--stream` 的迭代二进制，见其 `README.local.md`）。
@@ -60,7 +69,7 @@ uv run verify_artifact.py --dump-fixtures conformance/fixtures # 物化内置 fi
 
 - 退出码：0 = 通过（允许 warning），1 = 存在 error 或超容差比对。
 - `--require` 缺省由 manifest 的 `graphs` 决定；无 manifest 的草稿 bundle 只要求 `preprocess`。
-- `--run-dir` 提供后，分类器图与 checkpoint 逐 fixture 比对 pmf（torch 侧 `ExportWrapper`）；manifest 的 `graphs.<role>.run_dir` 优先于 CLI。
+- `--run-dir` 提供后，分类器图与 checkpoint 逐 fixture 比对 pmf（torch 侧 `ExportWrapper`）；manifest 的 `graphs.<role>.run_dir`（相对 bundle 目录）优先于 CLI。
 
 ### bundle 与 manifest
 
@@ -73,10 +82,18 @@ bundle 目录（对应 MaaEnd 交付布局）含 `preprocess.onnx`、`polar.onnx
   "definition_hash": "<endfield.conformance.definition_hash() 的 sha256>",
   "ort_version": "1.19.2",
   "graphs": {
-    "preprocess": {"file": "preprocess.onnx",
-                   "outputs": {"observed": "obs", "reference": "ref"}},
-    "polar": {"file": "polar.onnx", "run_dir": "runs/<polar_run>"},
-    "polar_with_ref": {"file": "polar_with_ref.onnx", "run_dir": "runs/<ref_run>"}
+    "preprocess": {"file": "preprocess.onnx", "sha256": "<文件 sha256>",
+                   "outputs": {"observed": "observed", "reference": "reference"}},
+    "polar": {"file": "polar.onnx", "sha256": "<文件 sha256>",
+              "run_dir": "../../<polar_run>", "input_mode": "polar", "input_channels": 3,
+              "metrics": {"best_epoch": "<int>", "val_count": "<int>",
+                          "val_rms_error_deg": "<float / 度>",
+                          "val_expected_abs_error_deg": "<float / 度>"}},
+    "polar_with_ref": {"file": "polar_with_ref.onnx", "sha256": "<文件 sha256>",
+              "run_dir": "../../<ref_run>", "input_mode": "ref", "input_channels": 7,
+              "metrics": {"best_epoch": "<int>", "val_count": "<int>",
+                          "val_rms_error_deg": "<float / 度>",
+                          "val_expected_abs_error_deg": "<float / 度>"}}
   },
   "fixtures": ["polar_basic", "..."],
   "tolerances": {"strips_uint8": 1, "pmf_float32": 1e-4, "gap_fraction": 0.01}
@@ -84,9 +101,34 @@ bundle 目录（对应 MaaEnd 交付布局）含 `preprocess.onnx`、`polar.onnx
 ```
 
 - `graphs` 列出的图必须存在，缺一即 error；它也是缺省 `--require` 集。
-- `outputs` 声明输出角色；缺省按图输出顺序（第一 = observed，第二 = reference）。
+- `outputs` 把输出角色映射到图内输出名（缺省按图输出顺序：第一 = observed，第二 = reference）。
+- `sha256` 是图文件哈希；`input_mode` / `input_channels` 与分类器图 metadata 互证——bundle 内三图必须同源（同一次导出、同一 git commit / definition hash），换图后忘更新 manifest 会在结构自检/conformance 里报错。
+- `run_dir` 相对 **bundle 目录**（仅供仓库内 conformance 重放定位 checkpoint，拷入 MaaEnd 不需要）：bundle 在 `runs/<name>/bundle`、run 在 `runs/<polar_run>` 时写作 `../../<polar_run>`。
 - `definition_hash` 与当前定义源码不一致 = bundle 与定义不同源，error（需重导出）。
+- `metrics` 是模型级指标（数字：best epoch、val 数量、RMS / 期望绝对误差，度），与分类器图 metadata 的 `val_*_deg` 一致。
 - `fixtures` 缺省为内置 6 个场景；`tolerances` 覆盖默认剖面。
+
+### 拷入 MaaEnd（模型子模块）
+
+bundle 三图对应 MaaEnd 交付布局 `assets/resource/model/map/cameraorientation/`；模型子模块 `assets/resource/model` 是独立仓库（分支 `feat/camera-orientation`），拷入与提交都在子模块内完成，与 MapLocator 代码替换（#31）同一批提交：
+
+```bash
+MAAEND=<MaaEnd 工作副本>          # 先与 origin 同步、切到 feat/camera-orientation
+BUNDLE=runs/<name>/bundle
+
+mkdir -p "$MAAEND/assets/resource/model/map/cameraorientation"
+cp "$BUNDLE/preprocess.onnx" "$BUNDLE/polar.onnx" "$BUNDLE/polar_with_ref.onnx" \
+   "$MAAEND/assets/resource/model/map/cameraorientation/"
+
+cd "$MAAEND/assets/resource/model"        # 模型子模块（独立仓库）
+git add map/cameraorientation
+git commit -m "model: cameraorientation 三图工件"
+git push origin feat/camera-orientation   # 父仓库随后更新子模块指针（#31）
+```
+
+- 文件名固定 `preprocess.onnx` / `polar.onnx` / `polar_with_ref.onnx`，MapLocator 接线（#31）按这三个名字解析；
+- `manifest.json` 是训练侧交付凭据（git commit、定义哈希、指标、fixtures、容差），不进 MaaEnd 资源树，留在本仓库 bundle；
+- 旧图 `cameraorientation.onnx` / `cao_ref.onnx` 在 #31 的替换提交里一并删除。
 
 ### fixtures
 
