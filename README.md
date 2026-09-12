@@ -32,6 +32,13 @@ uv run predict.py data/raw/<screenshot>.png --run-dir runs/<name>
 
 `predict.py` 接受恰好一张原始截图 PNG（任意分辨率，按 720p 基准等比缩放 ROI 后极坐标展开），不要求预先裁剪。`--run-dir` 必填，模型读取其中的 `best.pt`；设备可用 `--device` 指定。**predict 只实现 polar 输入**，ref 的单图推理路径尚未落地（实机路径见下节的 `live.py`）。
 
+`export_onnx.py` 把 run 的 `best.pt` 导出为 ONNX 交付格式（默认 `<run-dir>/cameraorientation.onnx`），输入布局与训练契约一致：polar 为 `[1,42,360,3]` 观测条带，ref 为 `[1,42,360,7]` `[obs.BGR, ref.BGR, ref.A]` 参考配对条带；模式从 run 的 `record.json` 读取（旧 pair v2 record 映射为 ref）。`/255` 折入首层卷积，图内只留 HWC→CHW 转置与 softmax，输出 `[1,360]` 概率质量函数。
+
+```bash
+uv run export_onnx.py --run-dir runs/<name>                        # 输出 runs/<name>/cameraorientation.onnx
+uv run export_onnx.py --run-dir runs/<name> --output /tmp/model.onnx
+```
+
 `live.py` 对运行中的游戏做实时推理：从 `--run-dir` 的 `record.json` 读取 `input_mode`（旧 record 无此字段时按 polar 兼容；ref 定名之前的 pair v2 record 映射为 ref），polar 每帧直接极坐标展开；ref 起 `map-locate --stream` 常驻子进程做流式定位（定位在独立线程，显示循环不阻塞），按定位 `(zone, x, y)` 裁参考底图、合成参考后拼 `[obs.BGR, ref.BGR, ref.A]` 7 通道张量，再喂模型；定位不可用（失败 / held / 低分 / 资产缺失）时 overlay 显示等待态。overlay 展示圆盘、当前模型输入（极坐标展开 / ref 的 obs 与 ref 两路）与 360 bin 概率曲线；`--snapshot <path>` 在拿到首个有效定位后保存一张 overlay 并退出（实机 smoke 取证用）。ref 实机推理依赖 gitignored 的 `local/maplocator/`（含 `--stream` 的迭代二进制，见其 `README.local.md`）。
 
 ## 数据定位（MapLocator 批量）

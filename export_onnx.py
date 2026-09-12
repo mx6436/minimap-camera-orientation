@@ -1,8 +1,13 @@
 """将训练好的 AzimuthNet checkpoint 导出为 ONNX 交付格式。
 
-输入为 uint8 BGR HWC [1,42,360,3] 极坐标条带，即 OpenCV remap 的原生输出
-布局，与训练契约同格式，消费方无需任何格式转换即可零拷贝建张量。/255
-归一化对卷积是线性变换，折入首层卷积权重；图内仅保留 HWC→CHW 转置与
+输入为 uint8 NHWC 条带，即 OpenCV remap 的原生输出布局，与训练契约同格式，
+消费方无需任何格式转换即可零拷贝建张量：
+
+- polar：`[1,42,360,3]`，观测极坐标展开；
+- ref：`[1,42,360,7]`，`[obs.BGR, ref.BGR, ref.A]` 参考配对条带（参考合成见
+  `endfield/ref.py`）。
+
+/255 归一化对卷积是线性变换，折入首层卷积权重；图内仅保留 HWC→CHW 转置与
 softmax。输出 Z/360Z 上的离散概率质量函数 [1,360]。循环 pad 原样导出为
 Pad(wrap)，由 ONNX Runtime 支持。
 """
@@ -17,13 +22,43 @@ from pathlib import Path
 import torch
 from torch import nn
 
+from endfield.live import load_run_config
 from endfield.model import load_model
 from endfield.polar import IMG_H as POLAR_H
 from endfield.polar import IMG_W as POLAR_W
+from endfield.train.data import input_channels
 
 ROOT = Path(__file__).resolve().parent
 
-DESCRIPTION = "AzimuthNet: Endfield minimap camera angle classifier on polar-unwrapped ring strips"
+DESCRIPTIONS = {
+    "polar": "AzimuthNet: Endfield minimap camera angle classifier on polar-unwrapped ring strips",
+    "ref": (
+        "AzimuthNet: Endfield minimap camera angle classifier on reference-pair "
+        "(observed + MapLocator reference + alpha) ring strips"
+    ),
+}
+
+POLAR_GEOMETRY = (
+    "polar unwrap of the world-anchored minimap ring: angle->x (1 deg/column, clockwise, "
+    "north = column 0); radius->y, inner radius on top; r_in=12, r_out=54 at the 720p "
+    "baseline (1280x720), ring center at (108,111)"
+)
+
+INPUT_SPECS = {
+    "polar": (
+        f"uint8 [1,42,360,3] NHWC BGR. {POLAR_GEOMETRY}. values in [0,255]; /255 is folded "
+        "into the first convolution weights, HWC->CHW is a Transpose inside the graph"
+    ),
+    "ref": (
+        "uint8 [1,42,360,7] NHWC. Reference pair: channels = [obs.BGR, ref.BGR, ref.A]. "
+        f"obs = {POLAR_GEOMETRY}. ref = MapLocator zone asset cropped at (x,y) with the "
+        "zone's ZoneTemplateScale (ValleyIV_Base 15/16, otherwise 1:1), resized to 118x120, "
+        "then unwrapped at the ROI center; ref.BGR = observed-backdrop composite "
+        "black_ref + obs_roi*(1 - alpha/255) (alpha==0 -> observed pixels), ref.A = raw "
+        "asset alpha (0 = reference gap). values in [0,255]; /255 is folded into the first "
+        "convolution weights, HWC->CHW is a Transpose inside the graph"
+    ),
+}
 
 
 def fold_input_conventions(net: nn.Module) -> None:
@@ -55,19 +90,16 @@ def git_commit() -> str:
     return result.stdout.strip() if result.returncode == 0 else "unknown"
 
 
-def attach_metadata(path: Path, record: dict, summary: dict, checkpoint: Path) -> None:
+def attach_metadata(
+    path: Path, record: dict, summary: dict, checkpoint: Path, input_mode: str
+) -> None:
     import onnx
 
     model = onnx.load(path)
     metadata = {
-        "description": DESCRIPTION,
-        "input_spec": (
-            "uint8 [1,42,360,3] NHWC BGR. Polar unwrap of the world-anchored minimap ring: "
-            "angle->x (1 deg/column, clockwise, north = column 0); radius->y, inner radius on top. "
-            "r_in=12, r_out=54 at the 720p baseline (1280x720), ring center at (108,111); "
-            "values in [0,255]; /255 is folded into the first convolution "
-            "weights, HWC->CHW is a Transpose inside the graph"
-        ),
+        "description": DESCRIPTIONS[input_mode],
+        "input_mode": input_mode,
+        "input_spec": INPUT_SPECS[input_mode],
         "output_spec": (
             "float32 [1,360] discrete probability mass function over azimuth bins, softmax "
             "already applied (sums to 1). Bin j corresponds to azimuth j degrees clockwise "
@@ -88,17 +120,24 @@ def attach_metadata(path: Path, record: dict, summary: dict, checkpoint: Path) -
 
 
 def export(checkpoint: Path, output: Path) -> None:
+    run_dir = checkpoint.parent
+    run_config = load_run_config(run_dir)
+    channels = input_channels(run_config.input_mode)
     net = load_model(checkpoint, device="cpu")
+    if net.in_channels != channels:
+        raise ValueError(
+            f"{checkpoint}: checkpoint has {net.in_channels} input channels but "
+            f"input_mode {run_config.input_mode!r} expects {channels}"
+        )
     fold_input_conventions(net)
     wrapper = ExportWrapper(net).eval()
 
-    run_dir = checkpoint.parent
     with open(run_dir / "record.json") as f:
         record = json.load(f)
     with open(run_dir / "summary.json") as f:
         summary = json.load(f)
 
-    dummy = torch.zeros(1, POLAR_H, POLAR_W, 3, dtype=torch.uint8)
+    dummy = torch.zeros(1, POLAR_H, POLAR_W, channels, dtype=torch.uint8)
     torch.onnx.export(
         wrapper,
         (dummy,),
@@ -108,8 +147,8 @@ def export(checkpoint: Path, output: Path) -> None:
         output_names=["pmf"],
         external_data=False,
     )
-    attach_metadata(output, record, summary, checkpoint)
-    print(f"exported: {output}")
+    attach_metadata(output, record, summary, checkpoint, run_config.input_mode)
+    print(f"exported: {output} (input_mode={run_config.input_mode}, channels={channels})")
 
 
 if __name__ == "__main__":
