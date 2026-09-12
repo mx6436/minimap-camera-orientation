@@ -3,8 +3,8 @@
 本模块是训练侧交付物与 MaaEnd 运行时的验收口径实现，见 README「工件校验
 （conformance）」一节。三件事：
 
-- **fixtures**：6 个确定性合成场景，覆盖 polar / ref 配对 / 裁剪越界 /
-  非 1:1 zone / 参考缺失 / 资产 3 通道。场景只提供输入（minimap、asset、
+- **fixtures**：8 个确定性合成场景，覆盖 polar / ref 配对 / 裁剪越界 / 非 1:1 zone /
+  参考缺失 / 资产 3 通道 / 空裁剪窗 / 负坐标裁剪。场景只提供输入（minimap、asset、
   x、y、scale），期望输出在比对时由参考实现实时计算。
 - **参考实现**：即定义模块唯一实现（`endfield/preprocess.py`）；本模块不再适配
   旧的 cv2 路径，比对期望由它实时计算。
@@ -114,7 +114,7 @@ def _rgba(rgb: np.ndarray, alpha: np.ndarray | int) -> np.ndarray:
 
 
 def builtin_scenarios() -> list[Scenario]:
-    """6 个内置合成场景，覆盖票面要求的全部 fixture 类别。"""
+    """8 个内置合成场景，覆盖票面要求的全部 fixture 类别。"""
     minimap = _texture(ROI_H, ROI_W, seed=11, channels=3)
 
     pair_asset = _rgba(
@@ -125,6 +125,7 @@ def builtin_scenarios() -> list[Scenario]:
     small_asset = _rgba(_texture(48, 40, seed=41, channels=3), 255)
     hidden_asset = _rgba(_texture(140, 160, seed=51, channels=3), 0)
     rgb_asset = _texture(140, 160, seed=61, channels=3)
+    tiny_asset = _rgba(_texture(64, 64, seed=71, channels=3), 255)
 
     return [
         Scenario(
@@ -185,6 +186,26 @@ def builtin_scenarios() -> list[Scenario]:
             asset=rgb_asset,
             x=80.0,
             y=70.0,
+            scale=1.0,
+        ),
+        Scenario(
+            name="window_empty_oob",
+            description="空裁剪窗：资产完全在采样窗之外，ref.A 全 0、ref.BGR 逐像素等于观测",
+            tags=("ref", "oob", "empty"),
+            minimap=minimap,
+            asset=tiny_asset,
+            x=500.0,
+            y=500.0,
+            scale=1.0,
+        ),
+        Scenario(
+            name="crop_negative_corner",
+            description="负坐标裁剪：x/y 在资产左上角之外，窗口裁到资产边界，外侧按缺失",
+            tags=("ref", "oob", "neg"),
+            minimap=minimap,
+            asset=pair_asset,
+            x=-6.5,
+            y=-4.25,
             scale=1.0,
         ),
     ]

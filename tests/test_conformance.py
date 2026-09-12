@@ -22,6 +22,8 @@ REQUIRED_CASES = {
     "zone_non_1to1": "scale",
     "ref_missing_alpha0": "gap",
     "asset_rgb_3ch": "3ch",
+    "window_empty_oob": "empty",
+    "crop_negative_corner": "neg",
 }
 
 
@@ -60,6 +62,10 @@ def test_scenario_shapes_match_cases() -> None:
     assert scenarios["ref_pair_basic"].asset.shape[2] == 4
     alpha = scenarios["ref_pair_basic"].asset[..., 3]
     assert alpha.min() < 255 and alpha.max() == 255
+    empty = scenarios["window_empty_oob"]
+    assert empty.x > empty.asset.shape[1] and empty.y > empty.asset.shape[0]
+    negative = scenarios["crop_negative_corner"]
+    assert negative.x < 0 and negative.y < 0
 
 
 def test_dump_and_load_fixtures(tmp_path) -> None:

@@ -1,11 +1,12 @@
 """前处理定义模块（#25）：训练、数据生成、live 与交付共用的唯一实现。
 
-语义 = #23 决议的 clean_ideal：
+语义 = #23 决议的 clean_ideal，资产采样 = #36 的窗口优先：
 
 - 观测：在 118x120 观测 ROI 上按条带网格一次双线性采样（`padding_mode="border"`）；
-- 参考：资产坐标 = `(x, y) + (q_roi - ROI_POLE) * scale`（精确亚像素中心与
-  `ZoneTemplateScale`），RGB 与 alpha 按同一网格各一次采样（`padding_mode="zeros"`，
-  越界 = 参考缺失）；
+- 参考：先由 `(x, y, scale)` 与条带几何裁出覆盖全部采样点及双线性支撑的采样窗
+  （裁到资产边界），把资产坐标减去窗口原点、按窗口宽高归一化后再采样
+  （`padding_mode="zeros"`，越界 = 参考缺失）；窗口优先与整图采样数值等价
+  （observed 逐字节、reference ≤1 LSB），但图内只搬运窗口像素（#35/#36）；
 - 合成在条带域一次完成：`ref.BGR = rgb * (a/255) + obs * (1 - a/255)`；
 - 每个输出一次 Round（半偶）+ Cast 回 uint8。
 
@@ -112,8 +113,8 @@ def observed_strip(roi: np.ndarray) -> np.ndarray:
 def prepare_asset(asset: np.ndarray) -> torch.Tensor:
     """3/4 通道资产（3 通道补 255 alpha）-> float32 NCHW `[1,4,H,W]`。
 
-    图内 GridSample 只接受 float32；逐样本转整图是数据生成的热点。同一底图要反复
-    采样时先 `prepare_asset` 一次，再逐样本调 `strips_prepared` 复用。
+    图内 GridSample 只接受 float32；同一底图要反复采样时先 `prepare_asset` 一次，
+    再逐样本调 `strips_prepared` 复用，避免逐样本重复转换窗口。
     """
     array = normalize_asset(asset)
     return torch.from_numpy(array)[None].permute(0, 3, 1, 2).float()
@@ -135,20 +136,79 @@ def _require_prepared(asset_float: torch.Tensor) -> torch.Tensor:
     return asset_float
 
 
-def _sample_asset_float(
-    asset_float: torch.Tensor, x: torch.Tensor, y: torch.Tensor, scale: torch.Tensor
+# 采样窗在 (x,y) 四周的额外安全边距（像素）：覆盖双线性支撑与浮点舍入（#35 原型口径）。
+WINDOW_PAD = 2.0
+
+
+def _sampling_extent(scale: torch.Tensor) -> torch.Tensor:
+    """采样点相对 (x, y) 的最大偏移（像素）：条带网格最大半径 * scale。
+
+    行 i 的半径 = `INNER_R + (i + 0.5) * step`，i 最大 `IMG_H - 1`，故最大半径为
+    `INNER_R + (IMG_H - 0.5) * step`（= 外径 - 半步长）；`(u, v) - ROI_POLE` 的两轴
+    偏移都不超过它。几何变更时窗口随模块常数自动更新。
+    """
+    step = (OUTER_R - INNER_R) / IMG_H
+    max_radius = INNER_R + (IMG_H - 0.5) * step
+    return scale * max_radius
+
+
+def _window_axis(
+    center: torch.Tensor, extent: torch.Tensor, size: object
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """单轴采样窗 `[start, end)`：覆盖 center±extent 与双线性支撑，裁到资产边界且非空。
+
+    `floor(min)` 起、`floor(max) + 2` 止覆盖坐标的 floor / floor+1 两个支撑像素；
+    空窗（资产完全在窗外）退化为 1 像素，采样坐标全在窗外 → grid_sample 读 0。
+    """
+    if not isinstance(center, torch.Tensor):
+        center = torch.tensor(center)
+    if not isinstance(extent, torch.Tensor):
+        extent = torch.tensor(extent)
+    start = torch.clamp(torch.floor(center - extent - WINDOW_PAD), min=0.0, max=size - 1)
+    end = torch.clamp(torch.floor(center + extent + WINDOW_PAD) + 2.0, min=start + 1.0, max=size)
+    return start.to(torch.int64), end.to(torch.int64)
+
+
+def _asset_window(
+    x: torch.Tensor, y: torch.Tensor, scale: torch.Tensor, height: object, width: object
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """覆盖全部采样点及双线性支撑的窗口 `[w0, w1) x [h0, h1)`（裁到资产边界、非空）。"""
+    extent = _sampling_extent(scale)
+    w0, w1 = _window_axis(x, extent, width)
+    h0, h1 = _window_axis(y, extent, height)
+    return w0, w1, h0, h1
+
+
+def _sample_asset_crop(
+    crop: torch.Tensor,
+    x: torch.Tensor,
+    y: torch.Tensor,
+    scale: torch.Tensor,
+    w0: torch.Tensor,
+    h0: torch.Tensor,
+    crop_w: torch.Tensor,
+    crop_h: torch.Tensor,
 ) -> torch.Tensor:
-    """float32 NCHW BGRA 资产 -> float32 NCHW 4 通道采样值（越界读 0 = 参考缺失）。"""
+    """float32 NCHW 窗口上按条带网格一次双线性采样；坐标减去窗口原点后按窗口宽高归一化。"""
     u, v = strip_roi_uv().unbind(-1)
-    au = x + (u - ROI_POLE[0]) * scale
-    av = y + (v - ROI_POLE[1]) * scale
+    au = x + (u - ROI_POLE[0]) * scale - w0.to(torch.float32)
+    av = y + (v - ROI_POLE[1]) * scale - h0.to(torch.float32)
     return F.grid_sample(
-        asset_float,
-        _normalized(au, av, asset_float.shape[3], asset_float.shape[2]),
+        crop,
+        _normalized(au, av, crop_w.to(torch.float32), crop_h.to(torch.float32)),
         mode="bilinear",
         padding_mode="zeros",
         align_corners=False,
     )
+
+
+def _sample_asset_float(
+    asset_float: torch.Tensor, x: torch.Tensor, y: torch.Tensor, scale: torch.Tensor
+) -> torch.Tensor:
+    """float32 NCHW BGRA 资产 -> float32 NCHW 4 通道采样值（窗口优先；越界读 0）。"""
+    w0, w1, h0, h1 = _asset_window(x, y, scale, asset_float.shape[2], asset_float.shape[3])
+    crop = asset_float[:, :, h0:h1, w0:w1]
+    return _sample_asset_crop(crop, x, y, scale, w0, h0, w1 - w0, h1 - h0)
 
 
 def sample_asset(
@@ -156,10 +216,24 @@ def sample_asset(
 ) -> torch.Tensor:
     """NHWC uint8 BGRA 资产 -> float32 NCHW 4 通道采样值（与观测同一条带网格）。
 
-    资产坐标 = `(x, y) + (q_roi - ROI_POLE) * scale`：精确亚像素中心与精确 scale，
-    图内不再做整数取整 / 中间裁剪窗 / 中间重采样。越界读 0（参考缺失）。
+    窗口优先（#36）：先按 `(x, y, scale)` 裁采样窗，再只把窗口转 float32 NCHW；
+    资产坐标 = `(x, y) + (q_roi - ROI_POLE) * scale`，与整图采样数值等价。越界读 0（参考缺失）。
     """
-    return _sample_asset_float(asset.permute(0, 3, 1, 2).float(), x, y, scale)
+    w0, w1, h0, h1 = _asset_window(x, y, scale, asset.shape[1], asset.shape[2])
+    crop = asset[:, h0:h1, w0:w1, :].permute(0, 3, 1, 2).float()
+    return _sample_asset_crop(crop, x, y, scale, w0, h0, w1 - w0, h1 - h0)
+
+
+def _compose_strips(
+    obs_float: torch.Tensor, sampled: torch.Tensor
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """float32 NCHW 观测采样 + 资产采样 -> `(observed, reference)` NHWC uint8 条带。"""
+    rgb, alpha = sampled[:, :3], sampled[:, 3:4]
+    weight = alpha / 255.0
+    composed = rgb * weight + obs_float * (1.0 - weight)
+    observed = _to_uint8(obs_float).permute(0, 2, 3, 1)
+    reference = torch.cat([_to_uint8(composed), _to_uint8(alpha)], dim=1).permute(0, 2, 3, 1)
+    return observed, reference
 
 
 def _batch_strips(
@@ -172,12 +246,7 @@ def _batch_strips(
     """NHWC uint8 观测 + float32 NCHW 资产 -> `(observed, reference)` NHWC uint8。"""
     obs_float = sample_minimap(minimap)
     sampled = _sample_asset_float(asset_float, x, y, scale)
-    rgb, alpha = sampled[:, :3], sampled[:, 3:4]
-    weight = alpha / 255.0
-    composed = rgb * weight + obs_float * (1.0 - weight)
-    observed = _to_uint8(obs_float).permute(0, 2, 3, 1)
-    reference = torch.cat([_to_uint8(composed), _to_uint8(alpha)], dim=1).permute(0, 2, 3, 1)
-    return observed, reference
+    return _compose_strips(obs_float, sampled)
 
 
 def strips(
@@ -187,7 +256,7 @@ def strips(
 
     数据生成、live 与 conformance 参考侧共用的唯一入口；资产须为 BGRA
     （3 通道入口先过 `normalize_asset`）。同一底图复用先 `prepare_asset`，
-    再走 `strips_prepared` 避免每样本整图 Cast（两入口逐字节等价）。
+    再走 `strips_prepared` 避免逐样本窗口转换（两入口逐字节等价）。
     """
     return strips_prepared(roi, prepare_asset(_require_bgra(asset)), x, y, scale)
 
@@ -198,7 +267,7 @@ def strips_prepared(
     """观测 ROI + `prepare_asset()` 产物 -> `(obs 42x360x3, ref 42x360x4)` uint8 条带。
 
     与 `strips()` 逐字节等价；底图 float32 转换只做一次，供同一 zone 的批量数据生成
-    逐样本复用（图内 GridSample 只接受 float32，逐样本转整图是热点）。
+    逐样本复用（资产采样现在只读采样窗，转换复用避免逐样本重复窗口转换）。
     """
     roi = _require_roi(roi)
     asset_float = _require_prepared(asset_float)
@@ -214,7 +283,11 @@ def strips_prepared(
 
 
 class PreprocessGraph(nn.Module):
-    """clean_ideal 前处理的导出图：NHWC uint8 -> `(observed, reference)` uint8。"""
+    """clean_ideal 前处理的导出图：NHWC uint8 -> `(observed, reference)` uint8。
+
+    资产路径窗口优先（#36）：先按 `(x, y, scale)` 裁采样窗，再只把窗口转 float32 NCHW；
+    整图 Transpose/Cast 的每帧搬运已消除（#35 量化）。
+    """
 
     def forward(
         self,
@@ -224,7 +297,7 @@ class PreprocessGraph(nn.Module):
         y: torch.Tensor,
         scale: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        return _batch_strips(minimap, asset.permute(0, 3, 1, 2).float(), x, y, scale)
+        return _compose_strips(sample_minimap(minimap), sample_asset(asset, x, y, scale))
 
 
 def definition_hash() -> str:
@@ -247,10 +320,13 @@ _OUTPUT_SPEC = (
 )
 _GEOMETRY_SPEC = (
     "pole (59.0,60.0) in ROI pixel-center coords, r_in=12, r_out=54, 42x360 (1 deg/column, "
-    "north = column 0, clockwise positive); one-shot bilinear sampling: minimap on the strip "
-    "grid with padding border, asset at (x,y)+(q_roi-pole)*scale with padding zeros "
-    "(out-of-bounds = reference gap); strip-domain composite "
-    "ref.BGR = rgb*(a/255) + obs*(1-a/255); one Round (half-to-even) + Cast per output"
+    "north = column 0, clockwise positive); window-first asset sampling (#36): a data-dependent "
+    "window covering all sample points and their bilinear support (pixel-level floor/floor+1, "
+    "plus margin) is clipped to the asset bounds and non-empty (empty window reads all-zero), "
+    "then asset coordinates are shifted by the window origin and normalized by the window "
+    "extent; one-shot bilinear sampling: minimap on the strip grid with padding border, asset at "
+    "(x,y)+(q_roi-pole)*scale with padding zeros (out-of-bounds = reference gap); strip-domain "
+    "composite ref.BGR = rgb*(a/255) + obs*(1-a/255); one Round (half-to-even) + Cast per output"
 )
 
 
@@ -280,14 +356,17 @@ def export_onnx(output: Path) -> Path:
     minimap = torch.zeros(1, ROI_H, ROI_W, 3, dtype=torch.uint8)
     asset = torch.zeros(1, *DYNAMIC_ASSET_HW, 4, dtype=torch.uint8)
     args = (minimap, asset, torch.tensor(0.0), torch.tensor(0.0), torch.tensor(1.0))
+    # legacy exporter（dynamo=False）：数据相关 Slice 的窗口裁剪已验证可导出（#35/#36）；
+    # dynamo 路径对数据相关边界直接失败。
     torch.onnx.export(
         model,
         args,
         output,
         opset_version=OPSET_VERSION,
+        dynamo=False,
         input_names=["minimap", "asset", "x", "y", "scale"],
         output_names=["observed", "reference"],
-        dynamic_shapes=(None, {1: "H", 2: "W"}, None, None, None),
+        dynamic_axes={"asset": {1: "H", 2: "W"}},
         external_data=False,
     )
     _attach_metadata(output)

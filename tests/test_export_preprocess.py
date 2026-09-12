@@ -31,7 +31,7 @@ def test_export_preprocess_matches_definition_module(tmp_path: Path) -> None:
     findings = cf.check_preprocess_model(model, {"observed": "observed", "reference": "reference"})
     assert [finding for finding in findings if finding.level == "error"] == []
 
-    for name in ("ref_pair_basic", "zone_non_1to1", "crop_out_of_bounds"):
+    for name in cf.scenario_map():
         scenario = cf.scenario_map()[name]
         expected_observed, expected_reference = cf.reference_strips(scenario)
         outputs = cf.run_model(path, _feeds(scenario))
@@ -47,6 +47,80 @@ def test_export_preprocess_matches_definition_module(tmp_path: Path) -> None:
             ).max()
             <= 1
         )
+
+
+def _tensor_producers(model: object) -> dict[str, object]:
+    producers: dict[str, object] = {}
+    for node in model.graph.node:  # type: ignore[attr-defined]
+        for output in node.output:
+            producers[output] = node
+    return producers
+
+
+def _tensor_origins(model: object) -> object:
+    """张量来源的图输入名集合（沿生产者链回溯）；用于识别资产角色的 GridSample。"""
+    graph_inputs = {value.name for value in model.graph.input}  # type: ignore[attr-defined]
+    producers = _tensor_producers(model)
+    cache: dict[str, set[str]] = {}
+
+    def origins(name: str) -> set[str]:
+        if name in cache:
+            return cache[name]
+        if name in graph_inputs:
+            return {name}
+        node = producers.get(name)
+        found: set[str] = set()
+        if node is not None:
+            for source in node.input:  # type: ignore[attr-defined]
+                if source:
+                    found |= origins(source)
+        cache[name] = found
+        return found
+
+    return origins
+
+
+def test_export_preprocess_crops_asset_before_float_cast(tmp_path: Path) -> None:
+    """窗口优先（#36）：asset 到资产 GridSample 的路径必须先经数据相关 Slice 裁剪。
+
+    整图 Transpose/Cast 是 #35 量级的搬运成本源（Wuling ~9.55 ms）；结构上
+    “asset 的直接消费者只有动态 Slice 与 Shape”才说明裁剪发生在转换之前。
+    """
+    path = preprocess.export_onnx(tmp_path / "preprocess.onnx")
+    model = onnx.load(str(path))
+    origins = _tensor_origins(model)
+    producers = _tensor_producers(model)
+    graph_inputs = {value.name for value in model.graph.input}
+
+    asset_grid_samples = [
+        node
+        for node in model.graph.node
+        if node.op_type == "GridSample"
+        and node.input
+        and "asset" in origins(node.input[0])
+        and "minimap" not in origins(node.input[0])
+    ]
+    assert len(asset_grid_samples) == 1
+
+    seen: set[str] = set()
+    stack = [asset_grid_samples[0].input[0]]
+    cropped = False
+    while stack:
+        name = stack.pop()
+        if name in seen or name in graph_inputs:
+            continue
+        seen.add(name)
+        node = producers.get(name)
+        if node is None:
+            continue
+        if node.op_type == "Slice" and "asset" in node.input:
+            cropped = True
+            break
+        stack.extend(source for source in node.input if source)
+    assert cropped, "asset 必须先经数据相关 Slice 裁采样窗再 Cast/采样（窗口优先）"
+
+    direct = {node.op_type for node in model.graph.node if "asset" in node.input}
+    assert direct <= {"Slice", "Shape"}, f"asset 的直接消费者只能是 Slice/Shape，实际 {direct}"
 
 
 def test_export_preprocess_declares_contract_and_metadata(tmp_path: Path) -> None:

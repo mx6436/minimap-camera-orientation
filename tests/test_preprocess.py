@@ -15,6 +15,40 @@ from endfield import preprocess
 WHITE = 255
 
 
+def _full_asset_reference(
+    roi: np.ndarray, asset: np.ndarray, x: float, y: float, scale: float
+) -> tuple[np.ndarray, np.ndarray]:
+    """整图采样语义（#36 变更前的交付口径）的独立复算。
+
+    期望值不复用定义模块的窗口优先路径：整图 float32 上按
+    `(x, y) + (q_roi - pole) * scale` 一次双线性采样（padding zeros），条带域合成后
+     每个输出一次 Round（半偶）+ Cast。作为窗口优先实现的等价判据（#36）。
+    """
+    bgra = preprocess.normalize_asset(asset)
+    height, width = bgra.shape[:2]
+    with torch.no_grad():
+        observed_float = preprocess.sample_minimap(torch.from_numpy(roi)[None])
+        asset_float = torch.from_numpy(bgra)[None].permute(0, 3, 1, 2).float()
+        u, v = preprocess.strip_roi_uv().unbind(-1)
+        au = x + (u - preprocess.ROI_POLE[0]) * scale
+        av = y + (v - preprocess.ROI_POLE[1]) * scale
+        grid = torch.stack(
+            [(2.0 * au + 1.0) / width - 1.0, (2.0 * av + 1.0) / height - 1.0], dim=-1
+        )[None]
+        sampled = torch.nn.functional.grid_sample(
+            asset_float, grid, mode="bilinear", padding_mode="zeros", align_corners=False
+        )
+        rgb, alpha = sampled[:, :3], sampled[:, 3:4]
+        weight = alpha / 255.0
+        composed = rgb * weight + observed_float * (1.0 - weight)
+
+        def to_uint8(value: torch.Tensor) -> np.ndarray:
+            return torch.round(value).clamp(0.0, 255.0).to(torch.uint8)[0].permute(1, 2, 0).numpy()
+
+        reference = torch.cat([composed, alpha], dim=1)
+        return to_uint8(observed_float), to_uint8(reference)
+
+
 def _roi() -> np.ndarray:
     return np.zeros((preprocess.ROI_H, preprocess.ROI_W, 3), dtype=np.uint8)
 
@@ -188,3 +222,70 @@ def test_reference_out_of_bounds_reads_as_missing() -> None:
     assert alpha.min() == 0 and np.any(alpha == 255)
     assert np.all(ref[..., :3][alpha == 255] == (10, 20, 30))
     assert np.array_equal(ref[..., :3][alpha == 0], obs[alpha == 0])
+
+
+def test_empty_sampling_window_degrades_to_observed() -> None:
+    """空裁剪窗（资产完全在采样窗之外）：ref.A 全 0、ref.BGR 逐像素等于观测。"""
+    rng = np.random.default_rng(31)
+    observed = rng.integers(0, 256, (preprocess.ROI_H, preprocess.ROI_W, 3), dtype=np.uint8)
+    asset = _bgra(64, 64, (10, 20, 30), 255)
+
+    obs, ref = preprocess.strips(observed, asset, 500.0, 500.0, 1.0)
+
+    assert np.all(ref[..., 3] == 0)
+    assert np.array_equal(ref[..., :3], obs)
+
+
+def test_negative_corner_clips_window_to_asset() -> None:
+    """x/y 在资产左上角之外：窗口裁到资产边界，只保留资产内的支撑像素。"""
+    rng = np.random.default_rng(37)
+    observed = rng.integers(0, 256, (preprocess.ROI_H, preprocess.ROI_W, 3), dtype=np.uint8)
+    asset = _bgra(140, 160, (10, 20, 30), 255)
+
+    obs, ref = preprocess.strips(observed, asset, -6.5, -4.25, 1.0)
+
+    alpha = ref[..., 3]
+    assert 0 < int((alpha == 255).sum()) < alpha.size
+    assert np.all(ref[..., :3][alpha == 255] == (10, 20, 30))
+    assert np.array_equal(ref[..., :3][alpha == 0], obs[alpha == 0])
+
+
+@pytest.mark.parametrize(
+    ("x", "y", "scale"),
+    [
+        (80.0, 70.0, 1.0),
+        (0.25, 0.75, 1.0),
+        (159.5, 139.5, 1.0),
+        (80.0, 70.0, 15.0 / 16.0),
+        (80.0, 70.0, 0.5),
+        (-3.25, -4.5, 1.0),
+        (170.0, 150.0, 1.0),
+        (400.0, 400.0, 1.0),
+    ],
+)
+def test_window_sampling_matches_full_asset_semantics(x: float, y: float, scale: float) -> None:
+    """窗口优先与变更前整图口径等价：observed 逐字节、reference ≤1 LSB。"""
+    rng = np.random.default_rng(41)
+    observed = rng.integers(0, 256, (preprocess.ROI_H, preprocess.ROI_W, 3), dtype=np.uint8)
+    asset = rng.integers(0, 256, (140, 160, 4), dtype=np.uint8)
+
+    obs, ref = preprocess.strips(observed, asset, x, y, scale)
+    expected_obs, expected_ref = _full_asset_reference(observed, asset, x, y, scale)
+
+    assert np.array_equal(obs, expected_obs)
+    assert np.abs(ref.astype(np.int16) - expected_ref.astype(np.int16)).max() <= 1
+
+
+@pytest.mark.parametrize("shape", [(1, 1), (5, 9), (20, 20), (48, 40)])
+def test_window_sampling_matches_full_asset_on_small_assets(shape: tuple[int, int]) -> None:
+    """小资产（小于采样窗、含 1x1 退化）与整图口径等价。"""
+    rng = np.random.default_rng(43)
+    observed = rng.integers(0, 256, (preprocess.ROI_H, preprocess.ROI_W, 3), dtype=np.uint8)
+    asset = rng.integers(0, 256, (shape[0], shape[1], 4), dtype=np.uint8)
+    x, y = shape[1] / 2.0, shape[0] / 2.0
+
+    obs, ref = preprocess.strips(observed, asset, x, y, 1.0)
+    expected_obs, expected_ref = _full_asset_reference(observed, asset, x, y, 1.0)
+
+    assert np.array_equal(obs, expected_obs)
+    assert np.abs(ref.astype(np.int16) - expected_ref.astype(np.int16)).max() <= 1

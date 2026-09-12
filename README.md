@@ -106,7 +106,7 @@ bundle 目录（对应 MaaEnd 交付布局）含 `preprocess.onnx`、`polar.onnx
 - `run_dir` 相对 **bundle 目录**（仅供仓库内 conformance 重放定位 checkpoint，拷入 MaaEnd 不需要）：bundle 在 `runs/<name>/bundle`、run 在 `runs/<polar_run>` 时写作 `../../<polar_run>`。
 - `definition_hash` 与当前定义源码不一致 = bundle 与定义不同源，error（需重导出）。
 - `metrics` 是模型级指标（数字：best epoch、val 数量、RMS / 期望绝对误差，度），与分类器图 metadata 的 `val_*_deg` 一致。
-- `fixtures` 缺省为内置 6 个场景；`tolerances` 覆盖默认剖面。
+- `fixtures` 缺省为内置 8 个场景；`tolerances` 覆盖默认剖面。
 
 ### 拷入 MaaEnd（模型子模块）
 
@@ -141,7 +141,7 @@ fixture 是「输入场景」，期望输出在比对时由参考实现实时计
 | `asset` | HxWx3/4 uint8 底图；3 通道视为完全不透明 |
 | `x` / `y` / `scale` | MapLocator 定位坐标与 `ZoneTemplateScale` |
 
-内置 6 个场景覆盖：极坐标（`polar_basic`）、参考配对（`ref_pair_basic`）、裁剪越界（`crop_out_of_bounds`）、非 1:1 zone（`zone_non_1to1`，scale=15/16）、参考缺失（`ref_missing_alpha0`）、资产 3 通道（`asset_rgb_3ch`）。
+内置 8 个场景覆盖：极坐标（`polar_basic`）、参考配对（`ref_pair_basic`）、裁剪越界（`crop_out_of_bounds`）、非 1:1 zone（`zone_non_1to1`，scale=15/16）、参考缺失（`ref_missing_alpha0`）、资产 3 通道（`asset_rgb_3ch`）、空裁剪窗（`window_empty_oob`，全部越界 → ref.A 全 0、ref.BGR 等于观测）、负坐标裁剪（`crop_negative_corner`，窗口裁到资产边界）。
 
 ### 结构与数值断言
 
@@ -161,7 +161,7 @@ fixture 是「输入场景」，期望输出在比对时由参考实现实时计
 
 ### 定义模块与 preprocess.onnx
 
-定义模块已落地：`endfield/preprocess.py` 是极坐标展开、参考采样与条带域合成的唯一实现（#25，clean_ideal 语义）。`verify_artifact.py` 的参考侧（`reference_strips()`）与 `definition_hash()` 都指向它；旧的 cv2 前处理（`polar.unwrap` / `ref.reference_crop` 等）已删除，`polar.py`/`ref.py` 只保留 I/O、ROI 提取与适配。
+定义模块已落地：`endfield/preprocess.py` 是极坐标展开、参考采样与条带域合成的唯一实现（#25，clean_ideal 语义）。`#36` 起资产采样为**窗口优先**：先按 `(x,y,scale)` 裁采样窗，再只把窗口转 float32 NCHW 并采样，消除与底图像素数成正比的整图搬运（#35 分解：Wuling 每帧 ~9.55 ms）；训练/数据生成与导出图共用同一实现，processed 缓存随 `definition_hash` 失效重生成（不重训）。`verify_artifact.py` 的参考侧（`reference_strips()`）与 `definition_hash()` 都指向它；旧的 cv2 前处理（`polar.unwrap` / `ref.reference_crop` 等）已删除，`polar.py`/`ref.py` 只保留 I/O、ROI 提取与适配。
 
 `export_preprocess.py --out <path>` 导出交付图，契约如下（同时写入图 metadata）：
 
@@ -170,9 +170,9 @@ fixture 是「输入场景」，期望输出在比对时由参考实现实时计
 | 输入 | `minimap` uint8 `[1,120,118,3]` NHWC BGR；`asset` uint8 `[1,H,W,4]` NHWC BGRA（H/W 动态）；`x`/`y`/`scale` float32 标量（`scale` = 定位记录的 `ZoneTemplateScale`） |
 | 输出 | `observed` uint8 `[1,42,360,3]`（obs.BGR）；`reference` uint8 `[1,42,360,4]`（ref.BGR + ref.A）；7 通道拼装与缺口分派在消费方 |
 | 几何 | 极点 `(59.0,60.0)` ROI 像素中心，内径 12、外径 54，42 行 x 360 列（1 度/列，正北 = 列 0，顺时针为正） |
-| 采样 | 观测：在条带网格上对 minimap 一次双线性采样（padding `border`）；参考：资产坐标 = `(x,y)+(q_roi-极点)*scale` 一次采样（padding `zeros`，越界 = 参考缺失） |
+| 采样 | 观测：在条带网格上对 minimap 一次双线性采样（padding `border`）；参考：窗口优先（#36）——由 `(x,y,scale)` 与条带几何裁出覆盖全部采样点及双线性支撑的窗口（裁到资产边界、空窗退化为 1 像素即参考全缺失），坐标减窗口原点、按窗口宽高归一化后一次采样（padding `zeros`，越界 = 参考缺失）；与整图采样数值等价（observed 逐字节、reference ≤1 LSB） |
 | 合成 | 条带域一次完成 `ref.BGR = rgb*(a/255) + obs*(1-a/255)`；每个输出一次 Round（半偶）+ Cast uint8 |
-| 图结构 | opset 18，`mode="bilinear"`、`align_corners=0`，无 contrib 域节点 |
+| 图结构 | opset 18，`mode="bilinear"`、`align_corners=0`，无 contrib 域节点；asset 先经数据相关 `Slice` 裁采样窗（窗口优先），整图 Transpose/Cast 不在图内（#35/#36） |
 
 资产的 3 通道入口在消费侧归一化（补 255 alpha 成全不透明 BGRA，`normalize_asset`），图内严格 4 通道；3 通道 fixture 由 conformance 侧归一化后喂图。
 
