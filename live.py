@@ -36,6 +36,7 @@ import cv2
 import numpy as np
 
 import endfield.polar as polar
+from endfield import preprocess
 from endfield.live import (
     MissingZoneAsset,
     load_run_config,
@@ -44,6 +45,7 @@ from endfield.live import (
 )
 from endfield.locate import LocalizerStream, accept
 from endfield.model import choose_device, load_model, predict_probs
+from endfield.ref import observed_roi
 
 DISPLAY_BOX = 108  # 外径 54 的外接正方形，720p 基准
 DISPLAY_SCALE = 6
@@ -117,7 +119,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def render_disc(bgr: np.ndarray, cx: float, cy: float, r_out: float) -> np.ndarray:
-    """polar.unwrap 已保证 r_out + 1 的边距落在图内，故此处裁剪无需越界检查。"""
+    """圆盘半径按帧缩放后必须落在图内（环本身即在此几何内），故裁剪无需越界检查。"""
     left = int(round(cx - r_out))
     top = int(round(cy - r_out))
     right = int(round(cx + r_out))
@@ -585,7 +587,7 @@ def main() -> None:
                     )
                     ready = False
             else:
-                strip = polar.unwrap(frame, cx, cy, r_in, r_out)
+                strip = preprocess.observed_strip(observed_roi(to_base_frame(frame)))
                 angle, confidence, probs = predict_probs(model, strip)
                 disc = render_disc(frame, cx, cy, r_out)
                 display = draw_overlay(disc, angle, confidence, probs, strip, input_label)

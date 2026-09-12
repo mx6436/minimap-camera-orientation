@@ -19,14 +19,13 @@ from endfield.live import (
     ref_strip_at,
     to_base_frame,
 )
-from endfield.locate import accept, load_records
+from endfield.locate import accept, load_records, write_jsonl, zone_asset_path
 from endfield.polar import BASE_SIZE, IMG_H, IMG_W, imread_png, load_source_bgr
 from endfield.ref import REF_CHANNELS, observed_roi, ref_strip
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 REAL_RAW_DIR = REPO_ROOT / "data" / "raw"
 REAL_LOCATE_PATH = REPO_ROOT / "data" / "locator" / "locate.jsonl"
-REAL_PROCESSED_REF = REPO_ROOT / "data" / "processed_ref"
 REAL_ASSETS_ROOT = REPO_ROOT / "local" / "maplocator" / "resource" / "image" / "MapLocator"
 
 
@@ -250,30 +249,43 @@ def test_ref_strip_at_uses_record_scale(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(
-    not REAL_LOCATE_PATH.exists()
-    or not (REAL_PROCESSED_REF / "ref").is_dir()
-    or not REAL_ASSETS_ROOT.is_dir(),
-    reason="real locate.jsonl / processed_ref / assets not available",
+    not REAL_LOCATE_PATH.exists() or not REAL_ASSETS_ROOT.is_dir(),
+    reason="real locate.jsonl / assets not available",
 )
-def test_live_ref_strip_matches_training_processed_ref() -> None:
-    """同帧同坐标：live 路径与 prepare_data --mode ref 的两路产物逐字节一致（含尺度）。"""
+def test_live_ref_strip_matches_regenerated_training_artifacts(tmp_path: Path) -> None:
+    """同帧同坐标：live 路径与 prepare_data --mode ref 的两路产物逐字节一致（含尺度）。
+
+    用同一批真实样本现场重跑数据管线（不读 data/processed_ref，避免拿旧定义产物
+    对拍）；data/processed_ref 的重生成与缓存哈希是 #26 的范围。
+    """
+    import prepare_data
+
     records = load_records(REAL_LOCATE_PATH)
     samples = [
         (name, record)
         for name, record in sorted(records.items())
         if accept(record)[0]
-        and (REAL_PROCESSED_REF / name).exists()
-        and (REAL_PROCESSED_REF / "ref" / name).exists()
+        and (REAL_RAW_DIR / name).exists()
+        and zone_asset_path(str(record.get("zone", "")), REAL_ASSETS_ROOT) is not None
     ]
-    assert samples, "no accepted sample with processed ref outputs"
+    assert samples, "no accepted real sample with a zone asset"
     scaled = [item for item in samples if item[1].get("zone") == "ValleyIV_Base"]
     chosen = (samples[:8] + scaled[:2]) if scaled else samples[:10]
+
+    raw_dir = tmp_path / "raw"
+    raw_dir.mkdir()
+    for name, _ in chosen:
+        (raw_dir / name).symlink_to(REAL_RAW_DIR / name)
+    locate_path = tmp_path / "locate.jsonl"
+    write_jsonl(locate_path, [{**record, "name": name} for name, record in chosen])
+    processed = tmp_path / "processed_ref"
+    prepare_data.generate_processed_ref(raw_dir, locate_path, REAL_ASSETS_ROOT, processed)
 
     for name, record in chosen:
         frame = load_source_bgr(REAL_RAW_DIR / name)
         strip = ref_strip_at(frame, record, REAL_ASSETS_ROOT)
-        observed = imread_png(REAL_PROCESSED_REF / name)
-        reference = imread_png(REAL_PROCESSED_REF / "ref" / name)
+        observed = imread_png(processed / name)
+        reference = imread_png(processed / "ref" / name)
         assert strip.shape == (IMG_H, IMG_W, REF_CHANNELS)
         assert np.array_equal(strip[..., :3], observed), f"observed mismatch for {name}"
         assert np.array_equal(strip[..., 3:], reference), f"reference mismatch for {name}"

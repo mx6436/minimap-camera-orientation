@@ -116,7 +116,7 @@ def test_record_declares_ref_representation_and_assets_root(tmp_path: Path) -> N
     record = build(config, tmp_path)
     assert record["input_mode"] == "ref"
     assert record["input_representation"].startswith("ref_polar_unwrap")
-    assert "obs_roi*(1 - alpha/255)" in record["input_representation"]
+    assert "obs*(1 - a/255)" in record["input_representation"]
     assert record["input_shape"] == [7, 42, 360]
     assert record["ref_reference_assets_root"] == "/tmp/assets"
     # ref 是唯一编码，不记历史 pair 编码/缺口过滤字段

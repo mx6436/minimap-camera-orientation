@@ -17,6 +17,8 @@ uv run locate_dataset.py                  # ref 前置：对 data/raw 批量定�
 uv run prepare_data.py                    # polar：极坐标展开 + 清单切分
 uv run prepare_data.py --mode ref         # ref：观测/参考各自展开 + 清单切分
 uv run train --run-dir runs/<name>        # 输入由 train.toml 的 input_mode 选择
+uv run export_preprocess.py --out runs/<name>/bundle/preprocess.onnx   # 前处理图（定义模块导出）
+uv run export_onnx.py --run-dir runs/<name>                            # 分类器图 polar.onnx / polar_with_ref.onnx
 uv run predict.py data/raw/<screenshot>.png --run-dir runs/<name>
 ```
 
@@ -30,20 +32,22 @@ uv run predict.py data/raw/<screenshot>.png --run-dir runs/<name>
 
 `train.toml` 的 `input_mode` 选择训练数据：`"polar"`（默认）读 `data/train`、`data/val`；`"ref"` 读 `data/train_ref`、`data/val_ref`。`map_assets_root` 指向 ref 使用的 MapLocator 底图资产目录（默认本地 MaaEnd 工作副本，需与 `prepare_data.py --mode ref` 一致），写在 run 的 `record.json`（`ref_reference_assets_root`），供实机推理读取。ref 模式还可选 `max_ref_missing`（0~1）：训练集在读取时排除环内 `ref.A<255` 占比**严格大于**阈值的样本（等于阈值保留），val 不变；阈值一并写入 `record.json`。
 
-`predict.py` 接受恰好一张原始截图 PNG（任意分辨率，按 720p 基准等比缩放 ROI 后极坐标展开），不要求预先裁剪。`--run-dir` 必填，模型读取其中的 `best.pt`；设备可用 `--device` 指定。**predict 只实现 polar 输入**，ref 的单图推理路径尚未落地（实机路径见下节的 `live.py`）。
+`predict.py` 接受恰好一张原始截图 PNG（任意分辨率，先缩回 720p 基准帧再取小地图 ROI，前处理由定义模块完成），不要求预先裁剪。`--run-dir` 必填，模型读取其中的 `best.pt`；设备可用 `--device` 指定。**predict 只实现 polar 输入**，ref 的单图推理路径尚未落地（实机路径见下节的 `live.py`）。
 
-`export_onnx.py` 把 run 的 `best.pt` 导出为 ONNX 交付格式（默认 `<run-dir>/cameraorientation.onnx`），输入布局与训练契约一致：polar 为 `[1,42,360,3]` 观测条带，ref 为 `[1,42,360,7]` `[obs.BGR, ref.BGR, ref.A]` 参考配对条带；模式从 run 的 `record.json` 读取（旧 pair v2 record 映射为 ref）。`/255` 折入首层卷积，图内只留 HWC→CHW 转置与 softmax，输出 `[1,360]` 概率质量函数。
+`endfield/preprocess.py` 是前处理的**唯一定义模块**（#25）：极坐标展开几何、参考采样与条带域合成、采样/取整约定都在这里，训练数据生成、`preprocess.onnx` 导出与 live 共用它。`export_preprocess.py --out <path>` 导出交付的前处理图（契约见图 metadata 与下节）：输入 `minimap` `[1,120,118,3]` uint8、`asset` `[1,H,W,4]` BGRA uint8（H/W 动态）、标量 `x`/`y`/`scale`，输出 `observed` `[1,42,360,3]` 与 `reference` `[1,42,360,4]` uint8；7 通道拼装留给消费方。
+
+`export_onnx.py` 把 run 的 `best.pt` 导出为 ONNX 交付格式（默认按模式命名 `<run-dir>/polar.onnx` / `<run-dir>/polar_with_ref.onnx`），输入布局与训练契约一致：polar 为 `[1,42,360,3]` 观测条带，ref 为 `[1,42,360,7]` `[obs.BGR, ref.BGR, ref.A]` 参考配对条带；模式从 run 的 `record.json` 读取（旧 pair v2 record 映射为 ref）。导出后即做结构断言并在 ORT 1.19.2 加载校验；`/255` 折入首层卷积，图内只留 HWC→CHW 转置与 softmax，输出 `[1,360]` 概率质量函数。
 
 ```bash
-uv run export_onnx.py --run-dir runs/<name>                        # 输出 runs/<name>/cameraorientation.onnx
+uv run export_onnx.py --run-dir runs/<name>                        # 输出 runs/<name>/polar.onnx 或 polar_with_ref.onnx
 uv run export_onnx.py --run-dir runs/<name> --output /tmp/model.onnx
 ```
 
-`live.py` 对运行中的游戏做实时推理：从 `--run-dir` 的 `record.json` 读取 `input_mode`（旧 record 无此字段时按 polar 兼容；ref 定名之前的 pair v2 record 映射为 ref），polar 每帧直接极坐标展开；ref 起 `map-locate --stream` 常驻子进程做流式定位（定位在独立线程，显示循环不阻塞），按定位 `(zone, x, y)` 裁参考底图、合成参考后拼 `[obs.BGR, ref.BGR, ref.A]` 7 通道张量，再喂模型；定位不可用（失败 / held / 低分 / 资产缺失）时 overlay 显示等待态。overlay 展示圆盘、当前模型输入（极坐标展开 / ref 的 obs 与 ref 两路）与 360 bin 概率曲线；`--snapshot <path>` 在拿到首个有效定位后保存一张 overlay 并退出（实机 smoke 取证用）。ref 实机推理依赖 gitignored 的 `local/maplocator/`（含 `--stream` 的迭代二进制，见其 `README.local.md`）。
+`live.py` 对运行中的游戏做实时推理：从 `--run-dir` 的 `record.json` 读取 `input_mode`（旧 record 无此字段时按 polar 兼容；ref 定名之前的 pair v2 record 映射为 ref），polar 每帧经定义模块展开；ref 起 `map-locate --stream` 常驻子进程做流式定位（定位在独立线程，显示循环不阻塞），按定位 `(zone, x, y, scale)` 由定义模块裁参考、合成后拼 `[obs.BGR, ref.BGR, ref.A]` 7 通道张量，再喂模型；定位不可用（失败 / held / 低分 / 资产缺失）时 overlay 显示等待态。overlay 展示圆盘、当前模型输入（极坐标展开 / ref 的 obs 与 ref 两路）与 360 bin 概率曲线；`--snapshot <path>` 在拿到首个有效定位后保存一张 overlay 并退出（实机 smoke 取证用）。ref 实机推理依赖 gitignored 的 `local/maplocator/`（含 `--stream` 的迭代二进制，见其 `README.local.md`）。
 
 ## 工件校验（conformance）
 
-`verify_artifact.py` 对交付 bundle 做一致性校验：ORT 1.19.2 跑图，逐 fixture 与参考实现（定义模块；定义模块落地前为现行 cv2 前处理）比对并应用容差，输出通过/失败与差异明细。判定口径见 map 的「模型级等价」：不承诺与 C++ 逐位一致，uint8 条带按 ±1 LSB 预期。
+`verify_artifact.py` 对交付 bundle 做一致性校验：ORT 1.19.2 跑图，逐 fixture 与参考实现（定义模块 `endfield/preprocess.py`，唯一实现）比对并应用容差，输出通过/失败与差异明细。判定口径见 map 的「模型级等价」：不承诺与 C++ 逐位一致，uint8 条带按 ±1 LSB 预期。
 
 环境固定为 Python 3.12 + dev 依赖 `onnxruntime==1.19.2`（与 MaaEnd 运行时同版本，`pyproject.toml` 固定）；运行时版本不一致直接判 error（证据作废）。
 
@@ -102,7 +106,7 @@ fixture 是「输入场景」，期望输出在比对时由参考实现实时计
 
 ### 结构与数值断言
 
-- `preprocess.onnx`：存在 `GridSample`，且 opset 18 下 `mode="bilinear"` / `padding_mode="border"` / `align_corners=0`；`X`/`grid` 为 float32（uint8 需图内 Cast）；`asset` 的 H/W 为动态维；输出条带 uint8、形状 42x360x3/4；无 contrib 域节点。
+- `preprocess.onnx`：存在 `GridSample`，且 opset 18 下 `mode="bilinear"` / `align_corners=0`；`padding_mode` 按采样角色区分（观测/minimap 为 `border`、资产为 `zeros`，按节点 X 输入的来源图输入归属）；`X`/`grid` 为 float32（uint8 需图内 Cast）；`asset` 的 H/W 为动态维；输出条带 uint8、形状 42x360x3/4；无 contrib 域节点。
 - `polar.onnx` / `polar_with_ref.onnx`：输入 uint8 42x360x3/7，输出 float32 [1,360]，无 contrib 域节点。
 - 数值：每个输出报 `max_abs` / `mean_abs` / `p99_abs` / `diff_fraction`，**通过条件 = `max_abs <= limits[profile]`**（形状或 dtype 不符直接失败）。缺口占比（`ref.A < 255`）另报绝对误差；分类器与 checkpoint 另报 `angle_error_deg`（argmax 环差，仅供证据，不作门限）。
 
@@ -116,9 +120,22 @@ fixture 是「输入场景」，期望输出在比对时由参考实现实时计
 
 阈值只在 manifest 的 `tolerances` 覆盖；覆盖要有证据（#23 对拍分布），失败先回票定位（图/定义/环境），不得为通过而放宽。
 
-### 定义模块交接
+### 定义模块与 preprocess.onnx
 
-`verify_artifact.py` 的参考侧当前适配现行 cv2 前处理（`endfield/polar.py` + `endfield/ref.py`），`definition_hash()` 也取这两份源码。定义模块（#25）落地后，把 `endfield/conformance.py` 的 `reference_strips()` / `definition_hash()` 指过去（唯一实现）、删除 cv2 路径；校验侧接口与 fixtures 不变。
+定义模块已落地：`endfield/preprocess.py` 是极坐标展开、参考采样与条带域合成的唯一实现（#25，clean_ideal 语义）。`verify_artifact.py` 的参考侧（`reference_strips()`）与 `definition_hash()` 都指向它；旧的 cv2 前处理（`polar.unwrap` / `ref.reference_crop` 等）已删除，`polar.py`/`ref.py` 只保留 I/O、ROI 提取与适配。
+
+`export_preprocess.py --out <path>` 导出交付图，契约如下（同时写入图 metadata）：
+
+| 项 | 契约 |
+| --- | --- |
+| 输入 | `minimap` uint8 `[1,120,118,3]` NHWC BGR；`asset` uint8 `[1,H,W,4]` NHWC BGRA（H/W 动态）；`x`/`y`/`scale` float32 标量（`scale` = 定位记录的 `ZoneTemplateScale`） |
+| 输出 | `observed` uint8 `[1,42,360,3]`（obs.BGR）；`reference` uint8 `[1,42,360,4]`（ref.BGR + ref.A）；7 通道拼装与缺口分派在消费方 |
+| 几何 | 极点 `(59.0,60.0)` ROI 像素中心，内径 12、外径 54，42 行 x 360 列（1 度/列，正北 = 列 0，顺时针为正） |
+| 采样 | 观测：在条带网格上对 minimap 一次双线性采样（padding `border`）；参考：资产坐标 = `(x,y)+(q_roi-极点)*scale` 一次采样（padding `zeros`，越界 = 参考缺失） |
+| 合成 | 条带域一次完成 `ref.BGR = rgb*(a/255) + obs*(1-a/255)`；每个输出一次 Round（半偶）+ Cast uint8 |
+| 图结构 | opset 18，`mode="bilinear"`、`align_corners=0`，无 contrib 域节点 |
+
+资产的 3 通道入口在消费侧归一化（补 255 alpha 成全不透明 BGRA，`normalize_asset`），图内严格 4 通道；3 通道 fixture 由 conformance 侧归一化后喂图。
 
 ## 数据定位（MapLocator 批量）
 
@@ -159,11 +176,11 @@ uv run locate_dataset.py                 # 默认 4 个并行进程；已成功�
 - **姿态来源**：`locate.jsonl` 中 `accepted=true` 的记录；`(zone, x, y)` 一律取自 MapLocator 输出，不从文件名解析（文件名只提供样本标识与角度标签 `r`）。
 - **样本范围**：定位失败 / held / 低分（`accepted=false`）与 zone 资产缺失的样本跳过并计数，不算错误。
 - **参考底图**：按 `zone` 反解资产路径（`{P}_Base → {P}/Base.png`、`{P}_L{n}_{m} → {P}/Lv{int(n):03d}Tier{m}.png`、其它 → 任意子目录下 stem 同名文件）；tier zone 的 `(x,y)` 就是切片自身像素空间（实测与观测小地图 1:1，直接裁切片，无需仿射）。
-- **参考裁剪**：与观测同一视野（`endfield/polar.py` 的 `ROI_CENTER`，尺寸 118x120，中心 `(x,y)`），尺度取定位记录的 `scale` 字段（即 MapLocator 的 `ZoneTemplateScale`）：绝大多数 zone 是 1:1 直接裁；`ValleyIV_Base` 的底图相对观测缩放过 6.7%（15/16），裁 `ROI*15/16` 再缩回 118x120。越界处外侧填 0（黑），不失败。
-- **观测流**：原始截图按 `polar.unwrap` 展开，输出 42x360x3 BGR，与 polar 模式的 `data/processed` 同源同几何。
-- **参考流**：`ref.A` 为资产原始连续 alpha（不二值化、不设阈值），裁剪越界与资产 `alpha<255` 统一为「参考缺失」，`ref.A = 0`。`ref.BGR` 为观测背底合成 `black_ref + obs_roi*(1 - alpha/255)`（在 118x120 ROI 域、`unwrap` 之前，四舍五入回 uint8，>255 饱和）：alpha==0 处逐像素等于观测（缺失处 copy 观测）、alpha==255 处等于黑底合成 `rgb*alpha/255`。
+- **参考裁剪**：由定义模块一次采样完成：资产坐标 = `(x, y) + (q_roi - 极点) * scale`（精确亚像素中心与精确 `scale`），尺度取定位记录的 `scale` 字段（即 MapLocator 的 `ZoneTemplateScale`）：绝大多数 zone 是 1:1；`ValleyIV_Base` 的底图相对观测缩放过 6.7%（15/16）。越界处读 0 = 参考缺失，不失败。
+- **观测流**：原始截图按 720p 基准裁出 118x120 ROI，由定义模块在条带网格上双线性采样一次，输出 42x360x3 BGR，与 polar 模式的 `data/processed` 同源同几何。
+- **参考流**：`ref.A` 为资产原始连续 alpha 的同一网格采样（不二值化、不设阈值），裁剪越界与资产 `alpha<255` 统一为「参考缺失」，`ref.A = 0`。`ref.BGR` 在条带域一次合成 `rgb*(a/255) + obs*(1 - a/255)`（每输出一次 Round）：alpha==0 处逐像素等于观测（缺失处 copy 观测）、alpha==255 处等于资产像素。
 - **产物布局**（两路分别落盘）：`data/processed_ref/<name>.png` 为观测流（42x360x3 BGR），`data/processed_ref/ref/<name>.png` 为参考流（42x360x4 BGRA，B/G/R = 参考 BGR，A = 原始 alpha）；`data/train_ref`、`data/val_ref` 是同一布局的符号链接视图，`ref/` 子树一并链接。
-- **模型输入**：两路按通道拼接为 42x360x7；训练侧由 `train.toml` 的 `input_mode = "ref"` 选择数据根；`record.json` 记 `ref_reference_assets_root`；`live.py` 的 ref 推理路径与之共用 `endfield/ref.py` 的编码，与 `prepare_data.py` 的产物逐字节一致。
+- **模型输入**：两路按通道拼接为 42x360x7；训练侧由 `train.toml` 的 `input_mode = "ref"` 选择数据根；`record.json` 记 `ref_reference_assets_root`；`live.py` 的 ref 推理路径与 `prepare_data.py` 共用定义模块 `endfield/preprocess.py`，产物同源。
 - **确定性**：重复运行产物逐字节一致。
 - **训练样本过滤（可选）**：`train.toml` 的 `max_ref_missing`（0~1）在读取训练集时排除环内 `ref.A<255` 占比**严格大于**阈值的样本（等于阈值保留），只影响训练集，val 不变；`prepare_data.py` 始终全量落盘，过滤不改磁盘数据。
 

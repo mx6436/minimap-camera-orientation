@@ -6,9 +6,14 @@ import numpy as np
 import pytest
 
 from endfield import conformance as cf
-from endfield.polar import IMG_H, IMG_W, INNER_R, OUTER_R, unwrap
-from endfield.ref import ROI_POLE
-from tests._onnx_builders import build_classifier, build_draft_preprocess, find_node, set_attr
+from endfield import preprocess
+from tests._onnx_builders import (
+    build_classifier,
+    build_draft_preprocess,
+    find_node,
+    find_nodes,
+    set_attr,
+)
 
 REQUIRED_CASES = {
     "polar_basic": "polar",
@@ -74,14 +79,21 @@ def test_load_fixtures_rejects_empty_dir(tmp_path) -> None:
         cf.load_fixtures(tmp_path)
 
 
-def test_reference_observed_strip_matches_unwrap() -> None:
+def test_reference_strips_delegate_to_definition_module() -> None:
     scenario = cf.scenario_map()["polar_basic"]
     observed, reference = cf.reference_strips(scenario)
-    expected = unwrap(scenario.minimap, ROI_POLE[0], ROI_POLE[1], INNER_R, OUTER_R)
-    assert observed.shape == (IMG_H, IMG_W, 3)
-    assert reference.shape == (IMG_H, IMG_W, 4)
-    assert np.array_equal(observed, expected)
+    assert observed.shape == (preprocess.IMG_H, preprocess.IMG_W, 3)
+    assert reference.shape == (preprocess.IMG_H, preprocess.IMG_W, 4)
     assert observed.dtype == np.uint8 and reference.dtype == np.uint8
+    expected_observed, expected_reference = preprocess.strips(
+        scenario.minimap,
+        scenario.asset,
+        scenario.x,
+        scenario.y,
+        scenario.scale,
+    )
+    assert np.array_equal(observed, expected_observed)
+    assert np.array_equal(reference, expected_reference)
 
 
 def test_reference_missing_alpha_copies_observed() -> None:
@@ -113,6 +125,14 @@ def test_definition_hash_is_stable_hex() -> None:
     assert len(digest) == 64
     assert all(char in "0123456789abcdef" for char in digest)
     assert digest == cf.definition_hash()
+
+
+def test_definition_hash_tracks_definition_module() -> None:
+    import hashlib
+    from pathlib import Path
+
+    expected = hashlib.sha256(Path(preprocess.__file__).resolve().read_bytes()).hexdigest()
+    assert cf.definition_hash() == expected
 
 
 def test_environment_matches_pinned_ort() -> None:
@@ -190,6 +210,7 @@ def test_check_preprocess_accepts_valid_draft() -> None:
     findings = cf.check_preprocess_model(model, {"observed": "obs", "reference": "ref"})
     assert [finding for finding in findings if finding.level == "error"] == []
     assert not any(finding.code == "gridsample_dtype" for finding in findings)
+    assert not any(finding.code == "gridsample_padding" for finding in findings)
 
 
 def test_check_preprocess_rejects_wrong_grid_sample_attrs() -> None:
@@ -211,6 +232,19 @@ def test_check_preprocess_rejects_wrong_grid_sample_attrs() -> None:
         finding.code == "gridsample_align_corners"
         for finding in cf.check_preprocess_model(model, {})
     )
+
+
+def test_check_preprocess_padding_is_role_aware() -> None:
+    # 观测（minimap）必须 border：改成 zeros 即 error（见上一条）；资产必须 zeros
+    model = build_draft_preprocess(emit_reference=True)
+    asset_grid = find_nodes(model, "GridSample")[1]
+    set_attr(asset_grid, "padding_mode", "border")
+    findings = [
+        finding
+        for finding in cf.check_preprocess_model(model, {"observed": "obs", "reference": "ref"})
+        if finding.code == "gridsample_padding"
+    ]
+    assert len(findings) == 1 and "asset" in findings[0].message
 
 
 def test_check_preprocess_requires_grid_sample() -> None:
@@ -236,7 +270,7 @@ def test_check_preprocess_rejects_uint8_grid_sample_input() -> None:
 def test_check_preprocess_rejects_static_asset_spatial() -> None:
     model = build_draft_preprocess()
     asset = next(value for value in model.graph.input if value.name == "asset")
-    for index, size in enumerate((720, 1280)):
+    for index, size in enumerate((720, 1280), start=1):
         asset.type.tensor_type.shape.dim[index].dim_value = size
     findings = cf.check_preprocess_model(model, {})
     assert any(finding.code == "asset_static_spatial" for finding in findings)

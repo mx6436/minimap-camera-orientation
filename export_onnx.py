@@ -3,13 +3,16 @@
 输入为 uint8 NHWC 条带，即 OpenCV remap 的原生输出布局，与训练契约同格式，
 消费方无需任何格式转换即可零拷贝建张量：
 
-- polar：`[1,42,360,3]`，观测极坐标展开；
-- ref：`[1,42,360,7]`，`[obs.BGR, ref.BGR, ref.A]` 参考配对条带（参考合成见
-  `endfield/ref.py`）。
+- polar：`[1,42,360,3]`，观测极坐标展开（交付文件名 `polar.onnx`）；
+- ref：`[1,42,360,7]`，`[obs.BGR, ref.BGR, ref.A]` 参考配对条带（交付文件名
+  `polar_with_ref.onnx`，参考语义见 `endfield/preprocess.py`）。
 
 /255 归一化对卷积是线性变换，折入首层卷积权重；图内仅保留 HWC→CHW 转置与
 softmax。输出 Z/360Z 上的离散概率质量函数 [1,360]。循环 pad 原样导出为
 Pad(wrap)，由 ONNX Runtime 支持。
+
+导出后即跑结构断言（`endfield.conformance.check_classifier_model`）并在
+ORT 1.19.2 加载校验，不合格的图不会当作交付物落盘。
 """
 
 from __future__ import annotations
@@ -38,6 +41,9 @@ DESCRIPTIONS = {
     ),
 }
 
+# 交付文件名：与 MaaEnd 布局（map/cameraorientation/）的约定一致
+OUTPUT_NAMES = {"polar": "polar.onnx", "ref": "polar_with_ref.onnx"}
+
 POLAR_GEOMETRY = (
     "polar unwrap of the world-anchored minimap ring: angle->x (1 deg/column, clockwise, "
     "north = column 0); radius->y, inner radius on top; r_in=12, r_out=54 at the 720p "
@@ -51,12 +57,13 @@ INPUT_SPECS = {
     ),
     "ref": (
         "uint8 [1,42,360,7] NHWC. Reference pair: channels = [obs.BGR, ref.BGR, ref.A]. "
-        f"obs = {POLAR_GEOMETRY}. ref = MapLocator zone asset cropped at (x,y) with the "
-        "zone's ZoneTemplateScale (ValleyIV_Base 15/16, otherwise 1:1), resized to 118x120, "
-        "then unwrapped at the ROI center; ref.BGR = observed-backdrop composite "
-        "black_ref + obs_roi*(1 - alpha/255) (alpha==0 -> observed pixels), ref.A = raw "
-        "asset alpha (0 = reference gap). values in [0,255]; /255 is folded into the first "
-        "convolution weights, HWC->CHW is a Transpose inside the graph"
+        f"obs = {POLAR_GEOMETRY}. ref = MapLocator zone asset sampled once on the strip grid "
+        "at (x,y)+(q_roi-pole)*scale with the zone's ZoneTemplateScale (ValleyIV_Base 15/16, "
+        "otherwise 1:1); out-of-bounds reads 0 (reference gap); ref.BGR = "
+        "rgb*(a/255) + obs*(1-a/255) composited once in the strip domain (alpha==0 -> observed "
+        "pixels), ref.A = raw asset alpha (0 = reference gap); both streams are defined by "
+        "endfield/preprocess.py and delivered by preprocess.onnx. values in [0,255]; /255 is "
+        "folded into the first convolution weights, HWC->CHW is a Transpose inside the graph"
     ),
 }
 
@@ -119,7 +126,23 @@ def attach_metadata(
     onnx.save(model, path)
 
 
-def export(checkpoint: Path, output: Path) -> None:
+def _validate_export(path: Path, channels: int) -> None:
+    """导出即校验：结构断言 + ORT 1.19.2 可加载（与 MaaEnd 运行时同版本）。"""
+    import onnx
+    import onnxruntime as ort
+
+    from endfield.conformance import check_classifier_model
+
+    model = onnx.load(str(path))
+    findings = check_classifier_model(model, channels)
+    errors = [finding for finding in findings if finding.level == "error"]
+    if errors:
+        messages = "; ".join(f"{finding.code}: {finding.message}" for finding in errors)
+        raise RuntimeError(f"{path}: classifier graph fails the delivery contract: {messages}")
+    ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
+
+
+def export(checkpoint: Path, output: Path | None = None) -> Path:
     run_dir = checkpoint.parent
     run_config = load_run_config(run_dir)
     channels = input_channels(run_config.input_mode)
@@ -137,6 +160,9 @@ def export(checkpoint: Path, output: Path) -> None:
     with open(run_dir / "summary.json") as f:
         summary = json.load(f)
 
+    if output is None:
+        output = run_dir / OUTPUT_NAMES[run_config.input_mode]
+    output = Path(output)
     dummy = torch.zeros(1, POLAR_H, POLAR_W, channels, dtype=torch.uint8)
     torch.onnx.export(
         wrapper,
@@ -148,13 +174,19 @@ def export(checkpoint: Path, output: Path) -> None:
         external_data=False,
     )
     attach_metadata(output, record, summary, checkpoint, run_config.input_mode)
+    _validate_export(output, channels)
     print(f"exported: {output} (input_mode={run_config.input_mode}, channels={channels})")
+    return output
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-dir", type=Path, required=True)
-    parser.add_argument("--output", type=Path, default=None)
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="缺省 <run-dir>/polar.onnx 或 <run-dir>/polar_with_ref.onnx（按 input_mode）",
+    )
     args = parser.parse_args()
-    output = args.output or args.run_dir / "cameraorientation.onnx"
-    export(args.run_dir / "best.pt", output)
+    export(args.run_dir / "best.pt", args.output)

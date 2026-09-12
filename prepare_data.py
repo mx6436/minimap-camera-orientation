@@ -4,13 +4,12 @@ polar（默认）：极坐标展开。训练/验证划分由 data/val_manifest.j
 train = processed 全集减去清单所列验证集。train/val 是 processed 的符号链接视图，
 内容始终反映 processed 当前状态，悬空链接在生成时校验。
 
-ref：以 MapLocator 批量定位产物（data/locator/locate.jsonl）为姿态来源，参考底图 =
-zone 资产在 (x, y) 处、与观测同视野的裁剪（尺度取定位记录的 `scale` 字段，即
-ZoneTemplateScale：ValleyIV_Base 裁 ROI*15/16 再缩回 118x120，其余 1:1 直接裁）；
-观测与参考各自极坐标
-展开后拼接为 7 通道 [obs.BGR, ref.BGR, ref.A]（不预先相减）。参考 BGR = 观测背底合成
-black_ref + obs_roi*(1 - alpha/255)（ROI 域、四舍五入回 uint8；alpha==0 处逐像素等于
-观测），ref.A = 资产原始连续 alpha（0 = 参考缺失）。样本范围 = 定位产物中
+ref：以 MapLocator 批量定位产物（data/locator/locate.jsonl）为姿态来源；观测与参考
+条带由定义模块 `endfield/preprocess.py` 一次生成：资产坐标 =
+`(x, y) + (q_roi - 极点) * scale`（scale 取定位记录的 ZoneTemplateScale），参考缺失
+（裁剪越界 / 资产 alpha）以 ref.A 表达，条带域一次合成
+`ref.BGR = rgb*(a/255) + obs*(1-a/255)`（alpha==0 处逐像素等于观测）。两路拼接为
+7 通道 `[obs.BGR, ref.BGR, ref.A]`（不预先相减）。样本范围 = 定位产物中
 accepted=true 的记录；定位不可用（失败/held/低分）与资产缺失的样本跳过并计数。
 val = manifest ∩ processed，manifest 引用但无 ref 输出的样本跳过并计数；引用
 data/raw 中不存在的名字仍报错。
@@ -28,6 +27,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from endfield import preprocess
 from endfield.data_utils import (
     load_json,
     png_names,
@@ -37,12 +37,8 @@ from endfield.locate import accept, load_records, record_scale, zone_asset_path
 from endfield.polar import (
     IMG_H,
     IMG_W,
-    INNER_R,
-    OUTER_R,
-    ROI_CENTER,
     imread_png,
     load_source_bgr,
-    unwrap,
 )
 from endfield.ref import (
     MAP_ASSETS_ROOT,
@@ -79,7 +75,7 @@ def generate_processed() -> list[str]:
     clear_pngs(PROCESSED)
 
     for i, src in enumerate(pngs, 1):
-        strip = unwrap(load_source_bgr(src), *ROI_CENTER, INNER_R, OUTER_R)
+        strip = preprocess.observed_strip(observed_roi(load_source_bgr(src)))
         if not cv2.imwrite(str(PROCESSED / src.name), strip):
             raise RuntimeError(f"failed to write {PROCESSED / src.name}")
         if i % 250 == 0 or i == len(pngs):

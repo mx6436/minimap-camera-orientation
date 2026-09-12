@@ -6,7 +6,7 @@
 - `to_base_frame` 把任意分辨率帧缩回训练基准 720p（观测 ROI 因此回到 118x120，
   gamescope 当前 1280x720 为 1:1 直通）；
 - `ref_strip_at` 与 `prepare_data.py --mode ref` 走同一条前处理路径
-  （reference_crop / ref_strip），保证实机输入与训练产物逐字节一致。
+  （定义模块 `endfield/preprocess.py` 的 `strips()`），保证实机输入与训练产物同源。
 """
 
 from __future__ import annotations
@@ -123,7 +123,7 @@ def ref_strip_at(
     """720p 基准帧 + MapLocator 定位记录 -> 42x360x7 ref 张量 `[obs.BGR, ref.BGR, ref.A]`。
 
     参考裁剪的尺度取定位记录的 `scale` 字段；同一 (zone, x, y, scale) 下与
-    prepare_data.py --mode ref 的两路产物逐字节一致。
+    prepare_data.py --mode ref 的两路产物同源（同一定义模块）。
     """
     zone, asset = _reference_asset(record, assets_root, cache)
     if "x" not in record or "y" not in record:

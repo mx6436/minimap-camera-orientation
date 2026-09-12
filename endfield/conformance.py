@@ -6,9 +6,8 @@
 - **fixtures**：6 个确定性合成场景，覆盖 polar / ref 配对 / 裁剪越界 /
   非 1:1 zone / 参考缺失 / 资产 3 通道。场景只提供输入（minimap、asset、
   x、y、scale），期望输出在比对时由参考实现实时计算。
-- **参考实现**：即定义模块唯一实现。定义模块落地（#25）之前，这里适配到
-  现行 cv2 路径（`endfield.polar` + `endfield.ref`），作为图比对的期望侧；
-  定义模块落地后应把 `reference_strips()`/`definition_hash()` 指向它。
+- **参考实现**：即定义模块唯一实现（`endfield/preprocess.py`）；本模块不再适配
+  旧的 cv2 路径，比对期望由它实时计算。
 - **比对**：ORT 1.19.2 跑图，逐输出比对参考结果并按容差阈值判定，输出
   通过/失败与差异明细（max/mean/p99/差异像素占比、缺口占比误差）。
 
@@ -18,7 +17,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -27,13 +25,13 @@ from typing import Any
 
 import numpy as np
 
-from endfield import polar, ref
+from endfield import preprocess
 
 # 与 MaaEnd 运行时一致的 ORT 版本（pyproject dev 依赖固定）；版本不同证据作废。
 ORT_VERSION = "1.19.2"
 
-STRIP_H, STRIP_W = polar.IMG_H, polar.IMG_W
-ROI_H, ROI_W = ref.ROI_H, ref.ROI_W
+STRIP_H, STRIP_W = preprocess.IMG_H, preprocess.IMG_W
+ROI_H, ROI_W = preprocess.ROI_H, preprocess.ROI_W
 
 # 图输入契约（#25）：名称固定，运行侧按名喂 fixture。
 INPUT_NAMES = ("minimap", "asset", "x", "y", "scale")
@@ -218,33 +216,26 @@ def dump_builtin_fixtures(out_dir: Path) -> list[Path]:
 # 参考实现（定义模块适配）
 # --------------------------------------------------------------------------- #
 
-# 定义模块落地前，参考实现 = 现行 cv2 路径的这两个模块；它们的字节内容即「定义」。
-_DEFINITION_SOURCES = (polar.__file__, ref.__file__)
-
 
 def normalize_asset(asset: np.ndarray) -> np.ndarray:
-    """3 通道资产补 255 alpha 成全不透明 BGRA；4 通道原样。"""
-    if asset.ndim != 3 or asset.shape[2] not in (3, 4):
-        raise ValueError(f"asset must be HxWx3 or HxWx4 uint8, got {asset.shape}")
-    if asset.dtype != np.uint8:
-        raise ValueError(f"asset must be uint8, got {asset.dtype}")
-    if asset.shape[2] == 4:
-        return asset
-    return _rgba(asset, 255)
+    """3 通道资产补 255 alpha 成全不透明 BGRA；4 通道原样（入口归一化）。"""
+    return preprocess.normalize_asset(asset)
 
 
 def reference_strips(scenario: Scenario) -> tuple[np.ndarray, np.ndarray]:
-    """参考期望：`(observed 42x360x3, reference 42x360x4)`，/255 语义与现行实现同源。"""
-    seven = ref.ref_strip(scenario.minimap, scenario.asset, scenario.x, scenario.y, scenario.scale)
-    return seven[..., :3].copy(), seven[..., 3:].copy()
+    """参考期望：`(observed 42x360x3, reference 42x360x4)`，由定义模块实时计算。"""
+    return preprocess.strips(
+        scenario.minimap,
+        normalize_asset(scenario.asset),
+        scenario.x,
+        scenario.y,
+        scenario.scale,
+    )
 
 
 def definition_hash() -> str:
-    """定义模块内容哈希：当前为 cv2 参考实现源码；#25 落地后指向定义模块。"""
-    digest = hashlib.sha256()
-    for source in sorted(str(Path(path).resolve()) for path in _DEFINITION_SOURCES):
-        digest.update(Path(source).read_bytes())
-    return digest.hexdigest()
+    """定义模块内容哈希（sha256）：转发给 `endfield.preprocess.definition_hash()`。"""
+    return preprocess.definition_hash()
 
 
 # --------------------------------------------------------------------------- #
@@ -388,6 +379,32 @@ def _node_domains(model: Any) -> list[str]:
     return sorted({node.domain for node in model.graph.node if node.domain not in ("", "ai.onnx")})
 
 
+def _tensor_origins(model: Any) -> Any:
+    """张量来源的图输入名集合：沿生产者链回溯，用于按角色断言 GridSample 属性。"""
+    producers: dict[str, Any] = {}
+    for node in model.graph.node:
+        for output in node.output:
+            producers[output] = node
+    graph_inputs = {value.name for value in model.graph.input}
+    cache: dict[str, set[str]] = {}
+
+    def origins(name: str) -> set[str]:
+        if name in cache:
+            return cache[name]
+        if name in graph_inputs:
+            return {name}
+        node = producers.get(name)
+        found: set[str] = set()
+        if node is not None:
+            for source in node.input:
+                if source:
+                    found |= origins(source)
+        cache[name] = found
+        return found
+
+    return origins
+
+
 def _grid_sample_findings(model: Any) -> list[Finding]:
     findings: list[Finding] = []
     for domain in _node_domains(model):
@@ -403,10 +420,17 @@ def _grid_sample_findings(model: Any) -> list[Finding]:
         return findings
     # opset 16-19 的 mode 叫 bilinear；20+ 才叫 linear（#22）。
     expected_mode = "linear" if (opset or 0) >= 20 else "bilinear"
+    # padding 按采样角色区分（#23 契约修正）：观测/minimap = border；资产 = zeros。
+    origins = _tensor_origins(model)
+    roles = {"minimap": ("minimap", "border"), "asset": ("asset", "zeros")}
     for index, node in enumerate(grid_samples):
         mode = _attr_value(node, "mode", "bilinear")
         padding = _attr_value(node, "padding_mode", "zeros")
         align = _attr_value(node, "align_corners", 0)
+        sources = origins(node.input[0]) if node.input else set()
+        role, expected_padding = next(
+            (roles[name] for name in sorted(sources) if name in roles), (None, None)
+        )
         if mode != expected_mode:
             findings.append(
                 Finding(
@@ -415,12 +439,21 @@ def _grid_sample_findings(model: Any) -> list[Finding]:
                     f"GridSample#{index} mode={mode!r}，opset {opset} 必须为 {expected_mode!r}",
                 )
             )
-        if padding != "border":
+        if expected_padding is None:
+            findings.append(
+                Finding(
+                    "warning",
+                    "gridsample_role",
+                    f"GridSample#{index} X 输入无法归属到 minimap/asset（来源 {sorted(sources)}）",
+                )
+            )
+        elif padding != expected_padding:
             findings.append(
                 Finding(
                     "error",
                     "gridsample_padding",
-                    f"GridSample#{index} padding_mode={padding!r}，必须为 'border'",
+                    f"GridSample#{index}（{role}）padding_mode={padding!r}，"
+                    f"必须为 {expected_padding!r}",
                 )
             )
         if align != 0:
@@ -782,6 +815,8 @@ def _verify_preprocess(
         for name in declared_inputs:
             if name in INPUT_NAMES:
                 value = getattr(scenario, name)
+                if name == "asset":
+                    value = normalize_asset(value)
                 feeds[name] = value
         expected_observed, expected_reference = reference_strips(scenario)
         try:

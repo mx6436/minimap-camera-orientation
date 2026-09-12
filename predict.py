@@ -6,7 +6,10 @@ import argparse
 from pathlib import Path
 
 import endfield.polar as polar
+from endfield import preprocess
+from endfield.live import to_base_frame
 from endfield.model import choose_device, load_model, predict_angle
+from endfield.ref import observed_roi
 
 
 def main() -> None:
@@ -19,8 +22,8 @@ def main() -> None:
     model = load_model(args.run_dir / "best.pt", device=device)
 
     frame = polar.load_source_bgr(args.image)
-    cx, cy, r_in, r_out = polar.scaled_roi(frame.shape[:2])
-    angle, _ = predict_angle(model, polar.unwrap(frame, cx, cy, r_in, r_out))
+    strip = preprocess.observed_strip(observed_roi(to_base_frame(frame)))
+    angle, _ = predict_angle(model, strip)
     print(f"angle: {angle:.6f}")
 
 

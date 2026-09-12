@@ -11,6 +11,7 @@ import pytest
 import torch
 from onnx.reference import ReferenceEvaluator
 
+from endfield.conformance import check_classifier_model
 from endfield.model import ARCH_VERSION, AzimuthNet, load_model
 from export_onnx import ExportWrapper, export, fold_input_conventions
 
@@ -65,3 +66,20 @@ def test_export_matches_torch_and_declares_mode(
     got = ReferenceEvaluator(graph).run(None, {"strip": sample})[0]
     assert got.shape == (1, 360)
     assert np.allclose(expected, got, atol=1e-5)
+
+
+@pytest.mark.parametrize(
+    ("input_mode", "channels", "name"),
+    [("polar", 3, "polar.onnx"), ("ref", 7, "polar_with_ref.onnx")],
+)
+def test_export_defaults_to_delivery_name(
+    tmp_path: Path, input_mode: str, channels: int, name: str
+) -> None:
+    run_dir = write_run(tmp_path, input_mode, channels)
+
+    path = export(run_dir / "best.pt")
+
+    assert path == run_dir / name
+    assert path.is_file()
+    findings = check_classifier_model(onnx.load(str(path)), channels)
+    assert [finding for finding in findings if finding.level == "error"] == []

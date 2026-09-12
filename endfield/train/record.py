@@ -38,13 +38,13 @@ def input_representation(config: dict[str, Any]) -> str:
         return (
             f"ref_polar_unwrap_obs_bgr_ref_bgra_{IMG_W}x{IMG_H} "
             "(channels = [obs.BGR, ref.BGR, ref.A]; reference = MapLocator zone asset "
-            "cropped at (x,y) with the zone's MapLocator ZoneTemplateScale "
-            "(ValleyIV_Base 15/16, otherwise 1:1), resized to 118x120; "
-            "ref.BGR = observed-backdrop composite black_ref + obs_roi*(1 - alpha/255) "
-            "in the 118x120 ROI before unwrapping (alpha==0 -> observed pixels, "
-            "alpha==255 -> black-composited reference; rounded to uint8), "
-            "ref.A = raw continuous alpha (0 = reference gap); both streams unwrapped "
-            f"at the ROI center; angle->x, radius->y{gap_filter})"
+            "sampled once on the strip grid at (x,y)+(q_roi-pole)*scale with the zone's "
+            "MapLocator ZoneTemplateScale (ValleyIV_Base 15/16, otherwise 1:1); "
+            "out-of-bounds reads 0 = reference gap; "
+            "ref.BGR = rgb*(a/255) + obs*(1 - a/255) composited once in the strip domain "
+            "(alpha==0 -> observed pixels), ref.A = raw continuous alpha; "
+            "both streams defined by endfield/preprocess.py; "
+            f"angle->x, radius->y{gap_filter})"
         )
     return (
         f"polar_unwrap_bgr_{IMG_W}x{IMG_H} (angle->x, 1 deg/column, clockwise, "

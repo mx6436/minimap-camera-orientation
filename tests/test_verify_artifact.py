@@ -1,8 +1,13 @@
-"""verify_artifact：bundle 编排与 CLI 端到端（草稿图 = GridSample 展开）。"""
+"""verify_artifact：bundle 编排与 CLI 端到端。
+
+「真图」= 定义模块导出的 `preprocess.onnx`（会话内只导一次，逐测试拷贝）；
+「草稿图」= `tests/_onnx_builders.py` 的结构同形图，只用于构造数值/结构错误。
+"""
 
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -12,6 +17,7 @@ import pytest
 import torch
 
 from endfield import conformance as cf
+from endfield import preprocess
 from endfield.model import ARCH_VERSION, AzimuthNet
 from tests._onnx_builders import build_classifier, build_draft_preprocess
 from verify_artifact import main
@@ -19,15 +25,25 @@ from verify_artifact import main
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
-def write_bundle(
-    tmp_path: Path, *, emit_reference: bool = False, manifest: dict | None = None
-) -> Path:
+@pytest.fixture(scope="session")
+def real_preprocess(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """真实导出的 preprocess.onnx：结构与数值统一按定义模块生成。"""
+    return preprocess.export_onnx(tmp_path_factory.mktemp("real") / "preprocess.onnx")
+
+
+def write_bundle(tmp_path: Path, graph: Path, *, manifest: dict | None = None) -> Path:
     bundle = tmp_path / "bundle"
     bundle.mkdir()
-    onnx.save(build_draft_preprocess(emit_reference=emit_reference), bundle / "preprocess.onnx")
+    shutil.copyfile(graph, bundle / "preprocess.onnx")
     if manifest is not None:
         (bundle / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     return bundle
+
+
+def draft_graph(tmp_path: Path) -> Path:
+    path = tmp_path / "draft.onnx"
+    onnx.save(build_draft_preprocess(emit_reference=True), path)
+    return path
 
 
 def write_fixture_dir(tmp_path: Path, names: list[str]) -> Path:
@@ -82,8 +98,8 @@ def test_run_model_adapts_batch_and_scalars(tmp_path: Path) -> None:
         cf.run_model(path, {"minimap": scenario.minimap})
 
 
-def test_verify_bundle_passes_on_draft_graph(tmp_path: Path) -> None:
-    bundle = write_bundle(tmp_path, emit_reference=True)
+def test_verify_bundle_passes_on_exported_graph(tmp_path: Path, real_preprocess: Path) -> None:
+    bundle = write_bundle(tmp_path, real_preprocess)
     fixture_dir = write_fixture_dir(tmp_path, ["ref_missing_alpha0"])
     report = cf.verify_bundle(bundle, fixture_dir=fixture_dir)
     assert report.passed, report.failures()
@@ -93,8 +109,8 @@ def test_verify_bundle_passes_on_draft_graph(tmp_path: Path) -> None:
     assert any(finding.code == "manifest_missing" for finding in report.findings)
 
 
-def test_verify_bundle_reports_diff_details_on_unsupported_fixtures(tmp_path: Path) -> None:
-    bundle = write_bundle(tmp_path, emit_reference=True)
+def test_verify_bundle_reports_diff_details_on_draft_graph(tmp_path: Path) -> None:
+    bundle = write_bundle(tmp_path, draft_graph(tmp_path))
     report = cf.verify_bundle(bundle)
     assert not report.passed
     by_label = {comparison.label: comparison for comparison in report.comparisons}
@@ -117,7 +133,7 @@ def test_verify_bundle_honours_manifest_fixtures_and_tolerances(tmp_path: Path) 
         "fixtures": ["ref_pair_basic"],
         "tolerances": {"strips_uint8": 0.0},
     }
-    bundle = write_bundle(tmp_path, emit_reference=True, manifest=manifest)
+    bundle = write_bundle(tmp_path, draft_graph(tmp_path), manifest=manifest)
     report = cf.verify_bundle(bundle)
     assert report.fixtures == ["ref_pair_basic"]
     assert not report.passed
@@ -126,19 +142,19 @@ def test_verify_bundle_honours_manifest_fixtures_and_tolerances(tmp_path: Path) 
     assert not any(finding.code == "definition_hash" for finding in report.findings)
 
 
-def test_verify_bundle_flags_stale_definition_hash(tmp_path: Path) -> None:
+def test_verify_bundle_flags_stale_definition_hash(tmp_path: Path, real_preprocess: Path) -> None:
     manifest = {
         "ort_version": cf.ORT_VERSION,
         "definition_hash": "0" * 64,
         "graphs": {"preprocess": {"file": "preprocess.onnx"}},
     }
-    bundle = write_bundle(tmp_path, emit_reference=True, manifest=manifest)
+    bundle = write_bundle(tmp_path, real_preprocess, manifest=manifest)
     report = cf.verify_bundle(bundle)
     assert any(finding.code == "definition_hash" for finding in report.findings)
     assert not report.passed
 
 
-def test_verify_bundle_flags_missing_declared_graph(tmp_path: Path) -> None:
+def test_verify_bundle_flags_missing_declared_graph(tmp_path: Path, real_preprocess: Path) -> None:
     manifest = {
         "ort_version": cf.ORT_VERSION,
         "definition_hash": cf.definition_hash(),
@@ -147,25 +163,27 @@ def test_verify_bundle_flags_missing_declared_graph(tmp_path: Path) -> None:
             "polar_with_ref": {"file": "polar_with_ref.onnx"},
         },
     }
-    bundle = write_bundle(tmp_path, emit_reference=True, manifest=manifest)
+    bundle = write_bundle(tmp_path, real_preprocess, manifest=manifest)
     report = cf.verify_bundle(bundle)
     assert any(finding.code == "graph_missing" for finding in report.findings)
 
 
-def test_verify_bundle_reports_invalid_graph(tmp_path: Path) -> None:
-    bundle = write_bundle(tmp_path)
+def test_verify_bundle_reports_invalid_graph(tmp_path: Path, real_preprocess: Path) -> None:
+    bundle = write_bundle(tmp_path, real_preprocess)
     (bundle / "preprocess.onnx").write_bytes(b"not an onnx model")
     report = cf.verify_bundle(bundle)
     assert any(finding.code == "graph_invalid" for finding in report.findings)
     assert not report.passed
 
 
-def test_verify_bundle_reports_invalid_manifest_inputs(tmp_path: Path) -> None:
+def test_verify_bundle_reports_invalid_manifest_inputs(
+    tmp_path: Path, real_preprocess: Path
+) -> None:
     manifest = {
         "graphs": {"preprocess": {"file": "preprocess.onnx"}},
         "tolerances": {"strips_uint8": None},
     }
-    bundle = write_bundle(tmp_path, emit_reference=True, manifest=manifest)
+    bundle = write_bundle(tmp_path, real_preprocess, manifest=manifest)
     report = cf.verify_bundle(bundle)
     assert any(finding.code == "tolerances_invalid" for finding in report.findings)
 
@@ -176,8 +194,8 @@ def test_verify_bundle_reports_invalid_manifest_inputs(tmp_path: Path) -> None:
     assert not report.passed
 
 
-def test_cli_exit_codes_and_report_file(tmp_path: Path) -> None:
-    bundle = write_bundle(tmp_path, emit_reference=True)
+def test_cli_exit_codes_and_report_file(tmp_path: Path, real_preprocess: Path) -> None:
+    bundle = write_bundle(tmp_path, real_preprocess)
     fixture_dir = write_fixture_dir(tmp_path, ["ref_missing_alpha0"])
     report_path = tmp_path / "report.json"
     passed = subprocess.run(
@@ -201,7 +219,7 @@ def test_cli_exit_codes_and_report_file(tmp_path: Path) -> None:
     assert payload["passed"] is True
 
     failing = subprocess.run(
-        [sys.executable, "verify_artifact.py", "--bundle", str(bundle)],
+        [sys.executable, "verify_artifact.py", "--bundle", str(bundle), "--require", "polar"],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
@@ -219,19 +237,23 @@ def test_cli_dump_fixtures(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("role", ["polar", "polar_with_ref"])
-def test_verify_bundle_checks_classifier_structure(tmp_path: Path, role: str) -> None:
-    bundle = write_bundle(tmp_path)
+def test_verify_bundle_checks_classifier_structure(
+    tmp_path: Path, real_preprocess: Path, role: str
+) -> None:
+    bundle = write_bundle(tmp_path, real_preprocess)
     onnx.save(build_classifier(7 if role == "polar_with_ref" else 3), bundle / f"{role}.onnx")
     report = cf.verify_bundle(bundle, require=[role])
     assert not any(finding.level == "error" for finding in report.findings), report.failures()
     assert any(finding.code == "classifier_reference_missing" for finding in report.findings)
 
 
-def test_verify_bundle_compares_classifier_with_checkpoint(tmp_path: Path) -> None:
+def test_verify_bundle_compares_classifier_with_checkpoint(
+    tmp_path: Path, real_preprocess: Path
+) -> None:
     from export_onnx import export
 
     run_dir = write_run(tmp_path, "polar", 3)
-    bundle = write_bundle(tmp_path)
+    bundle = write_bundle(tmp_path, real_preprocess)
     export(run_dir / "best.pt", bundle / "polar.onnx")
     report = cf.verify_bundle(bundle, require=["polar"], run_dir=run_dir)
     labels = [comparison.label for comparison in report.comparisons]
@@ -241,11 +263,13 @@ def test_verify_bundle_compares_classifier_with_checkpoint(tmp_path: Path) -> No
     assert not any(finding.level == "error" for finding in report.findings)
 
 
-def test_verify_bundle_skips_mode_mismatched_checkpoint(tmp_path: Path) -> None:
+def test_verify_bundle_skips_mode_mismatched_checkpoint(
+    tmp_path: Path, real_preprocess: Path
+) -> None:
     from export_onnx import export
 
     run_dir = write_run(tmp_path, "polar", 3)
-    bundle = write_bundle(tmp_path)
+    bundle = write_bundle(tmp_path, real_preprocess)
     export(run_dir / "best.pt", bundle / "polar.onnx")
     onnx.save(build_classifier(7), bundle / "polar_with_ref.onnx")
     report = cf.verify_bundle(bundle, require=["polar_with_ref"], run_dir=run_dir)
