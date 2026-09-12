@@ -1,5 +1,12 @@
 # 训练配置——所有键都有代码内默认值，此处明示当前基线；
 
+# 输入表示：polar = 极坐标展开（当前基线）；ref = 观测与参考底图各自极坐标展开后按
+# [obs.BGR, ref.BGR, ref.A] 7 通道并列拼接（需先 uv run prepare_data.py --mode ref）
+input_mode = "polar"
+# ref 模式下 MapLocator 底图资产目录（本地 MaaEnd 工作副本，gitignored）；训练读离线
+# 产物，此路径仅写入 record，与实机推理共用；需与 prepare_data.py --mode ref 一致
+map_assets_root = "local/maplocator/resource/image/MapLocator"
+
 # 训练规模
 batch_size = 32
 epochs = 200

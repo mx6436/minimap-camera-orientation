@@ -10,11 +10,38 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset
 
-from endfield.data_utils import load_bgr, parse_angle
+from endfield.data_utils import load_bgr, load_bgra, parse_angle
+from endfield.ref import REF_CHANNELS, REF_SUBDIR, ref_tensor
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TRAIN_DIR = REPO_ROOT / "data" / "train"
 VAL_DIR = REPO_ROOT / "data" / "val"
+TRAIN_REF_DIR = REPO_ROOT / "data" / "train_ref"
+VAL_REF_DIR = REPO_ROOT / "data" / "val_ref"
+
+SPLIT_DIRS: dict[str, tuple[Path, Path]] = {
+    "polar": (TRAIN_DIR, VAL_DIR),
+    "ref": (TRAIN_REF_DIR, VAL_REF_DIR),
+}
+
+# 输入模式的通道数：ref 为 [obs.BGR, ref.BGR, ref.A]（见 endfield/ref.py）
+INPUT_CHANNELS: dict[str, int] = {"polar": 3, "ref": REF_CHANNELS}
+
+
+def split_dirs(input_mode: str) -> tuple[Path, Path]:
+    """输入模式 -> (训练目录, 验证目录)。"""
+    try:
+        return SPLIT_DIRS[input_mode]
+    except KeyError:
+        raise ValueError(f"unknown input_mode: {input_mode!r}") from None
+
+
+def input_channels(input_mode: str) -> int:
+    """输入模式 -> AzimuthNet 首层通道数。"""
+    try:
+        return INPUT_CHANNELS[input_mode]
+    except KeyError:
+        raise ValueError(f"unknown input_mode: {input_mode!r}") from None
 
 
 class AngleDataset(Dataset):
@@ -24,19 +51,34 @@ class AngleDataset(Dataset):
         names: list[str],
         noise_augment: bool = False,
         roll_augment: bool = False,
+        input_mode: str = "polar",
     ) -> None:
         self.directory = directory
         self.names = names
         self.noise_augment = noise_augment
         self.roll_augment = roll_augment
+        self.input_mode = input_mode
+        self.channels = input_channels(input_mode)
 
     def __len__(self) -> int:
         return len(self.names)
 
+    def _load(self, name: str) -> np.ndarray:
+        if self.input_mode == "ref":
+            observed = load_bgr(self.directory / name)
+            reference = load_bgra(self.directory / REF_SUBDIR / name)
+            return ref_tensor(observed, reference)
+        return load_bgr(self.directory / name)
+
     def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
         name = self.names[index]
         angle = parse_angle(Path(name))
-        array = load_bgr(self.directory / name).astype(np.float32) / 255.0
+        array = self._load(name).astype(np.float32) / 255.0
+        if array.shape[2] != self.channels:
+            raise ValueError(
+                f"{name}: expected {self.channels} channels for input_mode "
+                f"{self.input_mode!r}, got {array.shape[2]}"
+            )
         if self.roll_augment:
             # 架构对角向平移精确等变，滚动后的样本严格有效；随机 δ 同时
             # 平衡各 bin 的有效样本量，不受标注角度分布影响

@@ -7,6 +7,7 @@ from typing import Any
 import torch
 
 from endfield.polar import IMG_H, IMG_W
+from endfield.train.data import input_channels
 
 
 def augmentation(config: dict[str, Any]) -> dict[str, Any]:
@@ -26,6 +27,26 @@ def augmentation(config: dict[str, Any]) -> dict[str, Any]:
     return values
 
 
+def input_representation(config: dict[str, Any]) -> str:
+    if config["input_mode"] == "ref":
+        return (
+            f"ref_polar_unwrap_obs_bgr_ref_bgra_{IMG_W}x{IMG_H} "
+            "(channels = [obs.BGR, ref.BGR, ref.A]; reference = MapLocator zone asset "
+            "cropped at (x,y) with the zone's MapLocator ZoneTemplateScale "
+            "(ValleyIV_Base 15/16, otherwise 1:1), resized to 118x120; "
+            "ref.BGR = observed-backdrop composite black_ref + obs_roi*(1 - alpha/255) "
+            "in the 118x120 ROI before unwrapping (alpha==0 -> observed pixels, "
+            "alpha==255 -> black-composited reference; rounded to uint8), "
+            "ref.A = raw continuous alpha (0 = reference gap); both streams unwrapped "
+            "at the ROI center; angle->x, radius->y)"
+        )
+    return (
+        f"polar_unwrap_bgr_{IMG_W}x{IMG_H} (angle->x, 1 deg/column, clockwise, "
+        "north at column 0; "
+        "radius->y, inner at top)"
+    )
+
+
 def build_record(
     config: dict[str, Any],
     threads: int,
@@ -35,21 +56,18 @@ def build_record(
     train_sha256: str,
     val_sha256: str,
 ) -> dict[str, Any]:
-    return {
-        "version": 27,
+    record: dict[str, Any] = {
+        "version": 31,
         "target_sigma": config["target_sigma"],
         "loss": (
             f"KL(q||p) between circular categorical distributions on Z/360Z, "
             f"q = wrapped gaussian pmf with sigma={config['target_sigma']:g} deg "
             "(= cross entropy minus constant target entropy H(q))"
         ),
-        "input_shape": [3, IMG_H, IMG_W],
+        "input_shape": [input_channels(config["input_mode"]), IMG_H, IMG_W],
         "input_scaling": "BGR uint8 / 255",
-        "input_representation": (
-            f"polar_unwrap_bgr_{IMG_W}x{IMG_H} (angle->x, 1 deg/column, clockwise, "
-            "north at column 0; "
-            "radius->y, inner at top)"
-        ),
+        "input_mode": config["input_mode"],
+        "input_representation": input_representation(config),
         "conv_padding_mode": "azimuth-circular; radius-zero (radius boundaries are ring-outside)",
         "seed": config["seed"],
         "threads": threads,
@@ -78,3 +96,6 @@ def build_record(
         "train_files_sha256": train_sha256,
         "val_files_sha256": val_sha256,
     }
+    if config["input_mode"] == "ref":
+        record["ref_reference_assets_root"] = config["map_assets_root"]
+    return record

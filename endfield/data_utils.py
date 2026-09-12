@@ -39,6 +39,14 @@ def load_bgr(path: Path) -> np.ndarray:
     return image
 
 
+def load_bgra(path: Path) -> np.ndarray:
+    """BGRA PNG（ref 参考流布局：BGR = 观测背底合成参考，A = 原始连续 alpha）。"""
+    image = imread_png(path)
+    if image.shape != (IMG_H, IMG_W, 4):
+        raise ValueError(f"{path}: expected {IMG_W}x{IMG_H} BGRA, got shape {image.shape}")
+    return image
+
+
 @contextmanager
 def atomic_path(path: Path) -> Iterator[Path]:
     """产出临时文件路径，写毕原子替换到 path；中途失败清理临时文件后原样抛出。"""

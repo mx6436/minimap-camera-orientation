@@ -33,9 +33,12 @@ class CircularConv1d(nn.Module):
         return self.conv(F.pad(x, (self.pad, self.pad), mode="circular"))
 
 
-# 架构版本：checkpoint 缺失或不一致即拒绝加载；跨度等不影响参数量与键集的
-# 变更必须递增此值，否则旧权重会被静默加载后输出无效结果
-ARCH_VERSION = 3
+# 架构版本：checkpoint 的键集与参数量随架构变化；旧版本在 load_model 中兼容。
+# 跨度等不影响参数量与键集的变更必须递增此值，否则旧权重会被静默加载后输出
+# 无效结果。
+ARCH_VERSION = 4
+# arch 3 = 3 通道首层（polar）；arch 4 起首层通道数由 checkpoint 权重形状决定
+SUPPORTED_ARCH_VERSIONS = (3, ARCH_VERSION)
 
 
 class AzimuthNet(nn.Module):
@@ -45,9 +48,15 @@ class AzimuthNet(nn.Module):
     方位角轴不做下采样、只做循环卷积，因此对输入平移精确等变。
     """
 
-    def __init__(self, score_channels: int = 16, trunk_channels: int = 128) -> None:
+    def __init__(
+        self,
+        score_channels: int = 16,
+        trunk_channels: int = 128,
+        in_channels: int = 3,
+    ) -> None:
         super().__init__()
-        channels = [3, 32, 64, trunk_channels]
+        self.in_channels = in_channels
+        channels = [in_channels, 32, 64, trunk_channels]
         layers: list[nn.Module] = []
         for i, dilation in enumerate(TRUNK_AZIMUTH_DILATIONS):
             layers += [
@@ -73,7 +82,7 @@ class AzimuthNet(nn.Module):
             nn.Conv2d(trunk_channels, score_channels, 3),
         )
         with torch.no_grad():
-            radial_rows = self.trunk(torch.zeros(1, 3, IMG_H, IMG_W)).shape[-2]
+            radial_rows = self.trunk(torch.zeros(1, in_channels, IMG_H, IMG_W)).shape[-2]
         self.radial = nn.Parameter(torch.zeros(score_channels, radial_rows))
         d1, d2, d3 = MATCH_DILATIONS
         self.filter = nn.Sequential(
@@ -144,7 +153,20 @@ def count_trainable_parameters(model: nn.Module) -> int:
     return sum(parameter.numel() for parameter in model.parameters() if parameter.requires_grad)
 
 
-EXPECTED_PARAMETER_COUNT = 131_169
+EXPECTED_PARAMETER_COUNT = 131_169  # in_channels = 3（polar）
+EXPECTED_REF_PARAMETER_COUNT = 132_321  # in_channels = 7（ref）
+EXPECTED_PARAMETER_COUNTS: dict[int, int] = {
+    3: EXPECTED_PARAMETER_COUNT,
+    7: EXPECTED_REF_PARAMETER_COUNT,
+}
+
+
+def expected_parameter_count(in_channels: int) -> int:
+    """给定首层通道数的期望参数量；未知通道数说明架构未定义，直接拒绝。"""
+    try:
+        return EXPECTED_PARAMETER_COUNTS[in_channels]
+    except KeyError:
+        raise ValueError(f"unsupported in_channels: {in_channels!r}") from None
 
 
 def choose_device(value: str | None = None) -> torch.device:
@@ -156,16 +178,25 @@ def choose_device(value: str | None = None) -> torch.device:
     return device
 
 
+def _checkpoint_in_channels(state: object, path: Path | str) -> int:
+    """从 checkpoint 权重推断首层通道数（旧 checkpoint 只有权重形状这一个来源）。"""
+    weight = state.get("trunk.2.weight") if isinstance(state, dict) else None
+    if not torch.is_tensor(weight) or weight.ndim != 4:
+        raise ValueError(f"incompatible checkpoint weights: {path}")
+    return int(weight.shape[1])
+
+
 def load_model(path: Path | str, device: torch.device | str = "cpu") -> nn.Module:
     checkpoint = torch.load(path, map_location="cpu", weights_only=False)
     if not isinstance(checkpoint, dict) or "model" not in checkpoint:
         raise ValueError(f"invalid checkpoint: {path}")
-    if checkpoint.get("arch") != ARCH_VERSION:
+    if checkpoint.get("arch") not in SUPPORTED_ARCH_VERSIONS:
         raise ValueError(
-            f"checkpoint arch version {checkpoint.get('arch')!r} != {ARCH_VERSION}: {path}"
+            f"unsupported checkpoint arch version {checkpoint.get('arch')!r}: {path}"
         )
-    model = AzimuthNet()
-    if count_trainable_parameters(model) != EXPECTED_PARAMETER_COUNT:
+    in_channels = _checkpoint_in_channels(checkpoint["model"], path)
+    model = AzimuthNet(in_channels=in_channels)
+    if count_trainable_parameters(model) != expected_parameter_count(in_channels):
         raise RuntimeError("unexpected model parameter count")
     # 键集不匹配即旧架构（AngleCNN）或过期的 checkpoint，与其报晦涩的
     # state_dict 错误不如直接拒绝

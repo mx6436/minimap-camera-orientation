@@ -11,15 +11,21 @@ import torch
 
 from endfield.data_utils import atomic_json_dump, png_names, seed_everything
 from endfield.model import (
-    EXPECTED_PARAMETER_COUNT,
     AzimuthNet,
     choose_device,
     count_trainable_parameters,
+    expected_parameter_count,
     load_model,
 )
 from endfield.train.artifacts import ARTIFACT_NAMES, plot_loss_curves, save_checkpoint
 from endfield.train.config import load_config
-from endfield.train.data import TRAIN_DIR, VAL_DIR, AngleDataset, make_loader, names_fingerprint
+from endfield.train.data import (
+    AngleDataset,
+    input_channels,
+    make_loader,
+    names_fingerprint,
+    split_dirs,
+)
 from endfield.train.engine import eval_loss, train_epoch
 from endfield.train.record import build_record
 
@@ -71,10 +77,13 @@ def main() -> None:
     torch.set_num_threads(args.threads)
     seed_everything(config["seed"])
     device = choose_device(args.device)
-    train_names = png_names(TRAIN_DIR)
-    val_names = png_names(VAL_DIR)
+    train_dir, val_dir = split_dirs(config["input_mode"])
+    train_names = png_names(train_dir)
+    val_names = png_names(val_dir)
     if not train_names or not val_names:
-        raise SystemExit(f"missing {TRAIN_DIR} or {VAL_DIR} PNG files; run prepare_data.py first")
+        raise SystemExit(
+            f"missing {train_dir} or {val_dir} PNG files; run prepare_data.py first"
+        )
 
     output_dir = args.run_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -85,13 +94,14 @@ def main() -> None:
             "choose an empty --run-dir"
         )
 
-    model = AzimuthNet().to(device)
+    model = AzimuthNet(in_channels=input_channels(config["input_mode"])).to(device)
     # compile 只包前向；checkpoint/优化器用原模型，state_dict 键不带 _orig_mod. 前缀
     compile_enabled = config["compile"] and not args.no_compile
     runtime_model = torch.compile(model) if compile_enabled else model
     track_metric = "rms_error"
     parameter_count = count_trainable_parameters(model)
-    if parameter_count != EXPECTED_PARAMETER_COUNT:
+    expected_count = expected_parameter_count(model.in_channels)
+    if parameter_count != expected_count:
         raise RuntimeError(f"unexpected parameter count: {parameter_count}")
     record = build_record(
         config,
@@ -117,10 +127,11 @@ def main() -> None:
     train_generator.manual_seed(config["seed"])
     train_loader = make_loader(
         AngleDataset(
-            TRAIN_DIR,
+            train_dir,
             train_names,
             noise_augment=config["noise_augment"],
             roll_augment=config["roll_augment"],
+            input_mode=config["input_mode"],
         ),
         config["batch_size"],
         True,
@@ -129,7 +140,7 @@ def main() -> None:
         train_generator,
     )
     val_loader = make_loader(
-        AngleDataset(VAL_DIR, val_names),
+        AngleDataset(val_dir, val_names, input_mode=config["input_mode"]),
         config["batch_size"],
         False,
         config["seed"],
