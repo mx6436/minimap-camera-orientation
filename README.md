@@ -19,31 +19,28 @@ uv run prepare_data.py --mode ref         # ref：观测/参考各自展开 + �
 uv run train --run-dir runs/<name>        # 输入由 train.toml 的 input_mode 选择
 uv run export_preprocess.py --out runs/<name>/bundle/preprocess.onnx   # 前处理图（定义模块导出）
 uv run export_onnx.py --run-dir runs/<name>                            # 分类器图 polar.onnx / polar_with_ref.onnx
-uv run predict.py data/raw/<screenshot>.png --run-dir runs/<name>
 ```
 
 测试通过 pytest 运行：`uv run pytest`。
 
 `prepare_data.py` 是唯一的前处理脚本，一条命令完成 raw → 模型输入 → 划分（polar 或 ref）。验证集成员由 `data/val_manifest.json` 直接指定（val = 清单 ∩ processed，清单引用不存在的文件名则报错；train = 其余全部），清单由人维护，是运行脚本的前置条件。角度标签支持一位小数（如 `_r210.9.png`），训练目标保留浮点精度。
 
-每种模式各自清空并重写自己的 processed / train / val 目录；只有 `data/raw` 与 `data/val_manifest.json` 永不被脚本改动。ref 模式的定位产物单独维护在 `data/locator/`（不随 `prepare_data.py` 清空）。
+每种模式各自维护自己的 processed / train / val 目录（processed 是否重写由缓存戳决定，见下）；只有 `data/raw` 与 `data/val_manifest.json` 永不被脚本改动。ref 模式的定位产物单独维护在 `data/locator/`（不随 `prepare_data.py` 清空）。processed 目录挂 `.preprocess.json` 缓存戳（定义哈希 + 图版本 + 输入指纹）：与当前定义一致且产物文件齐全时跳过重写，定义变更 / 样本或定位字段变更 / `--force` 时重生成；train/val 符号链接视图每次运行都重建。
 
 训练入口是控制台命令 `uv run train`，只负责训练：读取训练/验证目录，从不复制、移动或划分图像。全部训练参数集中在根目录 [`train.toml`](./train.toml)：每个键都有代码内默认值，文件明示当前基线，未知键硬报错。CLI 只保留调用管道：`--config`（默认 `train.toml`）、`--run-dir`（必填，run 产物目录）、`--device`（auto/cpu/cuda）、`--threads`（CPU 线程，默认 8）与 `--smoke`（正常路径只跑一个 epoch，用于验证流程，不能替代完整训练）。
 
 `train.toml` 的 `input_mode` 选择训练数据：`"polar"`（默认）读 `data/train`、`data/val`；`"ref"` 读 `data/train_ref`、`data/val_ref`。`map_assets_root` 指向 ref 使用的 MapLocator 底图资产目录（默认本地 MaaEnd 工作副本，需与 `prepare_data.py --mode ref` 一致），写在 run 的 `record.json`（`ref_reference_assets_root`），供实机推理读取。ref 模式还可选 `max_ref_missing`（0~1）：训练集在读取时排除环内 `ref.A<255` 占比**严格大于**阈值的样本（等于阈值保留），val 不变；阈值一并写入 `record.json`。
 
-`predict.py` 接受恰好一张原始截图 PNG（任意分辨率，先缩回 720p 基准帧再取小地图 ROI，前处理由定义模块完成），不要求预先裁剪。`--run-dir` 必填，模型读取其中的 `best.pt`；设备可用 `--device` 指定。**predict 只实现 polar 输入**，ref 的单图推理路径尚未落地（实机路径见下节的 `live.py`）。
-
 `endfield/preprocess.py` 是前处理的**唯一定义模块**（#25）：极坐标展开几何、参考采样与条带域合成、采样/取整约定都在这里，训练数据生成、`preprocess.onnx` 导出与 live 共用它。`export_preprocess.py --out <path>` 导出交付的前处理图（契约见图 metadata 与下节）：输入 `minimap` `[1,120,118,3]` uint8、`asset` `[1,H,W,4]` BGRA uint8（H/W 动态）、标量 `x`/`y`/`scale`，输出 `observed` `[1,42,360,3]` 与 `reference` `[1,42,360,4]` uint8；7 通道拼装留给消费方。
 
-`export_onnx.py` 把 run 的 `best.pt` 导出为 ONNX 交付格式（默认按模式命名 `<run-dir>/polar.onnx` / `<run-dir>/polar_with_ref.onnx`），输入布局与训练契约一致：polar 为 `[1,42,360,3]` 观测条带，ref 为 `[1,42,360,7]` `[obs.BGR, ref.BGR, ref.A]` 参考配对条带；模式从 run 的 `record.json` 读取（旧 pair v2 record 映射为 ref）。导出后即做结构断言并在 ORT 1.19.2 加载校验；`/255` 折入首层卷积，图内只留 HWC→CHW 转置与 softmax，输出 `[1,360]` 概率质量函数。
+`export_onnx.py` 把 run 的 `best.pt` 导出为 ONNX 交付格式（默认按模式命名 `<run-dir>/polar.onnx` / `<run-dir>/polar_with_ref.onnx`），输入布局与训练契约一致：polar 为 `[1,42,360,3]` 观测条带，ref 为 `[1,42,360,7]` `[obs.BGR, ref.BGR, ref.A]` 参考配对条带；模式从 run 的 `record.json` 读取。导出后即做结构断言并在 ORT 1.19.2 加载校验；`/255` 折入首层卷积，图内只留 HWC→CHW 转置与 softmax，输出 `[1,360]` 概率质量函数。
 
 ```bash
 uv run export_onnx.py --run-dir runs/<name>                        # 输出 runs/<name>/polar.onnx 或 polar_with_ref.onnx
 uv run export_onnx.py --run-dir runs/<name> --output /tmp/model.onnx
 ```
 
-`live.py` 对运行中的游戏做实时推理：从 `--run-dir` 的 `record.json` 读取 `input_mode`（旧 record 无此字段时按 polar 兼容；ref 定名之前的 pair v2 record 映射为 ref），polar 每帧经定义模块展开；ref 起 `map-locate --stream` 常驻子进程做流式定位（定位在独立线程，显示循环不阻塞），按定位 `(zone, x, y, scale)` 由定义模块裁参考、合成后拼 `[obs.BGR, ref.BGR, ref.A]` 7 通道张量，再喂模型；定位不可用（失败 / held / 低分 / 资产缺失）时 overlay 显示等待态。overlay 展示圆盘、当前模型输入（极坐标展开 / ref 的 obs 与 ref 两路）与 360 bin 概率曲线；`--snapshot <path>` 在拿到首个有效定位后保存一张 overlay 并退出（实机 smoke 取证用）。ref 实机推理依赖 gitignored 的 `local/maplocator/`（含 `--stream` 的迭代二进制，见其 `README.local.md`）。
+`live.py` 对运行中的游戏做实时推理：从 `--run-dir` 的 `record.json` 读取 `input_mode`（旧 record 无此字段时按 polar 兼容），polar 每帧经定义模块展开；ref 起 `map-locate --stream` 常驻子进程做流式定位（定位在独立线程，显示循环不阻塞），按定位 `(zone, x, y, scale)` 由定义模块裁参考、合成后拼 `[obs.BGR, ref.BGR, ref.A]` 7 通道张量，再喂模型；定位不可用（失败 / held / 低分 / 资产缺失）时 overlay 显示等待态。overlay 展示圆盘、当前模型输入（极坐标展开 / ref 的 obs 与 ref 两路）与 360 bin 概率曲线；`--snapshot <path>` 在拿到首个有效定位后保存一张 overlay 并退出（实机 smoke 取证用）。ref 实机推理依赖 gitignored 的 `local/maplocator/`（含 `--stream` 的迭代二进制，见其 `README.local.md`）。
 
 ## 工件校验（conformance）
 
@@ -182,11 +179,12 @@ uv run locate_dataset.py                 # 默认 4 个并行进程；已成功�
 - **产物布局**（两路分别落盘）：`data/processed_ref/<name>.png` 为观测流（42x360x3 BGR），`data/processed_ref/ref/<name>.png` 为参考流（42x360x4 BGRA，B/G/R = 参考 BGR，A = 原始 alpha）；`data/train_ref`、`data/val_ref` 是同一布局的符号链接视图，`ref/` 子树一并链接。
 - **模型输入**：两路按通道拼接为 42x360x7；训练侧由 `train.toml` 的 `input_mode = "ref"` 选择数据根；`record.json` 记 `ref_reference_assets_root`；`live.py` 的 ref 推理路径与 `prepare_data.py` 共用定义模块 `endfield/preprocess.py`，产物同源。
 - **确定性**：重复运行产物逐字节一致。
+- **缓存**：`data/processed_ref/.preprocess.json` 挂定义哈希 + 图版本 + 输入指纹（样本名与 `zone`/`x`/`y`/`scale`，其他定位字段不入指纹）；命中且两路产物齐全即跳过重写，定义 / 定位记录 / 样本变更或 `--force` 触发重生成。
 - **训练样本过滤（可选）**：`train.toml` 的 `max_ref_missing`（0~1）在读取训练集时排除环内 `ref.A<255` 占比**严格大于**阈值的样本（等于阈值保留），只影响训练集，val 不变；`prepare_data.py` 始终全量落盘，过滤不改磁盘数据。
 
 ## 数据目录
 
-除 `data/raw` 与 `data/val_manifest.json` 外，以下内容均为脚本输出，每次运行 `prepare_data.py` 时清空重写：
+除 `data/raw` 与 `data/val_manifest.json` 外，以下内容均为脚本输出；processed 目录带缓存戳（命中则跳过重写），train/val 视图每次运行重建：
 
 - `data/raw`：原始截图；任何脚本都不会修改它。
 - `data/val_manifest.json`：清单切分的验证集成员清单，由人维护，脚本只读。
@@ -194,5 +192,6 @@ uv run locate_dataset.py                 # 默认 4 个并行进程；已成功�
 - `data/train` / `data/val`：polar 划分后的训练/验证图像副本（磁盘上不做增强）。
 - `data/processed_ref`：ref 处理输出（`accepted=true` 样本的观测流与 `ref/` 参考流）。
 - `data/train_ref` / `data/val_ref`：ref 划分后的训练/验证图像副本（含 `ref/` 子树）。
+- `data/processed/.preprocess.json` / `data/processed_ref/.preprocess.json`：缓存戳（定义哈希、图版本、commit、输入指纹）；删除它或用 `--force` 即强制重生成。
 - `runs/`：checkpoint 与 JSON 实验结果。
 - `data/locator/`：MapLocator 定位产物（`locate.jsonl`、`summary.json`），由 `locate_dataset.py` 增量维护（不随 `prepare_data.py` 清空）。

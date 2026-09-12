@@ -76,47 +76,17 @@ def test_load_run_config_rejects_ref_without_assets_root(tmp_path: Path) -> None
         load_run_config(tmp_path)
 
 
-def test_load_run_config_maps_legacy_pair_v2_to_ref(tmp_path: Path) -> None:
-    """ref 定名之前的 pair v2 record 编码与 ref 一致，映射为 ref 继续可用。"""
-    assets = tmp_path / "assets"
+def test_load_run_config_rejects_removed_pair_mode(tmp_path: Path) -> None:
+    """pair 兼容映射随 #26 删除：旧 pair record 不再被静默映射为 ref。"""
     write_record(
         tmp_path,
         {
             "input_mode": "pair",
-            "pair_reference_assets_root": str(assets),
+            "pair_reference_assets_root": str(tmp_path / "assets"),
             "pair_encoding": 2,
-            # 旧缺口过滤 run：过滤只影响训练数据，推理编码仍是 ref
-            "pair_max_ref_missing": 0.3,
         },
     )
-    config = load_run_config(tmp_path)
-    assert config.input_mode == "ref"
-    assert config.assets_root == assets
-
-
-def test_load_run_config_rejects_legacy_pair_v1(tmp_path: Path) -> None:
-    # 无 pair_encoding 即 v1 黑底合成，与 ref 编码语义不同，必须拒绝
-    write_record(
-        tmp_path,
-        {
-            "input_mode": "pair",
-            "pair_reference_assets_root": str(tmp_path / "assets"),
-        },
-    )
-    with pytest.raises(ValueError, match="pair_encoding"):
-        load_run_config(tmp_path)
-
-
-def test_load_run_config_rejects_legacy_pair_unknown_encoding(tmp_path: Path) -> None:
-    write_record(
-        tmp_path,
-        {
-            "input_mode": "pair",
-            "pair_reference_assets_root": str(tmp_path / "assets"),
-            "pair_encoding": 3,
-        },
-    )
-    with pytest.raises(ValueError, match="pair_encoding"):
+    with pytest.raises(ValueError, match="unsupported input_mode"):
         load_run_config(tmp_path)
 
 

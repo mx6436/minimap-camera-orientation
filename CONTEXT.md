@@ -31,7 +31,7 @@ _Avoid_: 朝向指示器
 _Avoid_: 极坐标变换、展开裁剪、环形裁剪、透明度掩码输入
 
 **前处理定义 (Preprocess Definition)**:
-训练、数据生成、live 与交付共用的唯一前处理实现，落在 `endfield/preprocess.py`：极坐标展开几何、参考采样与条带域合成、采样与取整约定。交付的 `preprocess.onnx` 由它导出，训练数据与实机输入都由它生成；全仓不得出现第二份展开或合成实现（MaaEnd 侧只消费图）。
+训练、数据生成、live 与交付共用的唯一前处理实现，落在 `endfield/preprocess.py`：极坐标展开几何、参考采样与条带域合成、采样与取整约定。交付的 `preprocess.onnx` 由它导出，训练数据与实机输入都由它生成，落盘产物（`processed*`）挂定义哈希缓存戳（定义变更即失效重生成）；全仓不得出现第二份展开或合成实现（MaaEnd 侧只消费图）。
 _Avoid_: 前处理工具、预处理脚本
 
 **参考底图 (Reference Map)**:

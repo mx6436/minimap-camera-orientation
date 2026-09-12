@@ -1,8 +1,8 @@
 """live.py 的实机输入侧：run record 解析、帧基准缩放与 ref 条带构造。
 
 - `load_run_config` 从 run 的 record.json 读 `input_mode`（旧 record 无 input_mode 时按
-  polar 兼容；旧 pair v2 record 映射为 ref）与 ref 模式需要的 MapLocator 资产根，
-  实机推理不新增用户必须传的模式参数；
+  polar 兼容）与 ref 模式需要的 MapLocator 资产根，实机推理不新增用户必须传的模式
+  参数；
 - `to_base_frame` 把任意分辨率帧缩回训练基准 720p（观测 ROI 因此回到 118x120，
   gamescope 当前 1280x720 为 1:1 直通）；
 - `ref_strip_at` 与 `prepare_data.py --mode ref` 走同一条前处理路径
@@ -26,11 +26,6 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 INPUT_MODES = ("polar", "ref")
 # 各模式记录资产根的 record.json 字段
 ASSETS_ROOT_KEYS = {"ref": "ref_reference_assets_root"}
-# 旧 pair v2 record（ref 定名之前）的兼容映射：编码 v2 与 ref 逐字节一致；
-# v1（黑底合成）语义不同，明确拒绝。
-LEGACY_PAIR_MODE = "pair"
-LEGACY_PAIR_ENCODING_V2 = 2
-LEGACY_PAIR_ASSETS_KEY = "pair_reference_assets_root"
 
 
 class MissingZoneAsset(Exception):
@@ -65,15 +60,6 @@ def load_run_config(run_dir: Path) -> RunConfig:
     # version 27 及以前的 run（polar 唯一时期）没有 input_mode 字段，按 polar 兼容
     input_mode = record.get("input_mode", "polar")
     assets_key = ASSETS_ROOT_KEYS.get(input_mode)
-    if input_mode == LEGACY_PAIR_MODE:
-        # 旧 pair v2 run（version 30 及以前）编码与 ref 相同，映射为 ref；
-        # 缺 pair_encoding 即 v1 黑底合成，与 ref 编码不同，拒绝。
-        if record.get("pair_encoding") != LEGACY_PAIR_ENCODING_V2:
-            raise ValueError(
-                f"{path}: legacy pair run without pair_encoding=2 is not ref-compatible"
-            )
-        input_mode = "ref"
-        assets_key = LEGACY_PAIR_ASSETS_KEY
     if input_mode not in INPUT_MODES:
         raise ValueError(f"{path}: unsupported input_mode {record.get('input_mode')!r}")
     if input_mode == "polar":

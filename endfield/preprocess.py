@@ -33,6 +33,8 @@ INNER_R, OUTER_R = 12.0, 54.0
 IMG_H, IMG_W = 42, 360
 # 导出 dummy 的资产尺寸（图内 H/W 为动态维，仅用于捕获图结构）
 DYNAMIC_ASSET_HW = (140, 160)
+# 导出图的 opset：缓存戳的「图版本」（endfield/preprocess_cache.py），与导出参数同源
+OPSET_VERSION = 18
 
 
 def strip_roi_uv() -> torch.Tensor:
@@ -237,7 +239,7 @@ def export_onnx(output: Path) -> Path:
         model,
         args,
         output,
-        opset_version=18,
+        opset_version=OPSET_VERSION,
         input_names=["minimap", "asset", "x", "y", "scale"],
         output_names=["observed", "reference"],
         dynamic_shapes=(None, {1: "H", 2: "W"}, None, None, None),

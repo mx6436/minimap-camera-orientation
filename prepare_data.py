@@ -2,7 +2,10 @@
 
 polar（默认）：极坐标展开。训练/验证划分由 data/val_manifest.json 声明，
 train = processed 全集减去清单所列验证集。train/val 是 processed 的符号链接视图，
-内容始终反映 processed 当前状态，悬空链接在生成时校验。
+内容始终反映 processed 当前状态，悬空链接在生成时校验。产物写完后在 processed 目录
+落 `.preprocess.json` 缓存戳（定义哈希 + 图版本 + 输入名单，见
+`endfield/preprocess_cache.py`）：戳与当前定义一致且产物文件齐全时跳过重写，
+定义变更 / 样本增删 / `--force` 触发重生成。
 
 ref：以 MapLocator 批量定位产物（data/locator/locate.jsonl）为姿态来源；观测与参考
 条带由定义模块 `endfield/preprocess.py` 一次生成：资产坐标 =
@@ -15,19 +18,23 @@ val = manifest ∩ processed，manifest 引用但无 ref 输出的样本跳过�
 data/raw 中不存在的名字仍报错。
 
 每种模式各自清空并重写自己的 processed/train/val 目录；data/raw 与
-data/val_manifest.json 永不被脚本改动。
+data/val_manifest.json 永不被脚本改动。ref 模式的定位产物单独维护在 data/locator/
+（不随脚本清空）。两种模式的 processed 目录都挂 `.preprocess.json` 缓存戳
+（定义哈希 + 图版本 + 输入指纹，见 `endfield/preprocess_cache.py`）：与当前定义
+一致且产物文件齐全时跳过重写，定义变更 / 输入变更 / `--force` 触发重生成。
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 from collections import Counter
 from pathlib import Path
 
 import cv2
 import numpy as np
 
-from endfield import preprocess
+from endfield import preprocess, preprocess_cache
 from endfield.data_utils import (
     load_json,
     png_names,
@@ -45,7 +52,6 @@ from endfield.ref import (
     REF_SUBDIR,
     load_reference_image,
     observed_roi,
-    ref_strip,
 )
 
 ROOT = Path(__file__).resolve().parent
@@ -68,27 +74,45 @@ def clear_pngs(directory: Path) -> None:
         path.unlink()
 
 
-def generate_processed() -> list[str]:
-    pngs = sorted(RAW_DIR.glob("*.png"))
+def generate_processed(
+    raw_dir: Path = RAW_DIR,
+    processed_dir: Path = PROCESSED,
+    force: bool = False,
+) -> list[str]:
+    """raw 全量 -> polar 条带落盘；缓存戳命中且产物齐全时跳过重写。"""
+    pngs = sorted(raw_dir.glob("*.png"))
     if not pngs:
-        raise SystemExit(f"no png found in {RAW_DIR}")
-    clear_pngs(PROCESSED)
+        raise SystemExit(f"no png found in {raw_dir}")
+    input_names = sorted(p.name for p in pngs)
+    if (
+        not force
+        and png_names(processed_dir) == input_names
+        and preprocess_cache.cache_hit(processed_dir, "polar", input_names)
+    ):
+        print(f"processed={len(input_names)} format=polar cache=hit -> {processed_dir}")
+        return input_names
+
+    preprocess_cache.remove_stamp(processed_dir)
+    clear_pngs(processed_dir)
 
     for i, src in enumerate(pngs, 1):
         strip = preprocess.observed_strip(observed_roi(load_source_bgr(src)))
-        if not cv2.imwrite(str(PROCESSED / src.name), strip):
-            raise RuntimeError(f"failed to write {PROCESSED / src.name}")
+        if not cv2.imwrite(str(processed_dir / src.name), strip):
+            raise RuntimeError(f"failed to write {processed_dir / src.name}")
         if i % 250 == 0 or i == len(pngs):
             print(f"[{i}/{len(pngs)}] {src.name}")
 
-    processed_names = png_names(PROCESSED)
-    input_names = sorted(p.name for p in pngs)
+    processed_names = png_names(processed_dir)
     if processed_names != input_names:
         raise RuntimeError("processed PNG names do not exactly match raw PNG names")
     for name in processed_names:
-        if imread_png(PROCESSED / name).shape != (IMG_H, IMG_W, 3):
+        if imread_png(processed_dir / name).shape != (IMG_H, IMG_W, 3):
             raise RuntimeError(f"invalid processed polar image: {name}")
-    print(f"processed={len(processed_names)} format=polar -> {PROCESSED}")
+    stamp = preprocess_cache.write_stamp(processed_dir, "polar", input_names)
+    print(
+        f"processed={len(processed_names)} format=polar cache=miss "
+        f"definition_hash={stamp['definition_hash'][:12]} -> {processed_dir}"
+    )
     return processed_names
 
 
@@ -190,47 +214,101 @@ def accepted_records(locate_path: Path) -> tuple[dict[str, dict], dict[str, str]
     return accepted, skipped
 
 
+def ref_input_entries(resolved: list[tuple[str, dict, Path]]) -> list[str]:
+    """ref 前处理的输入指纹条目：样本名 + 它消费的定位字段（zone/x/y/scale）。
+
+    其他定位字段（latencyMs 等）不进指纹：重跑 locate_dataset.py 只刷新时间戳时
+    不该触发数据重算；资产路径由 zone 决定，不另记。
+    """
+    entries = []
+    for name, record, _ in resolved:
+        entries.append(
+            json.dumps(
+                [
+                    name,
+                    str(record.get("zone", "")),
+                    float(record["x"]),
+                    float(record["y"]),
+                    record_scale(record),
+                ],
+                ensure_ascii=True,
+                separators=(",", ":"),
+            )
+        )
+    return entries
+
+
+def _resolve_ref_inputs(
+    accepted: dict[str, dict], assets_root: Path, skipped: dict[str, str]
+) -> list[tuple[str, dict, Path]]:
+    """accepted 记录 -> 可生成样本 (name, record, asset_path)；缺资产的计入 skipped。"""
+    resolved: list[tuple[str, dict, Path]] = []
+    for name in sorted(accepted):
+        record = accepted[name]
+        asset_path = zone_asset_path(str(record.get("zone", "")), assets_root)
+        if asset_path is None:
+            skipped[name] = "asset_missing"
+            continue
+        resolved.append((name, record, asset_path))
+    return resolved
+
+
+def _skip_reasons(skipped: dict[str, str]) -> dict[str, int]:
+    return dict(sorted(Counter(skipped.values()).items()))
+
+
 def generate_processed_ref(
     raw_dir: Path = RAW_DIR,
     locate_path: Path = LOCATE_PATH,
     assets_root: Path = MAP_ASSETS_ROOT,
     processed_dir: Path = PROCESSED_REF,
+    force: bool = False,
 ) -> tuple[list[str], dict[str, str]]:
     """对 accepted 定位记录生成 ref 两路展开条带（观测 3ch / 参考 BGRA）。
 
-    每条记录用 `endfield.ref.ref_strip` 算出 7 通道张量，再按
+    每条记录由定义模块 `preprocess.strips` 一次算出两路条带，再按
     `[obs.BGR, ref.BGR, ref.A]` 切成两路落盘：观测 `<name>.png`、参考 `ref/<name>.png`。
     返回 (产物名, name -> 跳过原因)；跳过原因含 accept 门原因与 asset_missing。
+    缓存戳命中且两路产物齐全时跳过重写。
     """
     accepted, skipped = accepted_records(locate_path)
+    resolved = _resolve_ref_inputs(accepted, assets_root, skipped)
+    entries = ref_input_entries(resolved)
+    names = [name for name, _, _ in resolved]
+    if (
+        not force
+        and png_names(processed_dir) == names
+        and png_names(processed_dir / REF_SUBDIR) == names
+        and preprocess_cache.cache_hit(processed_dir, "ref", entries)
+    ):
+        print(
+            f"ref: accepted={len(accepted)} processed={len(names)} skipped={len(skipped)} "
+            f"{_skip_reasons(skipped)} cache=hit -> {processed_dir}"
+        )
+        return names, skipped
 
+    preprocess_cache.remove_stamp(processed_dir)
     clear_pngs(processed_dir)
     clear_pngs(processed_dir / REF_SUBDIR)
     assets: dict[Path, np.ndarray] = {}
-    names: list[str] = []
-    for index, name in enumerate(sorted(accepted), 1):
-        record = accepted[name]
-        zone = str(record.get("zone", ""))
-        asset_path = zone_asset_path(zone, assets_root)
-        if asset_path is None:
-            skipped[name] = "asset_missing"
-            continue
+    for index, (name, record, asset_path) in enumerate(resolved, 1):
         asset = assets.get(asset_path)
         if asset is None:
-            asset = load_reference_image(asset_path)
-            assets[asset_path] = asset
-        observed = observed_roi(load_source_bgr(raw_dir / name))
-        ref = ref_strip(
-            observed, asset, float(record["x"]), float(record["y"]), record_scale(record)
+            asset = assets[asset_path] = load_reference_image(asset_path)
+        observed, reference = preprocess.strips(
+            observed_roi(load_source_bgr(raw_dir / name)),
+            preprocess.normalize_asset(asset),
+            float(record["x"]),
+            float(record["y"]),
+            record_scale(record),
         )
         observed_path, reference_path = processed_dir / name, processed_dir / REF_SUBDIR / name
-        if not cv2.imwrite(str(observed_path), ref[..., :3]):
+        if not cv2.imwrite(str(observed_path), observed):
             raise RuntimeError(f"failed to write {observed_path}")
-        if not cv2.imwrite(str(reference_path), ref[..., 3:]):
+        if not cv2.imwrite(str(reference_path), reference):
             raise RuntimeError(f"failed to write {reference_path}")
-        names.append(name)
-        if index % 250 == 0 or index == len(accepted):
-            print(f"[{index}/{len(accepted)}] {name}")
+        if index % 250 == 0 or index == len(resolved):
+            print(f"[{index}/{len(resolved)}] {name}")
 
     if png_names(processed_dir) != names or png_names(processed_dir / REF_SUBDIR) != names:
         raise RuntimeError("processed ref PNG names do not exactly match written samples")
@@ -239,10 +317,11 @@ def generate_processed_ref(
             raise RuntimeError(f"invalid processed ref observation image: {name}")
         if imread_png(processed_dir / REF_SUBDIR / name).shape != (IMG_H, IMG_W, 4):
             raise RuntimeError(f"invalid processed ref reference image: {name}")
-    reasons = Counter(skipped.values())
+    stamp = preprocess_cache.write_stamp(processed_dir, "ref", entries)
     print(
         f"ref: accepted={len(accepted)} processed={len(names)} skipped={len(skipped)} "
-        f"{dict(sorted(reasons.items()))} -> {processed_dir}"
+        f"{_skip_reasons(skipped)} cache=miss definition_hash={stamp['definition_hash'][:12]} "
+        f"-> {processed_dir}"
     )
     return names, skipped
 
@@ -266,6 +345,11 @@ def parse_args() -> argparse.Namespace:
         default=MAP_ASSETS_ROOT,
         help="MapLocator 底图资产目录（ref 模式；默认本地 MaaEnd 工作副本）",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="忽略 processed 缓存戳命中，强制重生成",
+    )
     return parser.parse_args()
 
 
@@ -277,13 +361,14 @@ def run_ref(
     processed_dir: Path = PROCESSED_REF,
     train_dir: Path = TRAIN_REF,
     val_dir: Path = VAL_REF,
+    force: bool = False,
 ) -> None:
     """ref 全管线：两路展开产物 -> manifest 划分 -> train/val 符号链接视图。"""
     raw_names = sorted(path.name for path in raw_dir.glob("*.png"))
     if not raw_names:
         raise SystemExit(f"no png found in {raw_dir}")
     processed_names, skipped = generate_processed_ref(
-        raw_dir, locate_path, assets_root, processed_dir
+        raw_dir, locate_path, assets_root, processed_dir, force
     )
     train_names, val_names, manifest_skipped = accepted_split(
         processed_names, raw_names, manifest_path
@@ -302,16 +387,28 @@ def run_ref(
     )
 
 
+def run_polar(
+    raw_dir: Path = RAW_DIR,
+    manifest_path: Path = VAL_MANIFEST,
+    processed_dir: Path = PROCESSED,
+    train_dir: Path = TRAIN,
+    val_dir: Path = VAL,
+    force: bool = False,
+) -> None:
+    """polar 全管线：极坐标展开落盘 -> manifest 划分 -> train/val 符号链接视图。"""
+    processed_names = generate_processed(raw_dir, processed_dir, force)
+    train_names, val_names = manifest_split(processed_names, manifest_path)
+    if set(train_names) & set(val_names) or sorted(train_names + val_names) != processed_names:
+        raise RuntimeError("train/validation split does not exactly cover processed files")
+    link_split(train_names, val_names, train_dir, val_dir, processed_dir)
+
+
 def main() -> None:
     args = parse_args()
     if args.mode == "ref":
-        run_ref(args.map_assets_root)
+        run_ref(args.map_assets_root, force=args.force)
         return
-    processed_names = generate_processed()
-    train_names, val_names = manifest_split(processed_names)
-    if set(train_names) & set(val_names) or sorted(train_names + val_names) != processed_names:
-        raise RuntimeError("train/validation split does not exactly cover processed files")
-    link_split(train_names, val_names)
+    run_polar(force=args.force)
 
 
 if __name__ == "__main__":

@@ -16,7 +16,7 @@ import numpy as np
 import pytest
 
 import prepare_data
-from endfield import preprocess
+from endfield import preprocess, preprocess_cache
 from endfield.locate import accept, load_records, record_scale, write_jsonl, zone_asset_path
 from endfield.polar import IMG_H, IMG_W, imread_png, load_source_bgr
 from endfield.ref import (
@@ -238,6 +238,87 @@ def test_generate_processed_ref_is_deterministic_on_rerun(tmp_path: Path) -> Non
     prepare_data.generate_processed_ref(raw_dir, locate_path, assets_root, processed_dir)
     assert first == digests()
     assert set(first) == {names["ok"], names["ok2"], f"ref/{names['ok']}", f"ref/{names['ok2']}"}
+
+
+def test_generate_processed_ref_skips_regeneration_on_cache_hit(tmp_path: Path) -> None:
+    raw_dir, assets_root, locate_path, names = ref_fixture(tmp_path)
+    processed_dir = tmp_path / "processed_ref"
+    prepare_data.generate_processed_ref(raw_dir, locate_path, assets_root, processed_dir)
+    observed_path = processed_dir / names["ok"]
+    reference_path = processed_dir / REF_SUBDIR / names["ok"]
+    assert cv2.imwrite(str(observed_path), np.full((IMG_H, IMG_W, 3), 123, np.uint8))
+    assert cv2.imwrite(str(reference_path), np.full((IMG_H, IMG_W, 4), 123, np.uint8))
+
+    processed_names, skipped = prepare_data.generate_processed_ref(
+        raw_dir, locate_path, assets_root, processed_dir
+    )
+
+    assert processed_names == [names["ok"], names["ok2"]]
+    assert skipped == {
+        names["held"]: "held",
+        names["fail"]: "global_search_failed",
+        names["noasset"]: "asset_missing",
+    }
+    assert np.all(imread_png(observed_path) == 123)
+    assert np.all(imread_png(reference_path) == 123)
+    stamp = json.loads((processed_dir / preprocess_cache.STAMP_NAME).read_text(encoding="utf-8"))
+    assert stamp["mode"] == "ref"
+    assert stamp["definition_hash"] == preprocess.definition_hash()
+
+
+def test_generate_processed_ref_regenerates_when_locate_fields_change(tmp_path: Path) -> None:
+    raw_dir, assets_root, locate_path, names = ref_fixture(tmp_path)
+    processed_dir = tmp_path / "processed_ref"
+    prepare_data.generate_processed_ref(raw_dir, locate_path, assets_root, processed_dir)
+    assert cv2.imwrite(str(processed_dir / names["ok"]), np.full((IMG_H, IMG_W, 3), 123, np.uint8))
+
+    # 同名单、不同坐标：定位记录字段属于前处理输入，必须触发失效
+    write_jsonl(
+        locate_path,
+        [locate_record(names["ok"], x=101.0), locate_record(names["ok2"])],
+    )
+    prepare_data.generate_processed_ref(raw_dir, locate_path, assets_root, processed_dir)
+
+    assert np.all(imread_png(processed_dir / names["ok"]) == 200)
+
+
+def test_generate_processed_ref_regenerates_when_stamp_definition_differs(tmp_path: Path) -> None:
+    raw_dir, assets_root, locate_path, names = ref_fixture(tmp_path)
+    processed_dir = tmp_path / "processed_ref"
+    prepare_data.generate_processed_ref(raw_dir, locate_path, assets_root, processed_dir)
+    assert cv2.imwrite(str(processed_dir / names["ok"]), np.full((IMG_H, IMG_W, 3), 123, np.uint8))
+    stamp_path = processed_dir / preprocess_cache.STAMP_NAME
+    stamp = json.loads(stamp_path.read_text(encoding="utf-8"))
+    stamp["definition_hash"] = "0" * 64
+    stamp_path.write_text(json.dumps(stamp), encoding="utf-8")
+
+    prepare_data.generate_processed_ref(raw_dir, locate_path, assets_root, processed_dir)
+
+    assert np.all(imread_png(processed_dir / names["ok"]) == 200)
+    assert json.loads(stamp_path.read_text(encoding="utf-8"))["definition_hash"] == (
+        preprocess.definition_hash()
+    )
+
+
+def test_run_ref_force_regenerates(tmp_path: Path) -> None:
+    raw_dir, assets_root, locate_path, names = ref_fixture(tmp_path)
+    manifest = tmp_path / "val_manifest.json"
+    write_manifest(manifest, [names["ok"]])
+    processed_dir, train_dir, val_dir = (
+        tmp_path / "processed_ref",
+        tmp_path / "train_ref",
+        tmp_path / "val_ref",
+    )
+    prepare_data.run_ref(
+        assets_root, raw_dir, locate_path, manifest, processed_dir, train_dir, val_dir
+    )
+    assert cv2.imwrite(str(processed_dir / names["ok"]), np.full((IMG_H, IMG_W, 3), 123, np.uint8))
+
+    prepare_data.run_ref(
+        assets_root, raw_dir, locate_path, manifest, processed_dir, train_dir, val_dir, force=True
+    )
+
+    assert np.all(imread_png(processed_dir / names["ok"]) == 200)
 
 
 def test_generate_processed_ref_uses_record_scale(tmp_path: Path) -> None:
