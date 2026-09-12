@@ -26,6 +26,7 @@ from endfield.ref import (
     ref_tensor,
     reference_alpha_plane,
     reference_crop,
+    reference_gap_fraction,
     reference_planes,
     reference_strip,
     zone_scale,
@@ -59,6 +60,12 @@ def test_reference_planes_alpha_fills_out_of_bounds_with_zero() -> None:
     assert alpha.shape == (120, 118)
     assert np.all(alpha[:40] == 0) and np.all(alpha[:, :39] == 0)
     assert np.all(alpha[60:80, 60:100] == 255)
+
+
+def test_reference_gap_fraction_counts_any_alpha_below_255() -> None:
+    reference = np.full((1, 4, 4), 255, dtype=np.uint8)
+    reference[..., 3] = [[255, 254, 0, 128]]
+    assert reference_gap_fraction(reference) == pytest.approx(3 / 4)
 
 
 def test_reference_strip_unwraps_composed_bgr_and_alpha_into_bgra() -> None:

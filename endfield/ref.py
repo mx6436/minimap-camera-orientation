@@ -173,3 +173,13 @@ def ref_strip(
     """118x120 观测 ROI + 原始底图资产 -> 42x360x7 ref 张量（训练与 live 共用编码）。"""
     reference = reference_strip(observed, asset, x, y, scale)
     return ref_tensor(_unwrap_plane(observed), reference)
+
+
+def reference_gap_fraction(reference: np.ndarray) -> float:
+    """参考条带的缺失像素占比：`ref.A < 255`（成片透明/越界与抗锯齿细边同计）。
+
+    输入为 42x360x4 参考条带（各半径等权）；供训练时的样本过滤使用。
+    """
+    if reference.ndim != 3 or reference.shape[2] != 4:
+        raise ValueError(f"reference strip must be HxWx4, got {reference.shape}")
+    return float(np.mean(reference[..., 3] < 255))

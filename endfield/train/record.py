@@ -29,6 +29,12 @@ def augmentation(config: dict[str, Any]) -> dict[str, Any]:
 
 def input_representation(config: dict[str, Any]) -> str:
     if config["input_mode"] == "ref":
+        gap_filter = ""
+        if config["max_ref_missing"] is not None:
+            gap_filter = (
+                f"; train samples filtered to reference-gap fraction "
+                f"(ref.A<255) <= {config['max_ref_missing']:g}"
+            )
         return (
             f"ref_polar_unwrap_obs_bgr_ref_bgra_{IMG_W}x{IMG_H} "
             "(channels = [obs.BGR, ref.BGR, ref.A]; reference = MapLocator zone asset "
@@ -38,7 +44,7 @@ def input_representation(config: dict[str, Any]) -> str:
             "in the 118x120 ROI before unwrapping (alpha==0 -> observed pixels, "
             "alpha==255 -> black-composited reference; rounded to uint8), "
             "ref.A = raw continuous alpha (0 = reference gap); both streams unwrapped "
-            "at the ROI center; angle->x, radius->y)"
+            f"at the ROI center; angle->x, radius->y{gap_filter})"
         )
     return (
         f"polar_unwrap_bgr_{IMG_W}x{IMG_H} (angle->x, 1 deg/column, clockwise, "
@@ -98,4 +104,6 @@ def build_record(
     }
     if config["input_mode"] == "ref":
         record["ref_reference_assets_root"] = config["map_assets_root"]
+        # 训练集参考缺失占比过滤阈值；null = 不过滤
+        record["max_ref_missing"] = config["max_ref_missing"]
     return record

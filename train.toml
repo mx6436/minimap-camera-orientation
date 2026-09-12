@@ -6,6 +6,9 @@ input_mode = "polar"
 # ref 模式下 MapLocator 底图资产目录（本地 MaaEnd 工作副本，gitignored）；训练读离线
 # 产物，此路径仅写入 record，与实机推理共用；需与 prepare_data.py --mode ref 一致
 map_assets_root = "local/maplocator/resource/image/MapLocator"
+# ref 训练可选：环内参考缺失（`ref.A<255`）占比**严格大于**该比例的训练样本在读取时排除
+# （0~1；等于阈值保留）；缺省不写 = 不过滤。只影响训练集，val 不变；需 input_mode = "ref"
+# max_ref_missing = 0.3
 
 # 训练规模
 batch_size = 32

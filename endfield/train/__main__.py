@@ -21,6 +21,7 @@ from endfield.train.artifacts import ARTIFACT_NAMES, plot_loss_curves, save_chec
 from endfield.train.config import load_config
 from endfield.train.data import (
     AngleDataset,
+    filter_reference_gap,
     input_channels,
     make_loader,
     names_fingerprint,
@@ -84,6 +85,18 @@ def main() -> None:
         raise SystemExit(
             f"missing {train_dir} or {val_dir} PNG files; run prepare_data.py first"
         )
+    if config["max_ref_missing"] is not None:
+        total = len(train_names)
+        train_names = filter_reference_gap(train_names, train_dir, config["max_ref_missing"])
+        print(
+            f"max_ref_missing={config['max_ref_missing']:g}: "
+            f"kept {len(train_names)}/{total} training samples"
+        )
+        if not train_names:
+            raise SystemExit(
+                f"max_ref_missing={config['max_ref_missing']:g} filtered out every "
+                "training sample; raise the threshold"
+            )
 
     output_dir = args.run_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)

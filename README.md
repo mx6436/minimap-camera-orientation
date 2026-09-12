@@ -28,7 +28,7 @@ uv run predict.py data/raw/<screenshot>.png --run-dir runs/<name>
 
 训练入口是控制台命令 `uv run train`，只负责训练：读取训练/验证目录，从不复制、移动或划分图像。全部训练参数集中在根目录 [`train.toml`](./train.toml)：每个键都有代码内默认值，文件明示当前基线，未知键硬报错。CLI 只保留调用管道：`--config`（默认 `train.toml`）、`--run-dir`（必填，run 产物目录）、`--device`（auto/cpu/cuda）、`--threads`（CPU 线程，默认 8）与 `--smoke`（正常路径只跑一个 epoch，用于验证流程，不能替代完整训练）。
 
-`train.toml` 的 `input_mode` 选择训练数据：`"polar"`（默认）读 `data/train`、`data/val`；`"ref"` 读 `data/train_ref`、`data/val_ref`。`map_assets_root` 指向 ref 使用的 MapLocator 底图资产目录（默认本地 MaaEnd 工作副本，需与 `prepare_data.py --mode ref` 一致），写在 run 的 `record.json`（`ref_reference_assets_root`），供实机推理读取。
+`train.toml` 的 `input_mode` 选择训练数据：`"polar"`（默认）读 `data/train`、`data/val`；`"ref"` 读 `data/train_ref`、`data/val_ref`。`map_assets_root` 指向 ref 使用的 MapLocator 底图资产目录（默认本地 MaaEnd 工作副本，需与 `prepare_data.py --mode ref` 一致），写在 run 的 `record.json`（`ref_reference_assets_root`），供实机推理读取。ref 模式还可选 `max_ref_missing`（0~1）：训练集在读取时排除环内 `ref.A<255` 占比**严格大于**阈值的样本（等于阈值保留），val 不变；阈值一并写入 `record.json`。
 
 `predict.py` 接受恰好一张原始截图 PNG（任意分辨率，按 720p 基准等比缩放 ROI 后极坐标展开），不要求预先裁剪。`--run-dir` 必填，模型读取其中的 `best.pt`；设备可用 `--device` 指定。**predict 只实现 polar 输入**，ref 的单图推理路径尚未落地（实机路径见下节的 `live.py`）。
 
@@ -78,6 +78,7 @@ uv run locate_dataset.py                 # 默认 4 个并行进程；已成功�
 - **产物布局**（两路分别落盘）：`data/processed_ref/<name>.png` 为观测流（42x360x3 BGR），`data/processed_ref/ref/<name>.png` 为参考流（42x360x4 BGRA，B/G/R = 参考 BGR，A = 原始 alpha）；`data/train_ref`、`data/val_ref` 是同一布局的符号链接视图，`ref/` 子树一并链接。
 - **模型输入**：两路按通道拼接为 42x360x7；训练侧由 `train.toml` 的 `input_mode = "ref"` 选择数据根；`record.json` 记 `ref_reference_assets_root`；`live.py` 的 ref 推理路径与之共用 `endfield/ref.py` 的编码，与 `prepare_data.py` 的产物逐字节一致。
 - **确定性**：重复运行产物逐字节一致。
+- **训练样本过滤（可选）**：`train.toml` 的 `max_ref_missing`（0~1）在读取训练集时排除环内 `ref.A<255` 占比**严格大于**阈值的样本（等于阈值保留），只影响训练集，val 不变；`prepare_data.py` 始终全量落盘，过滤不改磁盘数据。
 
 ## 数据目录
 

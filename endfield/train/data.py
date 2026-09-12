@@ -11,7 +11,7 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 
 from endfield.data_utils import load_bgr, load_bgra, parse_angle
-from endfield.ref import REF_CHANNELS, REF_SUBDIR, ref_tensor
+from endfield.ref import REF_CHANNELS, REF_SUBDIR, ref_tensor, reference_gap_fraction
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TRAIN_DIR = REPO_ROOT / "data" / "train"
@@ -42,6 +42,20 @@ def input_channels(input_mode: str) -> int:
         return INPUT_CHANNELS[input_mode]
     except KeyError:
         raise ValueError(f"unknown input_mode: {input_mode!r}") from None
+
+
+def filter_reference_gap(names: list[str], directory: Path, max_missing: float) -> list[str]:
+    """按参考条带的环内缺失占比过滤训练样本：**严格大于**阈值即排除（等于保留）。
+
+    缺失占比 = 42x360 条带中 `ref.A < 255` 的像素比例（读 `ref/` 流，与
+    `prepare_data.py --mode ref` 落盘一致，各半径等权）。只选样本，不改磁盘数据。
+    """
+    kept: list[str] = []
+    for name in names:
+        reference = load_bgra(directory / REF_SUBDIR / name)
+        if reference_gap_fraction(reference) <= max_missing:
+            kept.append(name)
+    return kept
 
 
 class AngleDataset(Dataset):

@@ -49,6 +49,28 @@ def test_config_rejects_removed_residual_mode(tmp_path: Path) -> None:
         load_config(write_config(tmp_path, 'input_mode = "residual"\n'))
 
 
+def test_config_defaults_max_ref_missing_to_none(tmp_path: Path) -> None:
+    config = load_config(write_config(tmp_path, 'input_mode = "ref"\n'))
+    assert config["max_ref_missing"] is None
+
+
+def test_config_accepts_max_ref_missing(tmp_path: Path) -> None:
+    config = load_config(write_config(tmp_path, 'input_mode = "ref"\nmax_ref_missing = 0.3\n'))
+    assert config["max_ref_missing"] == 0.3
+
+
+def test_config_rejects_max_ref_missing_without_ref_mode(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit, match="max_ref_missing"):
+        load_config(write_config(tmp_path, "max_ref_missing = 0.3\n"))
+
+
+@pytest.mark.parametrize("value", ["0.0", "1.0", "-0.1", '"0.3"', "true"])
+def test_config_rejects_invalid_max_ref_missing(tmp_path: Path, value: str) -> None:
+    body = f'input_mode = "ref"\nmax_ref_missing = {value}\n'
+    with pytest.raises(SystemExit, match="max_ref_missing"):
+        load_config(write_config(tmp_path, body))
+
+
 def test_config_rejects_non_string_assets_root(tmp_path: Path) -> None:
     with pytest.raises(SystemExit, match="map_assets_root"):
         load_config(write_config(tmp_path, "map_assets_root = 3\n"))
@@ -84,6 +106,7 @@ def test_record_declares_polar_representation_by_default(tmp_path: Path) -> None
     assert record["input_representation"].startswith("polar_unwrap")
     assert record["input_shape"] == [3, 42, 360]
     assert "ref_reference_assets_root" not in record
+    assert "max_ref_missing" not in record
 
 
 def test_record_declares_ref_representation_and_assets_root(tmp_path: Path) -> None:
@@ -99,3 +122,17 @@ def test_record_declares_ref_representation_and_assets_root(tmp_path: Path) -> N
     # ref 是唯一编码，不记历史 pair 编码/缺口过滤字段
     assert "pair_encoding" not in record
     assert "pair_max_ref_missing" not in record
+
+
+def test_record_declares_max_ref_missing_and_filter_text(tmp_path: Path) -> None:
+    config = load_config(
+        write_config(tmp_path, 'input_mode = "ref"\nmax_ref_missing = 0.3\n')
+    )
+    record = build(config, tmp_path)
+    assert record["max_ref_missing"] == 0.3
+    assert "0.3" in record["input_representation"]
+
+
+def test_record_max_ref_missing_defaults_to_null(tmp_path: Path) -> None:
+    record = build(load_config(write_config(tmp_path, 'input_mode = "ref"\n')), tmp_path)
+    assert record["max_ref_missing"] is None

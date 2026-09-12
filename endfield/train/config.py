@@ -13,6 +13,7 @@ from endfield.ref import MAP_ASSETS_ROOT
 CONFIG_DEFAULTS: dict[str, Any] = {
     "input_mode": "polar",
     "map_assets_root": str(MAP_ASSETS_ROOT),
+    "max_ref_missing": None,
     "batch_size": 128,
     "epochs": 200,
     "seed": SEED,
@@ -58,5 +59,15 @@ def validate_config(config: dict[str, Any]) -> None:
         raise SystemExit("compile must be a boolean")
     if config["input_mode"] not in ("polar", "ref"):
         raise SystemExit('input_mode must be "polar" or "ref"')
+    gap_limit = config["max_ref_missing"]
+    if gap_limit is not None:
+        if config["input_mode"] != "ref":
+            raise SystemExit('max_ref_missing requires input_mode "ref"')
+        if (
+            isinstance(gap_limit, bool)
+            or not isinstance(gap_limit, (int, float))
+            or not 0.0 < float(gap_limit) < 1.0
+        ):
+            raise SystemExit("max_ref_missing must be null or a ratio in (0, 1)")
     if not isinstance(config["map_assets_root"], str) or not config["map_assets_root"]:
         raise SystemExit("map_assets_root must be a non-empty path string")
