@@ -5,3 +5,4 @@ runs/
 __pycache__/
 *.py[cod]
 .ruff_cache/
+local/
