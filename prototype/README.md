@@ -26,30 +26,44 @@
 
 ```bash
 uv run python -m prototype.export_drafts                       # -> prototype/drafts/*.onnx
-uv run python -m prototype.compare_real_samples --limit 600    # 子集快速对拍
+uv run python -m prototype.pairing_check                       # obs↔ref 配对一致性（判据，全部样本）
+uv run python -m prototype.compare_real_samples --limit 600    # 跨方案条带差（仅作上下文）
 uv run python -m prototype.compare_real_samples --limit 0      # 全部 accepted 样本
 ```
 
 依赖：`data/raw`、`data/locator/locate.jsonl`、本地 MapLocator 底图资产
 （`local/maplocator`，gitignored）；ORT 1.19.2（dev 依赖已固定）。
 
+判据：**跨方案条带像素差是「定义不同」的必然结果，不能用来排序方案**；判据是每个
+方案*自身*的 `observed`↔`ref` 配对是否成立——`pairing_check.py` 逐样本计算
+- `zero_ncc`：obs 亮度与 ref 亮度在 alpha==255 像素上的零位移相关（配准质量），
+- 最佳整数位移（x 循环、y 径向）及该处 NCC，
+- `|obs−ref|` 残差（present 区与 alpha 过渡带），
+- `alpha==0 ⇒ ref==obs` 的不变量（参考缺失处逐像素等于观测）。
+
 对拍口径：现行实现 = `endfield.ref.ref_strip`（黑底合成按 zone 缓存的等价实现，
-启动时对前 5 个样本断言与 `ref_strip` 逐字节一致）。逐样本输出 per-output
-（observed / ref BGR / ref alpha / reference 4ch）的 max/mean/p99/差异像素占比、
-缺口占比差、以及 ORT vs torch eager 的引擎一致性；最坏样本渲染到
-`prototype/out/visuals/`。数据派生的数字只落在 gitignored 的 `prototype/out/`
-（`SUMMARY.md`、`summary.json`、`samples.jsonl`、`conformance/*.json`），不入库。
+启动时对前 5 个样本断言与 `ref_strip` 逐字节一致）。跨方案 harness 另输出逐样本
+per-output 的 max/mean/p99/差异像素占比、缺口占比差、ORT vs torch eager 一致性；
+最坏样本渲染到 `prototype/out/visuals/`。数据派生的数字只落在 gitignored 的
+`prototype/out/`（`SUMMARY.md`、`pairing_summary.json`、`summary.json`、
+`conformance/*.json`），不入库。
 
 ## 已知结论（方法级）
 
 - 三个草稿图在 ORT 1.19.2 上均可加载运行，动态 asset H/W 生效；torch eager 与
   ORT 图输出逐像素差 ≤1 LSB（数值细节见本地产物）。
-- `replica` 与现行实现逐像素差 ≤2 LSB、几乎无 >1 像素；`clean_*` 的差异主要来自
-  （a）精确 `(x, y)` 的亚像素重对齐与精确 `scale`（仅 `clean_ideal`，集中在
-  scale≠1 zone），（b）条带域合成的乘积次序（集中在资产 alpha 边缘），
-  （c）scale≠1 时单段采样相对两段重采样的差异。
+- `replica` 与现行实现的 obs↔ref 配对逐样本一致（NCC/位移/残差全同量级）。
+- `clean_ideal` **改善** obs↔ref 配准：zero-shift NCC 在绝大多数样本上高于现行，
+  且提升随 |x−round(x)| 的小数距离单调增强；最佳整数位移为 (0,0) 的占比也显著提高。
+  即现行 `round(x)` 丢弃的亚像素定位信息是真实的，直接使用 `(x, y)` 让参考与观测
+  对齐得更好。
+- `clean_cv2align` 采样位置与现行相同（配准不变），scale≠1 时单段采样反而略低于
+  现行的两段重采样 NCC，过渡带残差略高——它没有配对收益，只作为结构诊断变体。
+- 三个方案的 `alpha==0 ⇒ ref==obs` 不变量都成立（±1 LSB 舍入内）。
 - 缺口占比差异在多数样本上 <0.01；超差样本集中在非 1:1 zone。分派阈值复核见 map
   #21 的 fog 项。
+
+## 对 #25 的契约提示
 
 ## 对 #25 的契约提示
 
