@@ -6,3 +6,4 @@ __pycache__/
 *.py[cod]
 .ruff_cache/
 local/
+prototype/out/

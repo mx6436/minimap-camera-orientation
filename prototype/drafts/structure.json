@@ -1,0 +1,177 @@
+{
+  "clean_ideal": {
+    "file": "prototype/drafts/preprocess_clean_ideal.onnx",
+    "opset": 18,
+    "inputs": {
+      "minimap": [
+        1,
+        120,
+        118,
+        3
+      ],
+      "asset": [
+        1,
+        "H",
+        "W",
+        4
+      ],
+      "x": [],
+      "y": [],
+      "scale": []
+    },
+    "outputs": {
+      "observed": [
+        1,
+        42,
+        360,
+        3
+      ],
+      "reference": [
+        1,
+        42,
+        360,
+        4
+      ]
+    },
+    "grid_sample": [
+      {
+        "align_corners": 0,
+        "padding_mode": "border",
+        "mode": "bilinear"
+      },
+      {
+        "align_corners": 0,
+        "padding_mode": "zeros",
+        "mode": "bilinear"
+      },
+      {
+        "align_corners": 0,
+        "padding_mode": "zeros",
+        "mode": "bilinear"
+      }
+    ],
+    "nodes": 65,
+    "ort_version": "1.19.2",
+    "ort_loads": true
+  },
+  "clean_cv2align": {
+    "file": "prototype/drafts/preprocess_clean_cv2align.onnx",
+    "opset": 18,
+    "inputs": {
+      "minimap": [
+        1,
+        120,
+        118,
+        3
+      ],
+      "asset": [
+        1,
+        "H",
+        "W",
+        4
+      ],
+      "x": [],
+      "y": [],
+      "scale": []
+    },
+    "outputs": {
+      "observed": [
+        1,
+        42,
+        360,
+        3
+      ],
+      "reference": [
+        1,
+        42,
+        360,
+        4
+      ]
+    },
+    "grid_sample": [
+      {
+        "align_corners": 0,
+        "padding_mode": "border",
+        "mode": "bilinear"
+      },
+      {
+        "align_corners": 0,
+        "padding_mode": "zeros",
+        "mode": "bilinear"
+      },
+      {
+        "align_corners": 0,
+        "padding_mode": "zeros",
+        "mode": "bilinear"
+      }
+    ],
+    "nodes": 81,
+    "ort_version": "1.19.2",
+    "ort_loads": true
+  },
+  "replica": {
+    "file": "prototype/drafts/preprocess_replica.onnx",
+    "opset": 18,
+    "inputs": {
+      "minimap": [
+        1,
+        120,
+        118,
+        3
+      ],
+      "asset": [
+        1,
+        "H",
+        "W",
+        4
+      ],
+      "x": [],
+      "y": [],
+      "scale": []
+    },
+    "outputs": {
+      "observed": [
+        1,
+        42,
+        360,
+        3
+      ],
+      "reference": [
+        1,
+        42,
+        360,
+        4
+      ]
+    },
+    "grid_sample": [
+      {
+        "align_corners": 0,
+        "padding_mode": "zeros",
+        "mode": "bilinear"
+      },
+      {
+        "align_corners": 0,
+        "padding_mode": "zeros",
+        "mode": "bilinear"
+      },
+      {
+        "align_corners": 0,
+        "padding_mode": "border",
+        "mode": "bilinear"
+      },
+      {
+        "align_corners": 0,
+        "padding_mode": "border",
+        "mode": "bilinear"
+      },
+      {
+        "align_corners": 0,
+        "padding_mode": "border",
+        "mode": "bilinear"
+      }
+    ],
+    "nodes": 105,
+    "ort_version": "1.19.2",
+    "ort_loads": true
+  }
+}
