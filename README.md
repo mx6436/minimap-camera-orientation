@@ -41,6 +41,85 @@ uv run export_onnx.py --run-dir runs/<name> --output /tmp/model.onnx
 
 `live.py` 对运行中的游戏做实时推理：从 `--run-dir` 的 `record.json` 读取 `input_mode`（旧 record 无此字段时按 polar 兼容；ref 定名之前的 pair v2 record 映射为 ref），polar 每帧直接极坐标展开；ref 起 `map-locate --stream` 常驻子进程做流式定位（定位在独立线程，显示循环不阻塞），按定位 `(zone, x, y)` 裁参考底图、合成参考后拼 `[obs.BGR, ref.BGR, ref.A]` 7 通道张量，再喂模型；定位不可用（失败 / held / 低分 / 资产缺失）时 overlay 显示等待态。overlay 展示圆盘、当前模型输入（极坐标展开 / ref 的 obs 与 ref 两路）与 360 bin 概率曲线；`--snapshot <path>` 在拿到首个有效定位后保存一张 overlay 并退出（实机 smoke 取证用）。ref 实机推理依赖 gitignored 的 `local/maplocator/`（含 `--stream` 的迭代二进制，见其 `README.local.md`）。
 
+## 工件校验（conformance）
+
+`verify_artifact.py` 对交付 bundle 做一致性校验：ORT 1.19.2 跑图，逐 fixture 与参考实现（定义模块；定义模块落地前为现行 cv2 前处理）比对并应用容差，输出通过/失败与差异明细。判定口径见 map 的「模型级等价」：不承诺与 C++ 逐位一致，uint8 条带按 ±1 LSB 预期。
+
+环境固定为 Python 3.12 + dev 依赖 `onnxruntime==1.19.2`（与 MaaEnd 运行时同版本，`pyproject.toml` 固定）；运行时版本不一致直接判 error（证据作废）。
+
+### 用法
+
+```bash
+uv run verify_artifact.py --bundle runs/<name>/bundle          # 结构 + 全量内置 fixtures
+uv run verify_artifact.py --bundle <dir> --run-dir runs/<name> # 追加分类器 ↔ checkpoint 数值比对
+uv run verify_artifact.py --bundle <dir> --fixture-dir <dir>   # 用本地真实样本 fixtures
+uv run verify_artifact.py --bundle <dir> --report report.json  # 落 JSON 证据
+uv run verify_artifact.py --dump-fixtures conformance/fixtures # 物化内置 fixtures
+```
+
+- 退出码：0 = 通过（允许 warning），1 = 存在 error 或超容差比对。
+- `--require` 缺省由 manifest 的 `graphs` 决定；无 manifest 的草稿 bundle 只要求 `preprocess`。
+- `--run-dir` 提供后，分类器图与 checkpoint 逐 fixture 比对 pmf（torch 侧 `ExportWrapper`）；manifest 的 `graphs.<role>.run_dir` 优先于 CLI。
+
+### bundle 与 manifest
+
+bundle 目录（对应 MaaEnd 交付布局）含 `preprocess.onnx`、`polar.onnx`、`polar_with_ref.onnx` 与 `manifest.json`（由 `export_artifact.py` 产出）：
+
+```json
+{
+  "schema_version": 1,
+  "git_commit": "<训练/导出时的 commit>",
+  "definition_hash": "<endfield.conformance.definition_hash() 的 sha256>",
+  "ort_version": "1.19.2",
+  "graphs": {
+    "preprocess": {"file": "preprocess.onnx",
+                   "outputs": {"observed": "obs", "reference": "ref"}},
+    "polar": {"file": "polar.onnx", "run_dir": "runs/<polar_run>"},
+    "polar_with_ref": {"file": "polar_with_ref.onnx", "run_dir": "runs/<ref_run>"}
+  },
+  "fixtures": ["polar_basic", "..."],
+  "tolerances": {"strips_uint8": 1, "pmf_float32": 1e-4, "gap_fraction": 0.01}
+}
+```
+
+- `graphs` 列出的图必须存在，缺一即 error；它也是缺省 `--require` 集。
+- `outputs` 声明输出角色；缺省按图输出顺序（第一 = observed，第二 = reference）。
+- `definition_hash` 与当前定义源码不一致 = bundle 与定义不同源，error（需重导出）。
+- `fixtures` 缺省为内置 6 个场景；`tolerances` 覆盖默认剖面。
+
+### fixtures
+
+fixture 是「输入场景」，期望输出在比对时由参考实现实时计算，不落 golden。两种来源：内置场景（`endfield/conformance.py`）与 `--fixture-dir` 目录下的 `*.npz`（`--dump-fixtures` 的产物或本地真实样本，字段同名）。
+
+| 字段 | 含义 |
+| --- | --- |
+| `name` / `description` / `tags` | 标识与覆盖类别 |
+| `minimap` | 118x120 BGR uint8 观测 ROI |
+| `asset` | HxWx3/4 uint8 底图；3 通道视为完全不透明 |
+| `x` / `y` / `scale` | MapLocator 定位坐标与 `ZoneTemplateScale` |
+
+内置 6 个场景覆盖：极坐标（`polar_basic`）、参考配对（`ref_pair_basic`）、裁剪越界（`crop_out_of_bounds`）、非 1:1 zone（`zone_non_1to1`，scale=15/16）、参考缺失（`ref_missing_alpha0`）、资产 3 通道（`asset_rgb_3ch`）。
+
+### 结构与数值断言
+
+- `preprocess.onnx`：存在 `GridSample`，且 opset 18 下 `mode="bilinear"` / `padding_mode="border"` / `align_corners=0`；`X`/`grid` 为 float32（uint8 需图内 Cast）；`asset` 的 H/W 为动态维；输出条带 uint8、形状 42x360x3/4；无 contrib 域节点。
+- `polar.onnx` / `polar_with_ref.onnx`：输入 uint8 42x360x3/7，输出 float32 [1,360]，无 contrib 域节点。
+- 数值：每个输出报 `max_abs` / `mean_abs` / `p99_abs` / `diff_fraction`，**通过条件 = `max_abs <= limits[profile]`**（形状或 dtype 不符直接失败）。缺口占比（`ref.A < 255`）另报绝对误差；分类器与 checkpoint 另报 `angle_error_deg`（argmax 环差，仅供证据，不作门限）。
+
+默认容差剖面：
+
+| 剖面 | 适用 | 缺省上限 | 依据 |
+| --- | --- | --- | --- |
+| `strips_uint8` | 条带输出 | 1 | ±1 LSB 口径（#22 研究） |
+| `pmf_float32` | 分类器 pmf | 1e-4 | float32 导出等价 |
+| `gap_fraction` | 缺口占比 | 0.01 | 1 个百分点 |
+
+阈值只在 manifest 的 `tolerances` 覆盖；覆盖要有证据（#23 对拍分布），失败先回票定位（图/定义/环境），不得为通过而放宽。
+
+### 定义模块交接
+
+`verify_artifact.py` 的参考侧当前适配现行 cv2 前处理（`endfield/polar.py` + `endfield/ref.py`），`definition_hash()` 也取这两份源码。定义模块（#25）落地后，把 `endfield/conformance.py` 的 `reference_strips()` / `definition_hash()` 指过去（唯一实现）、删除 cv2 路径；校验侧接口与 fixtures 不变。
+
 ## 数据定位（MapLocator 批量）
 
 `locate_dataset.py` 对 `data/raw` 全量截图逐张运行 MapLocator，产出 ref 前处理所需的定位产物与汇总：
