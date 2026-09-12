@@ -300,6 +300,42 @@ def test_generate_processed_ref_regenerates_when_stamp_definition_differs(tmp_pa
     )
 
 
+def test_generate_processed_ref_matches_across_worker_counts(tmp_path: Path) -> None:
+    """并行解码只加速 I/O：workers=4 与 workers=1 的两路产物须逐字节一致。"""
+    raw_dir, assets_root, locate_path, _ = ref_fixture(tmp_path)
+    serial_dir, parallel_dir = tmp_path / "serial_ref", tmp_path / "parallel_ref"
+
+    serial = prepare_data.generate_processed_ref(
+        raw_dir, locate_path, assets_root, serial_dir, workers=1
+    )
+    parallel = prepare_data.generate_processed_ref(
+        raw_dir, locate_path, assets_root, parallel_dir, workers=4
+    )
+    assert serial == parallel
+
+    def digests(directory: Path) -> dict[str, str]:
+        return {
+            str(path.relative_to(directory)): hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in sorted(directory.rglob("*.png"))
+        }
+
+    assert digests(serial_dir) == digests(parallel_dir)
+
+
+def test_generate_processed_ref_without_usable_assets_returns_empty(tmp_path: Path) -> None:
+    """accepted 记录全部缺资产：无产物可生成，不建并行池也不报错。"""
+    raw_dir, assets_root, locate_path, names = ref_fixture(tmp_path)
+    write_jsonl(locate_path, [locate_record(names["noasset"], zone="Nowhere_Base")])
+    processed_dir = tmp_path / "processed_ref"
+
+    processed_names, skipped = prepare_data.generate_processed_ref(
+        raw_dir, locate_path, assets_root, processed_dir
+    )
+
+    assert processed_names == []
+    assert skipped == {names["noasset"]: "asset_missing"}
+
+
 def test_run_ref_force_regenerates(tmp_path: Path) -> None:
     raw_dir, assets_root, locate_path, names = ref_fixture(tmp_path)
     manifest = tmp_path / "val_manifest.json"

@@ -28,11 +28,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from collections import Counter
+from collections.abc import Callable, Iterator, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import cv2
 import numpy as np
+import torch
 
 from endfield import preprocess, preprocess_cache
 from endfield.data_utils import (
@@ -67,6 +71,25 @@ LOCATE_PATH = ROOT / "data" / "locator" / "locate.jsonl"
 
 VAL_MANIFEST_VERSION = 1
 
+# 原始截图解码（cv2.imread 释放 GIL）是管线大头：每张 ~10ms，而定义模块前处理 ~1ms。
+# 解码/ROI 提取按 CPU 数并行；定义模块调用始终在主线程串行，产物与 workers=1 逐字节一致。
+IO_WORKERS = min(16, os.cpu_count() or 1)
+IO_CHUNK = 256
+
+
+def _parallel_load[Item](
+    items: Sequence[Item], load: Callable[[Item], np.ndarray], workers: int
+) -> Iterator[np.ndarray]:
+    """按序、分块并行跑 I/O 密集的 `load(item)`；峰值内存只保留一个块的结果。"""
+    if workers <= 1 or not items:
+        for item in items:
+            yield load(item)
+        return
+    with ThreadPoolExecutor(max_workers=min(workers, len(items))) as pool:
+        for start in range(0, len(items), IO_CHUNK):
+            chunk = items[start : start + IO_CHUNK]
+            yield from pool.map(load, chunk)
+
 
 def clear_pngs(directory: Path) -> None:
     directory.mkdir(parents=True, exist_ok=True)
@@ -78,6 +101,7 @@ def generate_processed(
     raw_dir: Path = RAW_DIR,
     processed_dir: Path = PROCESSED,
     force: bool = False,
+    workers: int = IO_WORKERS,
 ) -> list[str]:
     """raw 全量 -> polar 条带落盘；缓存戳命中且产物齐全时跳过重写。"""
     pngs = sorted(raw_dir.glob("*.png"))
@@ -95,12 +119,18 @@ def generate_processed(
     preprocess_cache.remove_stamp(processed_dir)
     clear_pngs(processed_dir)
 
-    for i, src in enumerate(pngs, 1):
-        strip = preprocess.observed_strip(observed_roi(load_source_bgr(src)))
+    def load_roi(src: Path) -> np.ndarray:
+        return observed_roi(load_source_bgr(src))
+
+    total = len(pngs)
+    for i, (src, roi) in enumerate(
+        zip(pngs, _parallel_load(pngs, load_roi, workers), strict=True), 1
+    ):
+        strip = preprocess.observed_strip(roi)
         if not cv2.imwrite(str(processed_dir / src.name), strip):
             raise RuntimeError(f"failed to write {processed_dir / src.name}")
-        if i % 250 == 0 or i == len(pngs):
-            print(f"[{i}/{len(pngs)}] {src.name}")
+        if i % 250 == 0 or i == total:
+            print(f"[{i}/{total}] {src.name}", flush=True)
 
     processed_names = png_names(processed_dir)
     if processed_names != input_names:
@@ -263,6 +293,7 @@ def generate_processed_ref(
     assets_root: Path = MAP_ASSETS_ROOT,
     processed_dir: Path = PROCESSED_REF,
     force: bool = False,
+    workers: int = IO_WORKERS,
 ) -> tuple[list[str], dict[str, str]]:
     """对 accepted 定位记录生成 ref 两路展开条带（观测 3ch / 参考 BGRA）。
 
@@ -290,25 +321,34 @@ def generate_processed_ref(
     preprocess_cache.remove_stamp(processed_dir)
     clear_pngs(processed_dir)
     clear_pngs(processed_dir / REF_SUBDIR)
-    assets: dict[Path, np.ndarray] = {}
-    for index, (name, record, asset_path) in enumerate(resolved, 1):
-        asset = assets.get(asset_path)
-        if asset is None:
-            asset = assets[asset_path] = load_reference_image(asset_path)
-        observed, reference = preprocess.strips(
-            observed_roi(load_source_bgr(raw_dir / name)),
-            preprocess.normalize_asset(asset),
+    # 每 zone 的底图只转一次 float32（逐样本整图 Cast 是热点）；采样语义仍在定义模块
+    prepared_assets: dict[Path, torch.Tensor] = {}
+
+    def load_observation(item: tuple[str, dict, Path]) -> np.ndarray:
+        return observed_roi(load_source_bgr(raw_dir / item[0]))
+
+    for index, ((name, record, asset_path), observed) in enumerate(
+        zip(resolved, _parallel_load(resolved, load_observation, workers), strict=True), 1
+    ):
+        asset_float = prepared_assets.get(asset_path)
+        if asset_float is None:
+            asset_float = prepared_assets[asset_path] = preprocess.prepare_asset(
+                load_reference_image(asset_path)
+            )
+        observed_strip, reference = preprocess.strips_prepared(
+            observed,
+            asset_float,
             float(record["x"]),
             float(record["y"]),
             record_scale(record),
         )
         observed_path, reference_path = processed_dir / name, processed_dir / REF_SUBDIR / name
-        if not cv2.imwrite(str(observed_path), observed):
+        if not cv2.imwrite(str(observed_path), observed_strip):
             raise RuntimeError(f"failed to write {observed_path}")
         if not cv2.imwrite(str(reference_path), reference):
             raise RuntimeError(f"failed to write {reference_path}")
         if index % 250 == 0 or index == len(resolved):
-            print(f"[{index}/{len(resolved)}] {name}")
+            print(f"[{index}/{len(resolved)}] {name}", flush=True)
 
     if png_names(processed_dir) != names or png_names(processed_dir / REF_SUBDIR) != names:
         raise RuntimeError("processed ref PNG names do not exactly match written samples")
@@ -350,7 +390,16 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="忽略 processed 缓存戳命中，强制重生成",
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=IO_WORKERS,
+        help=f"原始图解码的并行线程数（默认 {IO_WORKERS}=min(16, CPU 数)；1 = 串行）",
+    )
+    args = parser.parse_args()
+    if args.workers < 1:
+        parser.error("--workers must be >= 1")
+    return args
 
 
 def run_ref(
@@ -362,13 +411,14 @@ def run_ref(
     train_dir: Path = TRAIN_REF,
     val_dir: Path = VAL_REF,
     force: bool = False,
+    workers: int = IO_WORKERS,
 ) -> None:
     """ref 全管线：两路展开产物 -> manifest 划分 -> train/val 符号链接视图。"""
     raw_names = sorted(path.name for path in raw_dir.glob("*.png"))
     if not raw_names:
         raise SystemExit(f"no png found in {raw_dir}")
     processed_names, skipped = generate_processed_ref(
-        raw_dir, locate_path, assets_root, processed_dir, force
+        raw_dir, locate_path, assets_root, processed_dir, force, workers
     )
     train_names, val_names, manifest_skipped = accepted_split(
         processed_names, raw_names, manifest_path
@@ -394,9 +444,10 @@ def run_polar(
     train_dir: Path = TRAIN,
     val_dir: Path = VAL,
     force: bool = False,
+    workers: int = IO_WORKERS,
 ) -> None:
     """polar 全管线：极坐标展开落盘 -> manifest 划分 -> train/val 符号链接视图。"""
-    processed_names = generate_processed(raw_dir, processed_dir, force)
+    processed_names = generate_processed(raw_dir, processed_dir, force, workers)
     train_names, val_names = manifest_split(processed_names, manifest_path)
     if set(train_names) & set(val_names) or sorted(train_names + val_names) != processed_names:
         raise RuntimeError("train/validation split does not exactly cover processed files")
@@ -406,9 +457,9 @@ def run_polar(
 def main() -> None:
     args = parse_args()
     if args.mode == "ref":
-        run_ref(args.map_assets_root, force=args.force)
+        run_ref(args.map_assets_root, force=args.force, workers=args.workers)
         return
-    run_polar(force=args.force)
+    run_polar(force=args.force, workers=args.workers)
 
 
 if __name__ == "__main__":

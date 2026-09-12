@@ -109,6 +109,48 @@ def observed_strip(roi: np.ndarray) -> np.ndarray:
     return _to_uint8(sampled)[0].permute(1, 2, 0).numpy()
 
 
+def prepare_asset(asset: np.ndarray) -> torch.Tensor:
+    """3/4 通道资产（3 通道补 255 alpha）-> float32 NCHW `[1,4,H,W]`。
+
+    图内 GridSample 只接受 float32；逐样本转整图是数据生成的热点。同一底图要反复
+    采样时先 `prepare_asset` 一次，再逐样本调 `strips_prepared` 复用。
+    """
+    array = normalize_asset(asset)
+    return torch.from_numpy(array)[None].permute(0, 3, 1, 2).float()
+
+
+def _require_prepared(asset_float: torch.Tensor) -> torch.Tensor:
+    shape = getattr(asset_float, "shape", None)
+    if (
+        not isinstance(asset_float, torch.Tensor)
+        or asset_float.dtype != torch.float32
+        or asset_float.dim() != 4
+        or asset_float.shape[1] != 4
+    ):
+        raise ValueError(
+            "prepared asset must be a float32 NCHW tensor with 4 channels "
+            f"(a prepare_asset() output), got {type(asset_float).__name__} "
+            f"{getattr(asset_float, 'dtype', None)} {shape}"
+        )
+    return asset_float
+
+
+def _sample_asset_float(
+    asset_float: torch.Tensor, x: torch.Tensor, y: torch.Tensor, scale: torch.Tensor
+) -> torch.Tensor:
+    """float32 NCHW BGRA 资产 -> float32 NCHW 4 通道采样值（越界读 0 = 参考缺失）。"""
+    u, v = strip_roi_uv().unbind(-1)
+    au = x + (u - ROI_POLE[0]) * scale
+    av = y + (v - ROI_POLE[1]) * scale
+    return F.grid_sample(
+        asset_float,
+        _normalized(au, av, asset_float.shape[3], asset_float.shape[2]),
+        mode="bilinear",
+        padding_mode="zeros",
+        align_corners=False,
+    )
+
+
 def sample_asset(
     asset: torch.Tensor, x: torch.Tensor, y: torch.Tensor, scale: torch.Tensor
 ) -> torch.Tensor:
@@ -117,28 +159,19 @@ def sample_asset(
     资产坐标 = `(x, y) + (q_roi - ROI_POLE) * scale`：精确亚像素中心与精确 scale，
     图内不再做整数取整 / 中间裁剪窗 / 中间重采样。越界读 0（参考缺失）。
     """
-    u, v = strip_roi_uv().unbind(-1)
-    au = x + (u - ROI_POLE[0]) * scale
-    av = y + (v - ROI_POLE[1]) * scale
-    return F.grid_sample(
-        asset.permute(0, 3, 1, 2).float(),
-        _normalized(au, av, asset.shape[2], asset.shape[1]),
-        mode="bilinear",
-        padding_mode="zeros",
-        align_corners=False,
-    )
+    return _sample_asset_float(asset.permute(0, 3, 1, 2).float(), x, y, scale)
 
 
 def _batch_strips(
     minimap: torch.Tensor,
-    asset: torch.Tensor,
+    asset_float: torch.Tensor,
     x: torch.Tensor,
     y: torch.Tensor,
     scale: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """NHWC uint8 -> `(observed NHWC uint8, reference NHWC uint8)`，一张图一次前向。"""
+    """NHWC uint8 观测 + float32 NCHW 资产 -> `(observed, reference)` NHWC uint8。"""
     obs_float = sample_minimap(minimap)
-    sampled = sample_asset(asset, x, y, scale)
+    sampled = _sample_asset_float(asset_float, x, y, scale)
     rgb, alpha = sampled[:, :3], sampled[:, 3:4]
     weight = alpha / 255.0
     composed = rgb * weight + obs_float * (1.0 - weight)
@@ -153,14 +186,26 @@ def strips(
     """观测 ROI + BGRA 资产 -> `(obs 42x360x3, ref 42x360x4)` uint8 条带。
 
     数据生成、live 与 conformance 参考侧共用的唯一入口；资产须为 BGRA
-    （3 通道入口先过 `normalize_asset`）。
+    （3 通道入口先过 `normalize_asset`）。同一底图复用先 `prepare_asset`，
+    再走 `strips_prepared` 避免每样本整图 Cast（两入口逐字节等价）。
+    """
+    return strips_prepared(roi, prepare_asset(_require_bgra(asset)), x, y, scale)
+
+
+def strips_prepared(
+    roi: np.ndarray, asset_float: torch.Tensor, x: float, y: float, scale: float
+) -> tuple[np.ndarray, np.ndarray]:
+    """观测 ROI + `prepare_asset()` 产物 -> `(obs 42x360x3, ref 42x360x4)` uint8 条带。
+
+    与 `strips()` 逐字节等价；底图 float32 转换只做一次，供同一 zone 的批量数据生成
+    逐样本复用（图内 GridSample 只接受 float32，逐样本转整图是热点）。
     """
     roi = _require_roi(roi)
-    asset = _require_bgra(asset)
+    asset_float = _require_prepared(asset_float)
     with torch.no_grad():
         observed, reference = _batch_strips(
             torch.from_numpy(roi)[None],
-            torch.from_numpy(asset)[None],
+            asset_float,
             torch.tensor(float(x)),
             torch.tensor(float(y)),
             torch.tensor(float(scale)),
@@ -179,7 +224,7 @@ class PreprocessGraph(nn.Module):
         y: torch.Tensor,
         scale: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        return _batch_strips(minimap, asset, x, y, scale)
+        return _batch_strips(minimap, asset.permute(0, 3, 1, 2).float(), x, y, scale)
 
 
 def definition_hash() -> str:

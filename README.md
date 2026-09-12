@@ -25,7 +25,7 @@ uv run export_onnx.py --run-dir runs/<name>                            # 分类�
 
 `prepare_data.py` 是唯一的前处理脚本，一条命令完成 raw → 模型输入 → 划分（polar 或 ref）。验证集成员由 `data/val_manifest.json` 直接指定（val = 清单 ∩ processed，清单引用不存在的文件名则报错；train = 其余全部），清单由人维护，是运行脚本的前置条件。角度标签支持一位小数（如 `_r210.9.png`），训练目标保留浮点精度。
 
-每种模式各自维护自己的 processed / train / val 目录（processed 是否重写由缓存戳决定，见下）；只有 `data/raw` 与 `data/val_manifest.json` 永不被脚本改动。ref 模式的定位产物单独维护在 `data/locator/`（不随 `prepare_data.py` 清空）。processed 目录挂 `.preprocess.json` 缓存戳（定义哈希 + 图版本 + 输入指纹）：与当前定义一致且产物文件齐全时跳过重写，定义变更 / 样本或定位字段变更 / `--force` 时重生成；train/val 符号链接视图每次运行都重建。
+每种模式各自维护自己的 processed / train / val 目录（processed 是否重写由缓存戳决定，见下）；只有 `data/raw` 与 `data/val_manifest.json` 永不被脚本改动。ref 模式的定位产物单独维护在 `data/locator/`（不随 `prepare_data.py` 清空）。processed 目录挂 `.preprocess.json` 缓存戳（定义哈希 + 图版本 + 输入指纹）：与当前定义一致且产物文件齐全时跳过重写，定义变更 / 样本或定位字段变更 / `--force` 时重生成；train/val 符号链接视图每次运行都重建。原始图解码用线程池并行（`--workers`，默认 `min(16, CPU 数)`；`--workers 1` 串行），前处理与落盘仍在主线程串行，产物与串行路径逐字节一致。
 
 训练入口是控制台命令 `uv run train`，只负责训练：读取训练/验证目录，从不复制、移动或划分图像。全部训练参数集中在根目录 [`train.toml`](./train.toml)：每个键都有代码内默认值，文件明示当前基线，未知键硬报错。CLI 只保留调用管道：`--config`（默认 `train.toml`）、`--run-dir`（必填，run 产物目录）、`--device`（auto/cpu/cuda）、`--threads`（CPU 线程，默认 8）与 `--smoke`（正常路径只跑一个 epoch，用于验证流程，不能替代完整训练）。
 

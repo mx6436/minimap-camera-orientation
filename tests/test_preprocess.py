@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+import torch
 
 from endfield import preprocess
 
@@ -107,6 +108,37 @@ def test_normalize_asset_pads_three_channel_with_opaque_alpha() -> None:
     assert np.all(padded[..., 3] == 255)
     assert np.array_equal(padded[..., :3], rgb)
     assert preprocess.normalize_asset(padded) is padded
+
+
+def test_prepared_asset_matches_strips_on_the_same_input() -> None:
+    """预转资产 API 与逐样本入口逐字节等价（采样语义仍只有一份）。"""
+    rng = np.random.default_rng(7)
+    observed = rng.integers(0, 256, (preprocess.ROI_H, preprocess.ROI_W, 3), dtype=np.uint8)
+    asset = rng.integers(0, 256, (140, 160, 4), dtype=np.uint8)
+
+    prepared = preprocess.prepare_asset(asset)
+    obs_a, ref_a = preprocess.strips(observed, asset, 80.0, 70.0, 15.0 / 16.0)
+    obs_b, ref_b = preprocess.strips_prepared(observed, prepared, 80.0, 70.0, 15.0 / 16.0)
+
+    assert prepared.dtype == torch.float32
+    assert prepared.shape == (1, 4, 140, 160)
+    assert np.array_equal(obs_a, obs_b)
+    assert np.array_equal(ref_a, ref_b)
+
+
+def test_prepare_asset_normalizes_three_channel_entry() -> None:
+    rgb = np.full((4, 5, 3), 9, dtype=np.uint8)
+
+    prepared = preprocess.prepare_asset(rgb)
+
+    assert prepared.shape == (1, 4, 4, 5)
+    assert torch.all(prepared[:, :3] == 9.0)
+    assert torch.all(prepared[:, 3] == 255.0)
+
+
+def test_strips_prepared_rejects_non_prepared_asset() -> None:
+    with pytest.raises(ValueError, match="prepared asset"):
+        preprocess.strips_prepared(_roi(), torch.zeros(1, 3, 4, 4), 0.0, 0.0, 1.0)
 
 
 def test_strips_rejects_non_bgra_asset() -> None:

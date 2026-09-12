@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -131,6 +132,25 @@ def test_generate_processed_failure_does_not_leave_cache_stamp(tmp_path: Path) -
     write_raw(raw_dir, (RAWS[0],), value=11)
     prepare_data.generate_processed(raw_dir, processed_dir)
     assert np.all(imread_png(processed_dir / RAWS[0]) == 11)
+
+
+def test_generate_processed_matches_across_worker_counts(tmp_path: Path) -> None:
+    """并行解码只加速 I/O：workers=4 与 workers=1 的产物须逐字节一致。"""
+    raw_dir = tmp_path / "raw"
+    write_raw(raw_dir)
+    serial_dir, parallel_dir = tmp_path / "serial", tmp_path / "parallel"
+
+    assert prepare_data.generate_processed(raw_dir, serial_dir, workers=1) == (
+        prepare_data.generate_processed(raw_dir, parallel_dir, workers=4)
+    )
+
+    def digests(directory: Path) -> dict[str, str]:
+        return {
+            path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in sorted(directory.glob("*.png"))
+        }
+
+    assert digests(serial_dir) == digests(parallel_dir)
 
 
 def test_run_polar_applies_manifest_split(tmp_path: Path) -> None:
