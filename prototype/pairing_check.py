@@ -29,7 +29,7 @@ from pathlib import Path
 import numpy as np
 
 from endfield.data_utils import png_names
-from endfield.locate import accept, load_records, zone_asset_path
+from endfield.locate import accept, load_records, record_scale, zone_asset_path
 from endfield.polar import INNER_R, OUTER_R, load_source_bgr, unwrap
 from endfield.ref import (
     MAP_ASSETS_ROOT,
@@ -40,7 +40,6 @@ from endfield.ref import (
     observed_roi,
     reference_alpha_plane,
     reference_crop,
-    zone_scale,
 )
 from prototype.compare_real_samples import crop_oob, ort_strips
 from prototype.preprocess_variants import VARIANTS
@@ -190,7 +189,7 @@ def main() -> None:
         zone = str(record.get("zone", ""))
         asset = assets[zone]
         roi = observed_roi(load_source_bgr(RAW_DIR / name))
-        x, y, scale = float(record["x"]), float(record["y"]), zone_scale(zone)
+        x, y, scale = float(record["x"]), float(record["y"]), record_scale(record)
         current = current_strips(roi, black_cache[zone], alpha_cache[zone], x, y, scale)
         strips = {"current": current}
         for variant in VARIANTS:
@@ -355,7 +354,7 @@ def main() -> None:
             zone = str(record.get("zone", ""))
             asset = assets[zone]
             roi = observed_roi(load_source_bgr(RAW_DIR / name))
-            x, y, scale = float(record["x"]), float(record["y"]), zone_scale(zone)
+            x, y, scale = float(record["x"]), float(record["y"]), record_scale(record)
             obs_cur, ref_cur = current_strips(
                 roi, black_cache[zone], alpha_cache[zone], x, y, scale
             )

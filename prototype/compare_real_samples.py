@@ -27,7 +27,7 @@ import numpy as np
 import torch
 
 from endfield.data_utils import png_names
-from endfield.locate import accept, load_records, zone_asset_path
+from endfield.locate import accept, load_records, record_scale, zone_asset_path
 from endfield.polar import INNER_R, OUTER_R, load_source_bgr, unwrap
 from endfield.ref import (
     MAP_ASSETS_ROOT,
@@ -42,7 +42,6 @@ from endfield.ref import (
     reference_alpha_plane,
     reference_crop,
     reference_gap_fraction,
-    zone_scale,
 )
 from prototype.preprocess_variants import VARIANTS
 
@@ -149,16 +148,16 @@ def choose_samples(
         idx = rng.choice(len(names), size=min(keep, len(names)), replace=False)
         chosen.extend(names[i] for i in idx)
     # include out-of-bounds crops, but capped so they do not dominate the distribution
-    oob = [
-        name
-        for name in accepted
+    oob = []
+    for name in accepted:
+        record = records[name]
         if crop_oob(
-            assets[str(records[name].get("zone", ""))][0].shape,
-            float(records[name]["x"]),
-            float(records[name]["y"]),
-            zone_scale(str(records[name].get("zone", ""))),
-        )
-    ]
+            assets[str(record.get("zone", ""))][0].shape,
+            float(record["x"]),
+            float(record["y"]),
+            record_scale(record),
+        ):
+            oob.append(name)
     if len(oob) > limit // 4:
         oob = [oob[i] for i in rng.choice(len(oob), size=limit // 4, replace=False)]
     return sorted(set(chosen) | set(oob))
@@ -291,7 +290,7 @@ def main() -> None:
         zone = str(record_.get("zone", ""))
         asset, black, alpha_plane = assets[zone]
         roi = observed_roi(load_source_bgr(RAW_DIR / name))
-        x, y, scale = float(record_["x"]), float(record_["y"]), zone_scale(zone)
+        x, y, scale = float(record_["x"]), float(record_["y"]), record_scale(record_)
         obs, ref = current_strips(roi, black, alpha_plane, x, y, scale)
         full = ref_strip(roi, asset, x, y, scale)
         assert np.array_equal(obs, full[..., :3]) and np.array_equal(ref, full[..., 3:]), name
@@ -324,7 +323,7 @@ def main() -> None:
         zone = str(record_.get("zone", ""))
         asset, black, alpha_plane = assets[zone]
         roi = observed_roi(load_source_bgr(RAW_DIR / name))
-        x, y, scale = float(record_["x"]), float(record_["y"]), zone_scale(zone)
+        x, y, scale = float(record_["x"]), float(record_["y"]), record_scale(record_)
 
         t0 = time.perf_counter()
         obs_cur, ref_cur = current_strips(roi, black, alpha_plane, x, y, scale)
@@ -459,7 +458,7 @@ def main() -> None:
             zone = str(record_.get("zone", ""))
             asset, black, alpha_plane = assets[zone]
             roi = observed_roi(load_source_bgr(RAW_DIR / name))
-            x, y, scale = float(record_["x"]), float(record_["y"]), zone_scale(zone)
+            x, y, scale = float(record_["x"]), float(record_["y"]), record_scale(record_)
             if base == "current":
                 base_obs, base_ref = current_strips(roi, black, alpha_plane, x, y, scale)
             else:
