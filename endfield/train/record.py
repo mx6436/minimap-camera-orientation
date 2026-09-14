@@ -1,13 +1,18 @@
-"""run 档案（record.json）：复现一次训练所需的配置、环境与数据指纹快照。"""
+"""运行档案的写侧 adapter：训练配置与环境事实 -> RunRecord（核心字段 + 复现 metadata）。
+
+envelope 与核心字段由 `endfield/run_record.py` 持有并落盘；本模块只把训练侧的配置、
+环境与数据指纹翻译成 metadata。
+"""
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import torch
 
 from endfield.polar import IMG_H, IMG_W
-from endfield.train.data import input_channels
+from endfield.run_record import InputMode, RunRecord, input_channels
 
 
 def augmentation(config: dict[str, Any]) -> dict[str, Any]:
@@ -28,7 +33,7 @@ def augmentation(config: dict[str, Any]) -> dict[str, Any]:
 
 
 def input_representation(config: dict[str, Any]) -> str:
-    if config["input_mode"] == "ref":
+    if InputMode.parse(config["input_mode"]) is InputMode.REF:
         gap_filter = ""
         if config["max_ref_missing"] is not None:
             gap_filter = (
@@ -61,19 +66,19 @@ def build_record(
     val_count: int,
     train_sha256: str,
     val_sha256: str,
+    trainable_parameters: int,
     assets_root: str | None = None,
-) -> dict[str, Any]:
-    record: dict[str, Any] = {
-        "version": 31,
-        "target_sigma": config["target_sigma"],
+) -> RunRecord:
+    """配置、环境与数据指纹 -> 运行档案；ref 必须给出数据集所用的资产根。"""
+    mode = InputMode.parse(config["input_mode"])
+    metadata: dict[str, Any] = {
         "loss": (
             f"KL(q||p) between circular categorical distributions on Z/360Z, "
             f"q = wrapped gaussian pmf with sigma={config['target_sigma']:g} deg "
             "(= cross entropy minus constant target entropy H(q))"
         ),
-        "input_shape": [input_channels(config["input_mode"]), IMG_H, IMG_W],
+        "input_shape": [input_channels(mode), IMG_H, IMG_W],
         "input_scaling": "BGR uint8 / 255",
-        "input_mode": config["input_mode"],
         "input_representation": input_representation(config),
         "conv_padding_mode": "azimuth-circular; radius-zero (radius boundaries are ring-outside)",
         "seed": config["seed"],
@@ -82,7 +87,6 @@ def build_record(
         "precision": config["precision"],
         "compile": config["compile"],
         "model": "AzimuthNet",
-        "trainable_parameters": None,
         "batch_size": config["batch_size"],
         "max_epochs": config["epochs"],
         "optimizer": "AdamW",
@@ -103,13 +107,17 @@ def build_record(
         "train_files_sha256": train_sha256,
         "val_files_sha256": val_sha256,
     }
-    if config["input_mode"] == "ref":
+    if mode is InputMode.REF:
         if assets_root is None:
             raise SystemExit(
                 "ref record requires the dataset's reference assets root; "
                 "run prepare_data.py --mode ref to write the stamp"
             )
-        record["ref_reference_assets_root"] = assets_root
-        # 训练集参考缺失占比过滤阈值；null = 不过滤
-        record["max_ref_missing"] = config["max_ref_missing"]
-    return record
+        metadata["max_ref_missing"] = config["max_ref_missing"]
+    return RunRecord(
+        input_mode=mode,
+        assets_root=Path(assets_root) if assets_root is not None else None,
+        target_sigma=float(config["target_sigma"]),
+        trainable_parameters=trainable_parameters,
+        metadata=metadata,
+    )

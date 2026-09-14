@@ -8,7 +8,7 @@ from typing import Any
 import torch
 from torch import nn
 
-from endfield.data_utils import atomic_path
+from endfield.atomic_io import atomic_path
 from endfield.model import ARCH_VERSION
 
 ARTIFACT_NAMES = ("best.pt", "record.json", "history.json", "summary.json")

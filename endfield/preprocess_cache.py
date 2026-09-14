@@ -8,7 +8,7 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 
 from endfield import preprocess
-from endfield.data_utils import atomic_json_dump, load_json
+from endfield.atomic_io import atomic_json_dump, load_json
 
 STAMP_NAME = ".preprocess.json"
 STAMP_SCHEMA_VERSION = 1

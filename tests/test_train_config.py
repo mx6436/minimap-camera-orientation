@@ -1,12 +1,14 @@
-"""训练配置（input_mode）与输入模式→数据目录、run 档案的映射。"""
+"""训练配置（input_mode）与输入模式→数据目录、运行档案写侧 adapter。"""
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 import torch
 
+from endfield import run_record
 from endfield.train.config import load_config
 from endfield.train.data import (
     TRAIN_DIR,
@@ -86,7 +88,8 @@ def test_split_dirs_follows_input_mode() -> None:
 
 
 def build(config: dict, tmp_path: Path, assets_root: str | None = None) -> dict:
-    return build_record(
+    """跑通写侧 adapter 并落盘，返回 record.json 的 payload。"""
+    record = build_record(
         config,
         threads=8,
         device=torch.device("cpu"),
@@ -94,12 +97,18 @@ def build(config: dict, tmp_path: Path, assets_root: str | None = None) -> dict:
         val_count=1,
         train_sha256="a",
         val_sha256="b",
+        trainable_parameters=131169,
         assets_root=assets_root,
     )
+    run_dir = tmp_path / "run"
+    run_record.write(run_dir, record)
+    return json.loads((run_dir / "record.json").read_text(encoding="utf-8"))
 
 
 def test_record_declares_polar_representation_by_default(tmp_path: Path) -> None:
     record = build(load_config(write_config(tmp_path, "")), tmp_path)
+    assert record["version"] == run_record.SCHEMA_VERSION
+    assert record["trainable_parameters"] == 131169
     assert record["input_mode"] == "polar"
     assert record["input_representation"].startswith("polar_unwrap")
     assert record["input_shape"] == [3, 42, 360]

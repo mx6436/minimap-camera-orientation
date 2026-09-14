@@ -9,8 +9,9 @@ from typing import Any
 
 import torch
 
-from endfield import maplocator, preprocess_cache
-from endfield.data_utils import atomic_json_dump, png_names, seed_everything
+from endfield import maplocator, preprocess_cache, run_record
+from endfield.atomic_io import atomic_json_dump
+from endfield.data_utils import png_names, seed_everything
 from endfield.model import (
     AzimuthNet,
     choose_device,
@@ -24,7 +25,6 @@ from endfield.train.data import (
     PROCESSED_REF_DIR,
     AngleDataset,
     filter_reference_gap,
-    input_channels,
     make_loader,
     names_fingerprint,
     split_dirs,
@@ -86,7 +86,7 @@ def main() -> None:
     if not train_names or not val_names:
         raise SystemExit(f"missing {train_dir} or {val_dir} PNG files; run prepare_data.py first")
     assets_root = None
-    if config["input_mode"] == "ref":
+    if config["input_mode"] is run_record.InputMode.REF:
         assets_root = maplocator.assets_root_from_provenance(
             preprocess_cache.read_stamp(PROCESSED_REF_DIR)
         )
@@ -112,7 +112,7 @@ def main() -> None:
             "choose an empty --run-dir"
         )
 
-    model = AzimuthNet(in_channels=input_channels(config["input_mode"])).to(device)
+    model = AzimuthNet(in_channels=run_record.input_channels(config["input_mode"])).to(device)
     # compile 只包前向；checkpoint/优化器用原模型，state_dict 键不带 _orig_mod. 前缀
     compile_enabled = config["compile"] and not args.no_compile
     runtime_model = torch.compile(model) if compile_enabled else model
@@ -129,9 +129,9 @@ def main() -> None:
         len(val_names),
         names_fingerprint(train_names),
         names_fingerprint(val_names),
+        trainable_parameters=parameter_count,
         assets_root=assets_root,
     )
-    record["trainable_parameters"] = parameter_count
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=config["lr"], weight_decay=config["weight_decay"]
     )
@@ -169,7 +169,7 @@ def main() -> None:
     best_val = float("inf")
     bad_epochs = 0
     history: list[dict[str, float | int]] = []
-    atomic_json_dump(output_dir / "record.json", record)
+    run_record.write(output_dir, record)
     atomic_json_dump(output_dir / "history.json", {"epochs": history})
     max_epochs = 1 if args.smoke else config["epochs"]
     for epoch in range(max_epochs):

@@ -17,7 +17,7 @@ from typing import Any
 
 import numpy as np
 
-from endfield import preprocess
+from endfield import preprocess, run_record
 
 # 与 MaaEnd 运行时一致的 ORT 版本（pyproject dev 依赖固定）；版本不同证据作废。
 ORT_VERSION = "1.19.2"
@@ -29,6 +29,8 @@ ROI_H, ROI_W = preprocess.ROI_H, preprocess.ROI_W
 INPUT_NAMES = ("minimap", "asset", "x", "y", "scale")
 # 图输出角色：polar 模式只消费 observed；ref 模式另有 reference。
 OUTPUT_ROLES = ("observed", "reference")
+# 交付角色 -> 输入模式（本模块内的映射；bundle 侧同名映射待交付 module 收口）
+ROLE_MODES = {"polar": run_record.InputMode.POLAR, "polar_with_ref": run_record.InputMode.REF}
 
 # 默认容差剖面：uint8 条带按 ±1 LSB；pmf 按 float32 导出等价；缺口占比按 1 个百分点。
 DEFAULT_TOLERANCES: dict[str, float] = {
@@ -941,30 +943,25 @@ def _verify_classifier(
 
     import torch
 
-    from endfield.live import load_run_config
     from endfield.model import load_model
     from export_onnx import ExportWrapper, fold_input_conventions
 
-    run_config = load_run_config(Path(resolved_run))
-    expected_mode = "polar" if role == "polar" else "ref"
-    if run_config.input_mode != expected_mode:
+    record = run_record.read(Path(resolved_run))
+    expected_mode = ROLE_MODES[role]
+    if record.input_mode is not expected_mode:
         report.findings.append(
             Finding(
                 "warning",
                 "classifier_mode_mismatch",
-                f"{role}: run input_mode={run_config.input_mode!r}，跳过数值比对",
+                f"{role}: run input_mode={record.input_mode.value!r}，跳过数值比对",
             )
         )
         return
     net = load_model(checkpoint, device="cpu")
-    if net.in_channels != channels:
-        report.findings.append(
-            Finding(
-                "error",
-                "checkpoint_channels",
-                f"{role}: checkpoint in_channels={net.in_channels} != {channels}",
-            )
-        )
+    try:
+        run_record.validate_channels(record, net.in_channels)
+    except ValueError as error:
+        report.findings.append(Finding("error", "checkpoint_channels", f"{role}: {error}"))
         return
     fold_input_conventions(net)
     wrapper = ExportWrapper(net).eval()
@@ -1064,7 +1061,7 @@ def verify_bundle(
     if "preprocess" in required:
         _verify_preprocess(bundle_dir, manifest, scenarios, tolerances, report)
 
-    channels = {"polar": 3, "polar_with_ref": 7}
+    channels = {role: run_record.input_channels(mode) for role, mode in ROLE_MODES.items()}
     for role in required:
         if role in channels:
             _verify_classifier(

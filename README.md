@@ -30,7 +30,7 @@ uv run export_artifact.py --out runs/<name>/bundle --polar-run runs/<polar_run> 
 
 训练入口是控制台命令 `uv run train`，只负责训练：读取训练/验证目录，从不复制、移动或划分图像。全部训练参数集中在根目录 [`train.toml`](./train.toml)：每个键都有代码内默认值，文件明示当前基线，未知键硬报错。CLI 只保留调用管道：`--config`（默认 `train.toml`）、`--run-dir`（必填，run 产物目录）、`--device`（auto/cpu/cuda）、`--threads`（CPU 线程，默认 8）与 `--smoke`（正常路径只跑一个 epoch，用于验证流程，不能替代完整训练）。
 
-`train.toml` 的 `input_mode` 选择训练数据：`"polar"`（默认）读 `data/train`、`data/val`；`"ref"` 读 `data/train_ref`、`data/val_ref`。ref 数据的资产根不在配置里：`prepare_data.py --mode ref` 把它写进 `data/processed_ref` 的缓存戳，训练读戳并写入 run 的 `record.json`（`ref_reference_assets_root`），供实机推理读取；换资产根会触发数据重生成。ref 模式还可选 `max_ref_missing`（0~1）：训练集在读取时排除环内 `ref.A<255` 占比**严格大于**阈值的样本（等于阈值保留），val 不变；阈值一并写入 `record.json`。
+`train.toml` 的 `input_mode` 选择训练数据：`"polar"`（默认）读 `data/train`、`data/val`；`"ref"` 读 `data/train_ref`、`data/val_ref`。ref 数据的资产根不在配置里：`prepare_data.py --mode ref` 把它写进 `data/processed_ref` 的缓存戳，训练读戳并写入 run 的 `record.json`（`ref_reference_assets_root`），供实机推理读取；换资产根会触发数据重生成。运行档案的 schema 与输入模式词汇（合法模式、模式→输入通道数、资产根字段、旧档案默认）由 `endfield/run_record.py` 单点持有：训练经它写，实机与交付经它读，checkpoint 通道核对也在该 interface 上。ref 模式还可选 `max_ref_missing`（0~1）：训练集在读取时排除环内 `ref.A<255` 占比**严格大于**阈值的样本（等于阈值保留），val 不变；阈值一并写入 `record.json`。
 
 `endfield/preprocess.py` 是前处理的**唯一定义模块**（#25）：极坐标展开几何、参考采样与条带域合成、采样/取整约定都在这里，训练数据生成、`preprocess.onnx` 导出与 live 共用它。`export_preprocess.py --out <path>` 导出交付的前处理图（契约见图 metadata 与下节）：输入 `minimap` `[1,120,118,3]` uint8、`asset` `[1,H,W,4]` BGRA uint8（H/W 动态）、标量 `x`/`y`/`scale`，输出 `observed` `[1,42,360,3]` 与 `reference` `[1,42,360,4]` uint8；7 通道拼装留给消费方。
 

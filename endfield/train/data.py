@@ -11,7 +11,8 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 
 from endfield.data_utils import load_bgr, load_bgra, parse_angle
-from endfield.ref import REF_CHANNELS, REF_SUBDIR, assemble_ref_pair, reference_gap_fraction
+from endfield.ref import REF_SUBDIR, assemble_ref_pair, reference_gap_fraction
+from endfield.run_record import InputMode, input_channels
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TRAIN_DIR = REPO_ROOT / "data" / "train"
@@ -21,29 +22,15 @@ VAL_REF_DIR = REPO_ROOT / "data" / "val_ref"
 # ref 条带的落盘目录，train_ref / val_ref 是它的符号链接视图
 PROCESSED_REF_DIR = REPO_ROOT / "data" / "processed_ref"
 
-SPLIT_DIRS: dict[str, tuple[Path, Path]] = {
-    "polar": (TRAIN_DIR, VAL_DIR),
-    "ref": (TRAIN_REF_DIR, VAL_REF_DIR),
+SPLIT_DIRS: dict[InputMode, tuple[Path, Path]] = {
+    InputMode.POLAR: (TRAIN_DIR, VAL_DIR),
+    InputMode.REF: (TRAIN_REF_DIR, VAL_REF_DIR),
 }
 
-# 输入模式的通道数：ref 为 [obs.BGR, ref.BGR, ref.A]（见 endfield/ref.py）
-INPUT_CHANNELS: dict[str, int] = {"polar": 3, "ref": REF_CHANNELS}
 
-
-def split_dirs(input_mode: str) -> tuple[Path, Path]:
+def split_dirs(input_mode: InputMode | str) -> tuple[Path, Path]:
     """输入模式 -> (训练目录, 验证目录)。"""
-    try:
-        return SPLIT_DIRS[input_mode]
-    except KeyError:
-        raise ValueError(f"unknown input_mode: {input_mode!r}") from None
-
-
-def input_channels(input_mode: str) -> int:
-    """输入模式 -> AzimuthNet 首层通道数。"""
-    try:
-        return INPUT_CHANNELS[input_mode]
-    except KeyError:
-        raise ValueError(f"unknown input_mode: {input_mode!r}") from None
+    return SPLIT_DIRS[InputMode.parse(input_mode)]
 
 
 def filter_reference_gap(names: list[str], directory: Path, max_missing: float) -> list[str]:
@@ -67,20 +54,20 @@ class AngleDataset(Dataset):
         names: list[str],
         noise_augment: bool = False,
         roll_augment: bool = False,
-        input_mode: str = "polar",
+        input_mode: InputMode | str = InputMode.POLAR,
     ) -> None:
         self.directory = directory
         self.names = names
         self.noise_augment = noise_augment
         self.roll_augment = roll_augment
-        self.input_mode = input_mode
-        self.channels = input_channels(input_mode)
+        self.input_mode = InputMode.parse(input_mode)
+        self.channels = input_channels(self.input_mode)
 
     def __len__(self) -> int:
         return len(self.names)
 
     def _load(self, name: str) -> np.ndarray:
-        if self.input_mode == "ref":
+        if self.input_mode is InputMode.REF:
             observed = load_bgr(self.directory / name)
             reference = load_bgra(self.directory / REF_SUBDIR / name)
             return assemble_ref_pair(observed, reference)
@@ -93,7 +80,7 @@ class AngleDataset(Dataset):
         if array.shape[2] != self.channels:
             raise ValueError(
                 f"{name}: expected {self.channels} channels for input_mode "
-                f"{self.input_mode!r}, got {array.shape[2]}"
+                f"{self.input_mode.value!r}, got {array.shape[2]}"
             )
         if self.roll_augment:
             # 架构对角向平移精确等变，滚动后的样本严格有效；随机 δ 同时

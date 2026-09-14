@@ -27,6 +27,7 @@ from endfield.ref import (
     REF_SUBDIR,
     load_reference_image,
 )
+from endfield.run_record import InputMode
 
 ROOT = Path(__file__).resolve().parent
 TRAIN_RAW = ROOT / "data" / "train_raw"
@@ -350,8 +351,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--mode",
-        choices=("polar", "ref"),
-        default="polar",
+        choices=tuple(mode.value for mode in InputMode),
+        default=InputMode.POLAR.value,
         help=(
             "前处理模式：polar 极坐标展开（默认）；ref 参考输入"
             "（观测/参考各展开后并列，需先跑 locate_dataset.py）"

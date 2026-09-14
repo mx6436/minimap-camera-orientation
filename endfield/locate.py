@@ -26,7 +26,7 @@ from typing import Any
 import cv2
 import numpy as np
 
-from endfield.data_utils import atomic_path
+from endfield.atomic_io import atomic_path
 
 Record = dict[str, Any]
 

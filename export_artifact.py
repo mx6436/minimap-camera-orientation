@@ -28,8 +28,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from endfield import conformance as cf
-from endfield import preprocess
-from endfield.train.data import input_channels
+from endfield import preprocess, run_record
 from export_onnx import export as export_classifier
 from export_onnx import git_commit
 
@@ -90,16 +89,15 @@ def build_manifest(out_dir: Path, polar_run: Path, ref_run: Path) -> dict:
         }
     }
     for role, run_dir in (("polar", Path(polar_run)), ("polar_with_ref", Path(ref_run))):
-        record = _read_json(run_dir / "record.json")
+        record = run_record.read(run_dir)
         summary = _read_json(run_dir / "summary.json")
-        # 旧 run（version 27 及以前）无 input_mode 字段，按 polar 兼容（同 load_run_config）
-        mode = str(record.get("input_mode", "polar"))
+        mode = record.input_mode
         graphs[role] = {
             "file": GRAPH_FILES[role],
             "sha256": sha256_file(out_dir / GRAPH_FILES[role]),
             "run_dir": bundle_relative(run_dir, out_dir),
             "input_mode": mode,
-            "input_channels": input_channels(mode),
+            "input_channels": run_record.input_channels(mode),
             "metrics": {
                 "best_epoch": int(summary["epoch"]),
                 "val_count": int(summary["val_count"]),
@@ -226,7 +224,7 @@ def _check_graph(
             errors.append(f"{file_name}: 图 input_mode={metadata.get('input_mode')!r} != {mode!r}")
         if metadata.get("git_commit") != manifest.get("git_commit"):
             errors.append(f"{file_name}: 图 git_commit 与 manifest 不一致（旧图混入）")
-        expected_channels = input_channels(mode)
+        expected_channels = run_record.input_channels(mode)
         if spec.get("input_channels") != expected_channels:
             errors.append(f"graphs.{role}.input_channels != {expected_channels}")
         if _input_channels(model) != expected_channels:

@@ -11,8 +11,8 @@ import numpy as np
 import pytest
 
 import live
-from endfield.live import RunConfig
 from endfield.polar import IMG_H, IMG_W
+from endfield.run_record import InputMode, RunRecord
 
 FRAME = np.zeros((720, 1280, 3), dtype=np.uint8)
 
@@ -68,12 +68,16 @@ def _install_fake_maa(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setitem(sys.modules, name, module)
 
 
-def test_polar_main_composes_overlay(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_polar_main_composes_overlay(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     _install_fake_maa(monkeypatch)
-    monkeypatch.setattr(live, "load_run_config", lambda run_dir: RunConfig("polar", None))
-    monkeypatch.setattr(live, "load_model", lambda path, device: object())
+    monkeypatch.setattr(
+        live.run_record,
+        "read",
+        lambda run_dir: RunRecord(InputMode.POLAR, None, 3.0, 131169, {}),
+    )
+    monkeypatch.setattr(
+        live, "load_model", lambda path, device: types.SimpleNamespace(in_channels=3)
+    )
     monkeypatch.setattr(live, "choose_device", lambda device: "cpu")
     monkeypatch.setattr(
         live,

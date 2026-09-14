@@ -1,17 +1,15 @@
-"""live.py 的实机输入侧：run record 解析、帧基准缩放与 ref 参考配对构造。
+"""live.py 的实机输入侧：帧基准缩放与 ref 参考配对构造。
 
-- `load_run_config` 从 run 的 record.json 读 `input_mode`（旧 record 无 input_mode 时按
-  polar 兼容）与 ref 模式需要的 MapLocator 资产根；
 - `to_base_frame` 把任意分辨率帧缩回训练基准 720p（观测 ROI 因此回到 118x120，
   gamescope 当前 1280x720 为 1:1 直通）；
 - `ref_pair_at` 与 `prepare_data.py --mode ref` 走同一条前处理路径
   （定义模块 `endfield/preprocess.py` 的 `strip_pair()`）。
+
+运行档案（record.json）的读取与 checkpoint 通道核对在 `endfield/run_record.py`。
 """
 
 from __future__ import annotations
 
-import json
-from dataclasses import dataclass
 from pathlib import Path
 
 import cv2
@@ -22,11 +20,6 @@ from endfield.polar import BASE_SIZE
 from endfield.preprocess import observed_roi
 from endfield.ref import load_reference_image, ref_pair
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-INPUT_MODES = ("polar", "ref")
-# 各模式记录资产根的 record.json 字段
-ASSETS_ROOT_KEYS = {"ref": "ref_reference_assets_root"}
-
 
 class MissingZoneAsset(Exception):
     """MapLocator zone 找不到对应底图资产（实机按「定位不可用」处理，不中断）。"""
@@ -34,40 +27,6 @@ class MissingZoneAsset(Exception):
     def __init__(self, zone: str) -> None:
         super().__init__(f"no MapLocator asset for zone {zone!r}")
         self.zone = zone
-
-
-@dataclass(frozen=True)
-class RunConfig:
-    """run record.json 决定的实机输入配置；polar 不需要定位与资产。"""
-
-    input_mode: str
-    assets_root: Path | None
-
-
-def _resolve_assets_root(path: Path, record: dict, key: str) -> Path:
-    assets = record.get(key)
-    if not isinstance(assets, str) or not assets:
-        raise ValueError(f"{path}: ref run lacks {key}")
-    root = Path(assets)
-    if not root.is_absolute():
-        root = REPO_ROOT / root
-    return root
-
-
-def load_run_config(run_dir: Path) -> RunConfig:
-    path = run_dir / "record.json"
-    record = json.loads(path.read_text(encoding="utf-8"))
-    # version 27 及以前的 run（polar 唯一时期）没有 input_mode 字段，按 polar 兼容
-    input_mode = record.get("input_mode", "polar")
-    assets_key = ASSETS_ROOT_KEYS.get(input_mode)
-    if input_mode not in INPUT_MODES:
-        raise ValueError(f"{path}: unsupported input_mode {record.get('input_mode')!r}")
-    if input_mode == "polar":
-        return RunConfig(input_mode="polar", assets_root=None)
-    assert assets_key is not None
-    return RunConfig(
-        input_mode=input_mode, assets_root=_resolve_assets_root(path, record, assets_key)
-    )
 
 
 def to_base_frame(frame: np.ndarray) -> np.ndarray:

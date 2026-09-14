@@ -8,9 +8,10 @@ from typing import Any
 
 from endfield.data_utils import SEED
 from endfield.model import TARGET_SIGMA
+from endfield.run_record import InputMode
 
 CONFIG_DEFAULTS: dict[str, Any] = {
-    "input_mode": "polar",
+    "input_mode": InputMode.POLAR.value,
     "max_ref_missing": None,
     "batch_size": 128,
     "epochs": 200,
@@ -35,6 +36,7 @@ def load_config(path: Path) -> dict[str, Any]:
         raise SystemExit(f"unknown config keys in {path}: {', '.join(unknown)}")
     config = {**CONFIG_DEFAULTS, **values}
     validate_config(config)
+    config["input_mode"] = InputMode.parse(config["input_mode"])
     return config
 
 
@@ -55,11 +57,13 @@ def validate_config(config: dict[str, Any]) -> None:
         raise SystemExit('precision must be "fp32" or "bf16"')
     if not isinstance(config["compile"], bool):
         raise SystemExit("compile must be a boolean")
-    if config["input_mode"] not in ("polar", "ref"):
-        raise SystemExit('input_mode must be "polar" or "ref"')
+    try:
+        mode = InputMode.parse(config["input_mode"])
+    except ValueError as error:
+        raise SystemExit(str(error)) from None
     gap_limit = config["max_ref_missing"]
     if gap_limit is not None:
-        if config["input_mode"] != "ref":
+        if mode is not InputMode.REF:
             raise SystemExit('max_ref_missing requires input_mode "ref"')
         if (
             isinstance(gap_limit, bool)

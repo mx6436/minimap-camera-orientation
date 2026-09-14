@@ -1,6 +1,6 @@
 """MaaFw 实时截图 → 模型输入 → 摄像机角度预测 → 单窗口实时绘制。
 
-输入模式由 run 的 record.json 决定（见 endfield/live.py）：polar 每帧直接极坐标
+输入模式由 run 的 record.json 决定（见 endfield/run_record.py）：polar 每帧直接极坐标
 展开；ref 依赖 MapLocator 流式定位——定位跑在独立线程里（map-locate --stream
 常驻子进程，一帧路径进、一条 JSONL 出，跨帧不重置追踪状态），主循环只取最新结果，
 用参考底图裁出同视野参考，按 `[obs.BGR, ref.BGR, ref.A]` 拼接 7 通道张量后喂
@@ -36,16 +36,16 @@ import cv2
 import numpy as np
 
 import endfield.polar as polar
-from endfield import maplocator, preprocess
+from endfield import maplocator, preprocess, run_record
 from endfield.live import (
     MissingZoneAsset,
-    load_run_config,
     ref_pair_at,
     to_base_frame,
 )
 from endfield.locate import LocalizerStream, accept
 from endfield.model import choose_device, load_model, predict_probs
 from endfield.preprocess import observed_roi
+from endfield.run_record import InputMode
 
 DISPLAY_BOX = 108  # 外径 54 的外接正方形，720p 基准
 DISPLAY_SCALE = 6
@@ -270,9 +270,9 @@ def _ref_input_panel(strip: np.ndarray | None, label: str) -> np.ndarray:
     return panel
 
 
-def _model_input_panel(mode: str, strip: np.ndarray | None, label: str) -> np.ndarray:
+def _model_input_panel(mode: InputMode, strip: np.ndarray | None, label: str) -> np.ndarray:
     """按 run 的输入模式渲染「当前模型输入」一栏。"""
-    if mode == "ref":
+    if mode is InputMode.REF:
         return _ref_input_panel(strip, label)
     return _input_panel(strip, label)
 
@@ -458,12 +458,13 @@ def resolve_gamescope(instances: list, args: argparse.Namespace) -> tuple[int, s
 
 def main() -> None:
     args = parse_args()
-    run_config = load_run_config(args.run_dir)
-    mode = run_config.input_mode
-    localized_mode = mode == "ref"
+    record = run_record.read(args.run_dir)
+    mode = record.input_mode
+    localized_mode = mode is InputMode.REF
     device = choose_device(args.device)
     model = load_model(args.run_dir / "best.pt", device=device)
-    input_label = f"model input: {mode}"
+    run_record.validate_channels(record, model.in_channels)
+    input_label = f"model input: {mode.value}"
 
     try:
         from maa.controller import LinuxController
@@ -494,7 +495,7 @@ def main() -> None:
         raise RuntimeError(f"无法连接 gamescope 节点（status: {connection.status}）")
     print(f"connected: pw_node_id={node_id}, eis_socket={eis_socket}")
     if localized_mode:
-        print(f"input_mode={mode}, assets_root={run_config.assets_root}")
+        print(f"input_mode={mode.value}, assets_root={record.assets_root}")
 
     assets_cache: dict[Path, np.ndarray] = {}
     work_dir = tempfile.TemporaryDirectory(prefix="live-locator-")
@@ -530,7 +531,7 @@ def main() -> None:
 
             if localized_mode:
                 assert worker is not None
-                assert run_config.assets_root is not None
+                assert record.assets_root is not None
                 # 定位线程只管跑最新帧；主循环拿到什么画什么，不阻塞在定位上
                 worker.submit(to_base_frame(frame))
                 error = worker.error()
@@ -552,7 +553,7 @@ def main() -> None:
                             strip = ref_pair_at(
                                 localization.frame,
                                 localization.record,
-                                run_config.assets_root,
+                                record.assets_root,
                                 assets_cache,
                             )
                             angle, confidence, probs = predict_probs(model, strip)

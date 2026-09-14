@@ -25,24 +25,26 @@ from pathlib import Path
 import torch
 from torch import nn
 
-from endfield.live import load_run_config
+from endfield import run_record
 from endfield.model import load_model
 from endfield.polar import IMG_H as POLAR_H
 from endfield.polar import IMG_W as POLAR_W
-from endfield.train.data import input_channels
+from endfield.run_record import InputMode, RunRecord
 
 ROOT = Path(__file__).resolve().parent
 
 DESCRIPTIONS = {
-    "polar": "AzimuthNet: Endfield minimap camera angle classifier on polar-unwrapped ring strips",
-    "ref": (
+    InputMode.POLAR: (
+        "AzimuthNet: Endfield minimap camera angle classifier on polar-unwrapped ring strips"
+    ),
+    InputMode.REF: (
         "AzimuthNet: Endfield minimap camera angle classifier on reference-pair "
         "(observed + MapLocator reference + alpha) ring strips"
     ),
 }
 
 # 交付文件名：与 MaaEnd 布局（map/cameraorientation/）的约定一致
-OUTPUT_NAMES = {"polar": "polar.onnx", "ref": "polar_with_ref.onnx"}
+OUTPUT_NAMES = {InputMode.POLAR: "polar.onnx", InputMode.REF: "polar_with_ref.onnx"}
 
 POLAR_GEOMETRY = (
     "polar unwrap of the world-anchored minimap ring: angle->x (1 deg/column, clockwise, "
@@ -51,11 +53,11 @@ POLAR_GEOMETRY = (
 )
 
 INPUT_SPECS = {
-    "polar": (
+    InputMode.POLAR: (
         f"uint8 [1,42,360,3] NHWC BGR. {POLAR_GEOMETRY}. values in [0,255]; /255 is folded "
         "into the first convolution weights, HWC->CHW is a Transpose inside the graph"
     ),
-    "ref": (
+    InputMode.REF: (
         "uint8 [1,42,360,7] NHWC. Reference pair: channels = [obs.BGR, ref.BGR, ref.A]. "
         f"obs = {POLAR_GEOMETRY}. ref = MapLocator zone asset sampled once on the strip grid "
         "at (x,y)+(q_roi-pole)*scale with the zone's ZoneTemplateScale (ValleyIV_Base 15/16, "
@@ -97,16 +99,14 @@ def git_commit() -> str:
     return result.stdout.strip() if result.returncode == 0 else "unknown"
 
 
-def attach_metadata(
-    path: Path, record: dict, summary: dict, checkpoint: Path, input_mode: str
-) -> None:
+def attach_metadata(path: Path, record: RunRecord, summary: dict, checkpoint: Path) -> None:
     import onnx
 
     model = onnx.load(path)
     metadata = {
-        "description": DESCRIPTIONS[input_mode],
-        "input_mode": input_mode,
-        "input_spec": INPUT_SPECS[input_mode],
+        "description": DESCRIPTIONS[record.input_mode],
+        "input_mode": record.input_mode.value,
+        "input_spec": INPUT_SPECS[record.input_mode],
         "output_spec": (
             "float32 [1,360] discrete probability mass function over azimuth bins, softmax "
             "already applied (sums to 1). Bin j corresponds to azimuth j degrees clockwise "
@@ -116,8 +116,8 @@ def attach_metadata(
         "git_commit": git_commit(),
         "val_expected_abs_error_deg": f"{summary['val_expected_abs_error']:.6f}",
         "val_rms_error_deg": f"{summary['val_rms_error']:.6f}",
-        "target_sigma_deg": str(record["target_sigma"]),
-        "trainable_parameters": str(record["trainable_parameters"]),
+        "target_sigma_deg": str(record.target_sigma),
+        "trainable_parameters": str(record.trainable_parameters),
     }
     for key, value in metadata.items():
         entry = model.metadata_props.add()
@@ -144,24 +144,21 @@ def _validate_export(path: Path, channels: int) -> None:
 
 def export(checkpoint: Path, output: Path | None = None) -> Path:
     run_dir = checkpoint.parent
-    run_config = load_run_config(run_dir)
-    channels = input_channels(run_config.input_mode)
+    record = run_record.read(run_dir)
+    channels = run_record.input_channels(record.input_mode)
     net = load_model(checkpoint, device="cpu")
-    if net.in_channels != channels:
-        raise ValueError(
-            f"{checkpoint}: checkpoint has {net.in_channels} input channels but "
-            f"input_mode {run_config.input_mode!r} expects {channels}"
-        )
+    try:
+        run_record.validate_channels(record, net.in_channels)
+    except ValueError as error:
+        raise ValueError(f"{checkpoint}: {error}") from None
     fold_input_conventions(net)
     wrapper = ExportWrapper(net).eval()
 
-    with open(run_dir / "record.json") as f:
-        record = json.load(f)
     with open(run_dir / "summary.json") as f:
         summary = json.load(f)
 
     if output is None:
-        output = run_dir / OUTPUT_NAMES[run_config.input_mode]
+        output = run_dir / OUTPUT_NAMES[record.input_mode]
     output = Path(output)
     dummy = torch.zeros(1, POLAR_H, POLAR_W, channels, dtype=torch.uint8)
     torch.onnx.export(
@@ -173,9 +170,9 @@ def export(checkpoint: Path, output: Path | None = None) -> Path:
         output_names=["pmf"],
         external_data=False,
     )
-    attach_metadata(output, record, summary, checkpoint, run_config.input_mode)
+    attach_metadata(output, record, summary, checkpoint)
     _validate_export(output, channels)
-    print(f"exported: {output} (input_mode={run_config.input_mode}, channels={channels})")
+    print(f"exported: {output} (input_mode={record.input_mode.value}, channels={channels})")
     return output
 
 

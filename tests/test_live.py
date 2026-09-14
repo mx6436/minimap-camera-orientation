@@ -1,12 +1,11 @@
-"""live.py 实机输入侧的测试：run record 选模式、720p 基准缩放、条带与训练产物一致。
+"""live.py 实机输入侧的测试：720p 基准缩放与 ref 参考配对构造。
 
-`endfield/live.py` 是实机推理与训练前处理共用的输入侧；本地缺 MapLocator 资产或
-真实定位产物时，依赖它们的用例跳过。
+运行档案（record.json）的读取与输入模式词汇在 tests/test_run_record.py；本地缺
+MapLocator 资产或真实定位产物时，依赖它们的用例跳过。
 """
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import cv2
@@ -15,7 +14,6 @@ import pytest
 
 from endfield.live import (
     MissingZoneAsset,
-    load_run_config,
     ref_pair_at,
     to_base_frame,
 )
@@ -36,81 +34,6 @@ def real_raw_path(name: str) -> Path | None:
         if path.is_file():
             return path
     return None
-
-
-def write_record(run_dir: Path, record: dict) -> None:
-    (run_dir / "record.json").write_text(json.dumps(record), encoding="utf-8")
-
-
-def test_load_run_config_reads_polar_mode_without_assets(tmp_path: Path) -> None:
-    write_record(tmp_path, {"input_mode": "polar"})
-    config = load_run_config(tmp_path)
-    assert config.input_mode == "polar"
-    assert config.assets_root is None
-
-
-def test_load_run_config_defaults_missing_input_mode_to_polar(tmp_path: Path) -> None:
-    # version 27 及以前的 polar run 没有 input_mode 字段
-    write_record(tmp_path, {"version": 27})
-    config = load_run_config(tmp_path)
-    assert config.input_mode == "polar"
-    assert config.assets_root is None
-
-
-def test_load_run_config_resolves_relative_ref_assets_against_repo(tmp_path: Path) -> None:
-    write_record(
-        tmp_path,
-        {
-            "input_mode": "ref",
-            "ref_reference_assets_root": "local/maplocator/resource/image/MapLocator",
-        },
-    )
-    config = load_run_config(tmp_path)
-    assert config.input_mode == "ref"
-    assert (
-        config.assets_root
-        == REPO_ROOT / "local" / "maplocator" / "resource" / "image" / "MapLocator"
-    )
-
-
-def test_load_run_config_keeps_absolute_ref_assets(tmp_path: Path) -> None:
-    assets = tmp_path / "assets"
-    write_record(tmp_path, {"input_mode": "ref", "ref_reference_assets_root": str(assets)})
-    assert load_run_config(tmp_path).assets_root == assets
-
-
-def test_load_run_config_rejects_ref_without_assets_root(tmp_path: Path) -> None:
-    write_record(tmp_path, {"input_mode": "ref"})
-    with pytest.raises(ValueError, match="ref_reference_assets_root"):
-        load_run_config(tmp_path)
-
-
-def test_load_run_config_rejects_removed_pair_mode(tmp_path: Path) -> None:
-    write_record(
-        tmp_path,
-        {
-            "input_mode": "pair",
-            "pair_reference_assets_root": str(tmp_path / "assets"),
-            "pair_encoding": 2,
-        },
-    )
-    with pytest.raises(ValueError, match="unsupported input_mode"):
-        load_run_config(tmp_path)
-
-
-def test_load_run_config_rejects_unknown_mode(tmp_path: Path) -> None:
-    write_record(tmp_path, {"input_mode": "bogus"})
-    with pytest.raises(ValueError, match="input_mode"):
-        load_run_config(tmp_path)
-
-
-def test_load_run_config_rejects_removed_residual_mode(tmp_path: Path) -> None:
-    write_record(
-        tmp_path,
-        {"input_mode": "residual", "residual_reference_assets_root": "local/assets"},
-    )
-    with pytest.raises(ValueError, match="input_mode"):
-        load_run_config(tmp_path)
 
 
 def test_to_base_frame_scales_non_base_frames_to_720p() -> None:
