@@ -1,4 +1,5 @@
-"""对 data/raw 全量跑 MapLocator 批量定位，产出 data/locator/locate.jsonl。
+"""对 data/train_raw 与 data/val_raw 的并集全量跑 MapLocator 批量定位，产出
+data/locator/locate.jsonl。
 
 用法:
     uv run locate_dataset.py [--jobs 4] [--limit N] [--no-retry-failed]
@@ -17,9 +18,11 @@ import argparse
 import json
 import sys
 import time
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+from endfield.data_utils import union_png_samples
 from endfield.locate import (
     accept,
     load_records,
@@ -32,7 +35,7 @@ from endfield.locate import (
 )
 
 ROOT = Path(__file__).resolve().parent
-RAW_DIR = ROOT / "data" / "raw"
+RAW_DIRS = (ROOT / "data" / "train_raw", ROOT / "data" / "val_raw")
 OUT_DIR = ROOT / "data" / "locator"
 OUT_PATH = OUT_DIR / "locate.jsonl"
 SUMMARY_PATH = OUT_DIR / "summary.json"
@@ -59,7 +62,7 @@ def run_shards(
     cli: Path,
     resource_dir: Path,
     todo: list[str],
-    raw_dir: Path,
+    samples: Mapping[str, Path],
     jobs: int,
     parts_dir: Path,
 ) -> list[dict]:
@@ -69,7 +72,7 @@ def run_shards(
 
     def run_one(index: int, shard: list[str]) -> Path:
         part = parts_dir / f"part_{index:02d}.jsonl"
-        paths = [str(raw_dir / name) for name in shard]
+        paths = [str(samples[name]) for name in shard]
 
         def progress(count: int, total: int) -> None:
             print(f"  shard {index}: {count}/{total}", file=sys.stderr)
@@ -119,11 +122,12 @@ def main() -> None:
     if not args.resource_dir.is_dir():
         raise SystemExit(f"资源目录不存在: {args.resource_dir}")
 
-    names = sorted(path.name for path in RAW_DIR.glob("*.png"))
+    samples = union_png_samples(RAW_DIRS)
+    names = sorted(samples)
     if args.limit:
         names = names[: args.limit]
     if not names:
-        raise SystemExit(f"没有样本: {RAW_DIR}")
+        raise SystemExit(f"没有样本: {' / '.join(str(path) for path in RAW_DIRS)}")
 
     done = load_records(args.out)
     todo = pending_names(names, done, retry_failed=not args.no_retry_failed)
@@ -131,7 +135,7 @@ def main() -> None:
 
     if todo:
         new_records = run_shards(
-            args.cli, args.resource_dir, todo, RAW_DIR, args.jobs, args.out.parent / "parts"
+            args.cli, args.resource_dir, todo, samples, args.jobs, args.out.parent / "parts"
         )
         merged = merge_records(done.values(), new_records)
         for record in merged:

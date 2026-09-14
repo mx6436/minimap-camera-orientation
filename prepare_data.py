@@ -47,7 +47,7 @@ import numpy as np
 import torch
 
 from endfield import coord_filter, preprocess, preprocess_cache
-from endfield.data_utils import png_names
+from endfield.data_utils import png_names, union_png_samples
 from endfield.locate import accept, load_records, record_scale, zone_asset_path
 from endfield.polar import (
     IMG_H,
@@ -103,13 +103,7 @@ def clear_pngs(directory: Path) -> None:
 
 def raw_samples(train_raw_dir: Path = TRAIN_RAW, val_raw_dir: Path = VAL_RAW) -> dict[str, Path]:
     """两侧原始目录并集 -> {样本名: 源文件}；跨侧同名硬报错（划分不得泄漏）。"""
-    samples: dict[str, Path] = {}
-    for directory in (train_raw_dir, val_raw_dir):
-        for path in sorted(directory.glob("*.png")):
-            if path.name in samples:
-                raise SystemExit(f"sample name in both raw dirs: {path.name}")
-            samples[path.name] = path
-    return samples
+    return union_png_samples((train_raw_dir, val_raw_dir))
 
 
 def directory_split(

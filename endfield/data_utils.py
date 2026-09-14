@@ -5,7 +5,7 @@ import os
 import random
 import re
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -81,6 +81,17 @@ def load_json(path: Path) -> dict:
 
 def png_names(directory: Path) -> list[str]:
     return sorted(path.name for path in directory.glob("*.png"))
+
+
+def union_png_samples(directories: Iterable[Path]) -> dict[str, Path]:
+    """原始目录并集 -> {样本名: 源文件}；跨目录同名硬报错（划分不得泄漏）。"""
+    samples: dict[str, Path] = {}
+    for directory in directories:
+        for path in sorted(directory.glob("*.png")):
+            if path.name in samples:
+                raise SystemExit(f"sample name in both raw dirs: {path.name}")
+            samples[path.name] = path
+    return samples
 
 
 def seed_everything(seed: int = SEED) -> None:
