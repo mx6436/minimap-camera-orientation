@@ -26,9 +26,9 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 from endfield.polar import imread_png
+from placement.placement import Placement, zone_asset_path
 
 # 阈值单位 = 换算后资产帧的像素（MaaEnd 上游判据为「5 个单位」）
 MAX_DELTA = 5.0
@@ -112,9 +112,12 @@ def load_filter_data(zmdmap_root: Path, assets_root: Path) -> FilterData:
                 f"missing ZmdMap layout for {prefix}: {layout_path} "
                 "(mirror MaaEnd assets/data/ZmdMap/<prefix>_layout.json)"
             )
-        base_path = assets_root / region / "Base.png"
-        if not base_path.is_file():
-            raise FileNotFoundError(f"missing MapLocator base image: {base_path}")
+        base_path = zone_asset_path(f"{region}_Base", assets_root)
+        if base_path is None:
+            raise FileNotFoundError(
+                f"missing MapLocator base image for region {region} under {assets_root}"
+                " (mirror MaaEnd assets; see docs/maplocator-workspace.md)"
+            )
         layout = json.loads(layout_path.read_text(encoding="utf-8"))
         canvas_width = float(layout["canvas_width"])
         levels[prefix] = {
@@ -124,22 +127,19 @@ def load_filter_data(zmdmap_root: Path, assets_root: Path) -> FilterData:
     return FilterData(levels=levels, scales=scales)
 
 
-def _compare(x: float, y: float, record: Mapping[str, Any]) -> Decision:
-    delta = max(abs(x - float(record["x"])), abs(y - float(record["y"])))
+def _compare(x: float, y: float, placement: Placement) -> Decision:
+    delta = max(abs(x - placement.x), abs(y - placement.y))
     return Decision(delta <= MAX_DELTA, "" if delta <= MAX_DELTA else REASON_DELTA, delta)
 
 
-def evaluate(
-    annotation: Annotation, record: Mapping[str, Any], data: FilterData | None
-) -> Decision:
-    """标注与定位记录是否一致；record 是 locate.jsonl 的一条记录。
+def evaluate(annotation: Annotation, placement: Placement, data: FilterData | None) -> Decision:
+    """标注与底图定位是否一致；placement 取自同一条定位记录。
 
     同 zone 比较不需要 `data`；标注是 MapTracker 名时必须给出 `data`（换算依赖）。
     """
-    locator_zone = str(record.get("zone", ""))
-    if annotation.zone == locator_zone:
+    if annotation.zone == placement.zone:
         # 同一 zone = 同一资产帧，直接比坐标
-        return _compare(annotation.x, annotation.y, record)
+        return _compare(annotation.x, annotation.y, placement)
 
     match = TRACKER_RE.match(annotation.zone)
     if match is None:
@@ -151,9 +151,9 @@ def evaluate(
     region = PREFIX_REGION.get(prefix)
     if region is None:
         return Decision(False, REASON_UNSUPPORTED, None)
-    if locator_zone != f"{region}_Base":
+    if placement.zone != f"{region}_Base":
         return Decision(False, REASON_ZONE, None)
     base = data.base_position(annotation.zone, annotation.x, annotation.y)
     if base is None:
         return Decision(False, REASON_UNSUPPORTED, None)
-    return _compare(base[0], base[1], record)
+    return _compare(base[0], base[1], placement)

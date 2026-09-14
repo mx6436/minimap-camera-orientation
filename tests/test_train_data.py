@@ -9,8 +9,8 @@ import numpy as np
 import pytest
 import torch
 
-from endfield.polar import IMG_H, IMG_W
-from endfield.ref import REF_SUBDIR
+from endfield.dataset import REF_SUBDIR
+from endfield.preprocess import IMG_H, IMG_W
 from endfield.run_record import input_channels
 from endfield.train.data import AngleDataset, filter_reference_gap
 

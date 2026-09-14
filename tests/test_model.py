@@ -16,7 +16,7 @@ from endfield.model import (
     load_model,
     smoothed_targets,
 )
-from endfield.polar import IMG_H, IMG_W
+from endfield.preprocess import IMG_H, IMG_W
 
 
 def test_parameter_count_matches_expected() -> None:

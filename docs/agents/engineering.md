@@ -22,7 +22,14 @@ data/{train_raw,val_raw} ──locate_dataset.py(ref)──> data/locator
 - `endfield/preprocess.py` 是整帧 → 观测 ROI → 条带的唯一实现（CONTEXT.md「前处理定义」）：极坐标展开几何、参考采样与条带域合成、采样与取整约定都收在这里。训练数据、实机输入与交付的 `preprocess.onnx` 都经它，MaaEnd 侧只消费图。
 - 交付图的输入是观测 ROI，帧 → ROI 的裁剪由 MaaEnd 侧完成；图内做窗口优先裁剪（ADR 0001）。
 - `definition_hash` 是该文件内容 sha256：改动它 = 既有 `processed*` 缓存与旧 bundle 一次性判不同源，需重生成数据、重导出。定义相关的字节关键变换必须全部收在这一个文件里。
-- `tests/test_definition_ownership.py` 守卫这条边界。
+- `endfield/polar.py` 不转发几何常量：需要 `IMG_H`/`IMG_W` 等常量的调用方直接从前处理定义取，`polar.py` 只持帧解码、基准缩放与展示几何。
+- `tests/test_definition_ownership.py` 守卫这条边界（扫描面含各顶层包，并写死定义文件路径）。
+
+## 底图定位
+
+- `placement/placement.py` 的 `Placement` 是定位记录里被消费的那部分事实（`zone`/`x`/`y`/`scale`，CONTEXT.md「底图定位」）的唯一构造点：缺项与类型不符硬报错；定位失败的记录照常构造（zone 为空），拿不到资产在 `asset_path()` 返回 None。
+- `placement/sample.py` 的 `ReferenceSampler.strips(observed_roi, placement)` 是唯一采样入口：底图按资产路径只读一次、只转一次 float32，训练的「每 zone 复用」与实机的「每帧复用」是同一个实现。采样语义仍在定义模块。
+- 条带域之上（7 通道 `[obs.BGR, ref.BGR, ref.A]` 与参考缺失占比）在 `endfield/input_encoding.py`，训练读取与实机共用（ADR 0004）。
 
 ## 运行档案与输入模式
 
@@ -43,21 +50,32 @@ data/{train_raw,val_raw} ──locate_dataset.py(ref)──> data/locator
 
 ## 实机
 
-- `live.py` 从 run 的 `record.json` 取输入模式：polar 每帧经定义模块展开；ref 常驻 `map-locate --stream` 子进程（定位在独立线程，显示循环不阻塞），按 `(zone, x, y, scale)` 裁参考、合成 7 通道。定位不可用（失败 / held / 低分 / 资产缺失）时 overlay 显示等待态。`--snapshot` 在首个有效定位后存一张 overlay 并退出。
+- `live.py` 从 run 的 `record.json` 取输入模式：polar 每帧经定义模块展开；ref 常驻 `map-locate --stream` 子进程（定位在独立线程，显示循环不阻塞），由 `ReferenceSampler.strips` 出条带对、`assemble_ref_pair` 拼 7 通道。定位不可用（失败 / held / 低分 / 资产缺失）时 overlay 显示等待态。`--snapshot` 在首个有效定位后存一张 overlay 并退出。
 - 需要 gamescope 会话；ref 需要本地工作台 CLI 支持 `--stream`。
 
 ## 模块归属
 
+两个顶层包：`endfield/`（模型与训练侧）与 `placement/`（底图定位，即对 MapLocator 定位记录与本地工作台资产的消费面）。依赖方向单向 `placement → endfield`（ADR 0004）。
+
 | 模块 | 职责 |
 | --- | --- |
 | `endfield/preprocess.py` | 前处理定义（唯一实现） |
+| `endfield/polar.py` | 帧解码、基准缩放与展示几何 |
+| `endfield/input_encoding.py` | 张量编码：7 通道配对与参考缺失占比 |
+| `endfield/dataset.py` | 数据集布局（`data/` 树与参考子目录名） |
 | `endfield/train/` | 训练循环与配置 |
 | `endfield/model.py` | 网络与导出 wrapper |
 | `endfield/run_record.py` | 运行档案与输入模式词汇 |
 | `endfield/conformance.py` | 结构断言、定义哈希、参考实现 |
-| `endfield/coord_filter.py` | 坐标一致性过滤（上游换算，不拟合参数） |
-| `endfield/maplocator.py` | 本地工作台路径推导 |
+| `placement/records.py` | `locate.jsonl` 读写与集合操作 |
+| `placement/placement.py` | 底图定位（`Placement`）、入选门与失败分类 |
+| `placement/sample.py` | `ReferenceSampler`：底图定位 → 条带对（底图复用） |
+| `placement/locator.py` | `map-locate` 进程驱动（批量一轮 / `--stream`） |
+| `placement/workspace.py` | 本地工作台路径推导与 provenance |
+| `placement/coord_filter.py` | 坐标一致性过滤（上游换算，不拟合参数） |
 | `export_artifact.py` / `export_onnx.py` / `export_preprocess.py` | 交付导出 |
 | `verify_artifact.py` | conformance 校验入口 |
 | `live.py` | 实机推理与 overlay |
 | `tests/` | pytest，含定义 ownership 守卫 |
+
+CLI 脚本仍在仓库根；收进 `cli/` 包（并断掉 `conformance` ↔ `export_onnx` 的运行时互相 import）是下一步。

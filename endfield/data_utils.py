@@ -7,7 +7,8 @@ from pathlib import Path
 
 import numpy as np
 
-from endfield.polar import IMG_H, IMG_W, imread_png
+from endfield.polar import imread_png
+from endfield.preprocess import IMG_H, IMG_W
 
 ANGLE_RE = re.compile(r"_r(\d+(?:\.\d+)?)\.png$")
 SEED = 42

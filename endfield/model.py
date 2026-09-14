@@ -14,7 +14,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from endfield.polar import IMG_H, IMG_W
+from endfield.preprocess import IMG_H, IMG_W
 
 TARGET_SIGMA = 3.0
 REFINE_RADIUS = 5

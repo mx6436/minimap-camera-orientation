@@ -42,8 +42,16 @@ _Avoid_: 前处理工具、预处理脚本
 gitignored 的 `local/maplocator/`：MapLocator 定位 CLI 与 MaaEnd 资产的机器本地落点，也是本仓对 MaaEnd 的唯一依赖面。布局、CLI 契约与重建口径见 `docs/maplocator-workspace.md`。
 _Avoid_: 本地依赖、外部工具目录
 
+**定位记录 (Locate Record)**:
+MapLocator 对单张截图的一条输出（`locate.jsonl` 的一行）：状态、定位到的 zone、底图坐标与尺度、匹配分数、held 标记与耗时。定位失败同样是一条记录，只是其中没有可用的定位。
+_Avoid_: 定位结果、locate 行
+
+**底图定位 (Map Placement)**:
+从一条定位记录里取出的参考裁剪前提，四项同源、必须一起使用：定位到的 zone、该 zone 底图上的像素坐标 `(x, y)`、与该 zone 的尺度（`ZoneTemplateScale`，无缩放 zone 为 1.0）。尺度是裁剪参考底图的唯一真源——消费方不得自行镜像 zone → 尺度表。
+_Avoid_: 定位结果、坐标变换、位置
+
 **参考底图 (Reference Map)**:
-MapLocator 资产中的 zone 底图，按定位结果 `(x, y)` 提供与观测小地图同视野、同尺度的参考裁剪，用于构造参考配对（`ref` 模式）。`(x,y)` 在底图自身像素空间，tier zone 的底图就是切片本身；个别 zone 的底图相对观测有整体缩放（见 MapLocator 的 `ZoneTemplateScale`）。
+MapLocator 资产中的 zone 底图，按底图定位提供与观测小地图同视野、同尺度的参考裁剪，用于构造参考配对（`ref` 模式）。tier zone 的底图就是切片本身。
 _Avoid_: 地图资源、底图切片
 
 **参考配对 (Reference Pair)**:

@@ -21,7 +21,7 @@ dependencies = [
 train = "endfield.train.__main__:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["endfield"]
+packages = ["endfield", "placement"]
 
 [tool.ruff]
 line-length = 100

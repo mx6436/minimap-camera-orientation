@@ -26,7 +26,7 @@ local/maplocator/
 | `resource/image/MapLocator/` | `prepare_data.py --mode ref` 裁参考条带 | 路径写进 `processed_ref` 缓存戳 |
 | `data/ZmdMap/` | `prepare_data.py --mode ref` 的坐标一致性过滤 | 只在出现 MapTracker 命名样本时读取 |
 
-路径的具体推导（根目录 → 各叶子）在 `endfield/maplocator.py`；入口脚本对外只暴露一个
+路径的具体推导（根目录 → 各叶子）在 `placement/workspace.py`；入口脚本对外只暴露一个
 `--maplocator-root`（`prepare_data.py`、`locate_dataset.py`），探测失败时报错并指向本文。
 
 ## 来源与约束
@@ -116,11 +116,11 @@ map-locate --resource-dir <dir> --stream     # 帧路径从 stdin 逐行读，�
 | `attempts` | 该图实际 locate 调用次数（批量模式 1..N，流式恒 1） |
 | `accepted` / `accept_reason` | 不是 CLI 字段：`locate_dataset.py` 解析后写入的入选门标注 |
 
-早于 `b5aa2cd69` 的 CLI 不输出 `scale`，消费端（`endfield/locate.py` 的 `record_scale`）直接报错。
+早于 `b5aa2cd69` 的 CLI 不输出 `scale`，消费端（`placement/placement.py` 的 `Placement.from_record`）直接报错。
 
 ## 坐标一致性过滤的上游换算
 
-`endfield/coord_filter.py` 只用上游既有约定、不拟合参数，来源均为 MaaEnd：
+`placement/coord_filter.py` 只用上游既有约定、不拟合参数，来源均为 MaaEnd：
 
 - region ↔ map 前缀：`agent/go-service/maptracker/compatible/convert.go` 的
   `compatibleRegionMapPrefix`（map01↔ValleyIV、map02↔Wuling）；

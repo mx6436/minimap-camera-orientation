@@ -11,7 +11,7 @@ from typing import Any
 
 import torch
 
-from endfield.polar import IMG_H, IMG_W
+from endfield.preprocess import IMG_H, IMG_W
 from endfield.run_record import InputMode, RunRecord, input_channels
 
 

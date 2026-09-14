@@ -9,9 +9,10 @@ from typing import Any
 
 import torch
 
-from endfield import maplocator, preprocess_cache, run_record
+from endfield import preprocess_cache, run_record
 from endfield.atomic_io import atomic_json_dump
 from endfield.data_utils import png_names, seed_everything
+from endfield.dataset import PROCESSED_REF_DIR
 from endfield.model import (
     AzimuthNet,
     choose_device,
@@ -22,7 +23,6 @@ from endfield.model import (
 from endfield.train.artifacts import ARTIFACT_NAMES, plot_loss_curves, save_checkpoint
 from endfield.train.config import load_config
 from endfield.train.data import (
-    PROCESSED_REF_DIR,
     AngleDataset,
     filter_reference_gap,
     make_loader,
@@ -31,6 +31,7 @@ from endfield.train.data import (
 )
 from endfield.train.engine import eval_loss, train_epoch
 from endfield.train.record import build_record
+from placement import workspace
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG_PATH = REPO_ROOT / "train.toml"
@@ -87,7 +88,7 @@ def main() -> None:
         raise SystemExit(f"missing {train_dir} or {val_dir} PNG files; run prepare_data.py first")
     assets_root = None
     if config["input_mode"] is run_record.InputMode.REF:
-        assets_root = maplocator.assets_root_from_provenance(
+        assets_root = workspace.assets_root_from_provenance(
             preprocess_cache.read_stamp(PROCESSED_REF_DIR)
         )
     if config["max_ref_missing"] is not None:

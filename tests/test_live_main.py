@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 
 import live
-from endfield.polar import IMG_H, IMG_W
+from endfield.preprocess import IMG_H, IMG_W
 from endfield.run_record import InputMode, RunRecord
 
 FRAME = np.zeros((720, 1280, 3), dtype=np.uint8)

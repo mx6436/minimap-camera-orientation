@@ -1,6 +1,7 @@
 """小地图采集与显示几何：图像 I/O、帧基准缩放与 ROI 参数。
 
-`IMG_H` / `IMG_W` / `INNER_R` / `OUTER_R` 在此转发，供显示与数据校验使用。
+ROI 与条带几何（尺寸、内外径、中心）由前处理定义模块持有；本模块只 import 自用，
+不转发。需要这些常量的调用方直接 `from endfield.preprocess import ...`。
 """
 
 from __future__ import annotations
@@ -10,19 +11,15 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from endfield.preprocess import IMG_H, IMG_W, INNER_R, OUTER_R
-from endfield.preprocess import ROI_CENTER as _ROI_CENTER
+from endfield import preprocess
 
 __all__ = [
     "BASE_SIZE",
-    "IMG_H",
-    "IMG_W",
-    "INNER_R",
-    "OUTER_R",
     "PNG_MAGIC",
     "imread_png",
     "load_source_frame",
     "scaled_roi",
+    "to_base_frame",
 ]
 
 # 采集几何（训练数据采集的 720p 基准）；ROI 中心由前处理定义持有
@@ -53,6 +50,15 @@ def load_source_frame(path: Path) -> np.ndarray:
     return image
 
 
+def to_base_frame(frame: np.ndarray) -> np.ndarray:
+    """任意分辨率帧 -> 1280x720 训练基准；已是基准则原样返回（不复制）。"""
+    width, height = BASE_SIZE
+    if frame.shape[1] == width and frame.shape[0] == height:
+        return frame
+    interpolation = cv2.INTER_AREA if frame.shape[1] > width else cv2.INTER_LINEAR
+    return cv2.resize(frame, BASE_SIZE, interpolation=interpolation)
+
+
 def scaled_roi(frame_shape: tuple[int, int]) -> tuple[float, float, float, float]:
     """非基准帧的显示/采集几何：把 ROI 中心与内外径按帧尺寸等比缩放。"""
     height, width = frame_shape[:2]
@@ -60,5 +66,5 @@ def scaled_roi(frame_shape: tuple[int, int]) -> tuple[float, float, float, float
     # 非等比缩放会破坏环形状
     if abs(sx - sy) / max(sx, sy) > 0.01:
         print(f"WARNING: non-uniform scale sx={sx:.4f} sy={sy:.4f}; ring will be distorted")
-    cx, cy = _ROI_CENTER[0] * sx, _ROI_CENTER[1] * sy
-    return cx, cy, INNER_R * sx, OUTER_R * sx
+    cx, cy = preprocess.ROI_CENTER[0] * sx, preprocess.ROI_CENTER[1] * sy
+    return cx, cy, preprocess.INNER_R * sx, preprocess.OUTER_R * sx

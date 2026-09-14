@@ -36,16 +36,16 @@ import cv2
 import numpy as np
 
 import endfield.polar as polar
-from endfield import maplocator, preprocess, run_record
-from endfield.live import (
-    MissingZoneAsset,
-    ref_pair_at,
-    to_base_frame,
-)
-from endfield.locate import LocalizerStream, accept
+from endfield import preprocess, run_record
+from endfield.input_encoding import assemble_ref_pair
 from endfield.model import choose_device, load_model, predict_probs
-from endfield.preprocess import observed_roi
+from endfield.polar import to_base_frame
+from endfield.preprocess import IMG_H, IMG_W, OUTER_R, observed_roi
 from endfield.run_record import InputMode
+from placement import workspace
+from placement.locator import LocalizerStream
+from placement.placement import Placement, accept
+from placement.sample import MissingZoneAsset, ReferenceSampler
 
 DISPLAY_BOX = 108  # 外径 54 的外接正方形，720p 基准
 DISPLAY_SCALE = 6
@@ -211,15 +211,15 @@ def draw_distribution(probs: np.ndarray, angle: float, marker_color: tuple) -> n
 
 def _input_panel(strip: np.ndarray | None, label: str) -> np.ndarray:
     """模型输入一栏：标题 + 2x 最近邻放大的极坐标条带；无输入时留空。"""
-    width = polar.IMG_W * STRIP_SCALE
-    height = STRIP_LABEL_H + polar.IMG_H * STRIP_SCALE
+    width = IMG_W * STRIP_SCALE
+    height = STRIP_LABEL_H + IMG_H * STRIP_SCALE
     panel = np.zeros((height, width, 3), dtype=np.uint8)
     cv2.putText(panel, label, (4, 17), cv2.FONT_HERSHEY_SIMPLEX, 0.5, AXIS_COLOR, 1, cv2.LINE_AA)
     if strip is None:
         cv2.putText(
             panel,
             "no model input yet",
-            (16, STRIP_LABEL_H + polar.IMG_H),
+            (16, STRIP_LABEL_H + IMG_H),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.6,
             AXIS_COLOR,
@@ -227,15 +227,15 @@ def _input_panel(strip: np.ndarray | None, label: str) -> np.ndarray:
             cv2.LINE_AA,
         )
         return panel
-    big = cv2.resize(strip, (width, polar.IMG_H * STRIP_SCALE), interpolation=cv2.INTER_NEAREST)
+    big = cv2.resize(strip, (width, IMG_H * STRIP_SCALE), interpolation=cv2.INTER_NEAREST)
     panel[STRIP_LABEL_H:, :] = big
     return panel
 
 
 def _ref_input_panel(strip: np.ndarray | None, label: str) -> np.ndarray:
     """ref 模型输入一栏：obs.BGR / ref.BGR / ref.A 三个 2x 最近邻条带分行展示。"""
-    width = polar.IMG_W * STRIP_SCALE
-    row_h = polar.IMG_H * STRIP_SCALE
+    width = IMG_W * STRIP_SCALE
+    row_h = IMG_H * STRIP_SCALE
     height = STRIP_LABEL_H * (1 + len(REF_ROW_LABELS)) + row_h * len(REF_ROW_LABELS)
     panel = np.zeros((height, width, 3), dtype=np.uint8)
     cv2.putText(panel, label, (4, 17), cv2.FONT_HERSHEY_SIMPLEX, 0.5, AXIS_COLOR, 1, cv2.LINE_AA)
@@ -478,7 +478,7 @@ def main() -> None:
     locator_cli: Path | None = None
     locator_resource: Path | None = None
     if localized_mode:
-        locator_cli, locator_resource = maplocator.require_locator(stream=True)
+        locator_cli, locator_resource = workspace.require_locator(stream=True)
 
     node_id, eis_socket = resolve_gamescope(Toolkit.find_gamescope_instances(), args)
     controller = LinuxController(
@@ -497,7 +497,10 @@ def main() -> None:
     if localized_mode:
         print(f"input_mode={mode.value}, assets_root={record.assets_root}")
 
-    assets_cache: dict[Path, np.ndarray] = {}
+    sampler: ReferenceSampler | None = None
+    if localized_mode:
+        assert record.assets_root is not None
+        sampler = ReferenceSampler(Path(record.assets_root))
     work_dir = tempfile.TemporaryDirectory(prefix="live-locator-")
     worker: LocatorWorker | None = None
     printed_info = False
@@ -525,13 +528,12 @@ def main() -> None:
             if not printed_info:
                 print(
                     f"frame {frame.shape[1]}x{frame.shape[0]}, "
-                    f"ring outer radius = {r_out:.1f} px (scale x{r_out / polar.OUTER_R:.3f})"
+                    f"ring outer radius = {r_out:.1f} px (scale x{r_out / OUTER_R:.3f})"
                 )
                 printed_info = True
 
             if localized_mode:
-                assert worker is not None
-                assert record.assets_root is not None
+                assert worker is not None and sampler is not None
                 # 定位线程只管跑最新帧；主循环拿到什么画什么，不阻塞在定位上
                 worker.submit(to_base_frame(frame))
                 error = worker.error()
@@ -550,12 +552,11 @@ def main() -> None:
                             status += f" (locConf={value:.3f})"
                     elif localization is not ready_result:
                         try:
-                            strip = ref_pair_at(
-                                localization.frame,
-                                localization.record,
-                                record.assets_root,
-                                assets_cache,
+                            observed_strip, reference_strip = sampler.strips(
+                                observed_roi(localization.frame),
+                                Placement.from_record(localization.record),
                             )
+                            strip = assemble_ref_pair(observed_strip, reference_strip)
                             angle, confidence, probs = predict_probs(model, strip)
                         except MissingZoneAsset as exc:
                             status = f"localization unavailable: {exc.zone} asset missing"

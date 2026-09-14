@@ -12,33 +12,28 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-import torch
 
-from endfield import coord_filter, maplocator, preprocess, preprocess_cache
+from endfield import preprocess, preprocess_cache
 from endfield.data_utils import png_names, union_png_samples
-from endfield.locate import accept, load_records, record_scale, zone_asset_path
-from endfield.polar import (
-    IMG_H,
-    IMG_W,
-    imread_png,
-    load_source_frame,
-)
-from endfield.ref import (
+from endfield.dataset import (
+    LOCATE_PATH,
+    PROCESSED_DIR,
+    PROCESSED_REF_DIR,
     REF_SUBDIR,
-    load_reference_image,
+    TRAIN_DIR,
+    TRAIN_RAW_DIR,
+    TRAIN_REF_DIR,
+    VAL_DIR,
+    VAL_RAW_DIR,
+    VAL_REF_DIR,
 )
+from endfield.polar import imread_png, load_source_frame
+from endfield.preprocess import IMG_H, IMG_W
 from endfield.run_record import InputMode
-
-ROOT = Path(__file__).resolve().parent
-TRAIN_RAW = ROOT / "data" / "train_raw"
-VAL_RAW = ROOT / "data" / "val_raw"
-PROCESSED = ROOT / "data" / "processed"
-TRAIN = ROOT / "data" / "train"
-VAL = ROOT / "data" / "val"
-PROCESSED_REF = ROOT / "data" / "processed_ref"
-TRAIN_REF = ROOT / "data" / "train_ref"
-VAL_REF = ROOT / "data" / "val_ref"
-LOCATE_PATH = ROOT / "data" / "locator" / "locate.jsonl"
+from placement import coord_filter, workspace
+from placement.placement import Placement, accept
+from placement.records import load_records
+from placement.sample import ReferenceSampler
 
 # 原始截图解码（cv2.imread 释放 GIL）是管线大头：每张 ~10ms，而定义模块前处理 ~1ms。
 # 解码/ROI 提取按 CPU 数并行；定义模块调用始终在主线程串行，产物与 workers=1 逐字节一致。
@@ -66,7 +61,9 @@ def clear_pngs(directory: Path) -> None:
         path.unlink()
 
 
-def raw_samples(train_raw_dir: Path = TRAIN_RAW, val_raw_dir: Path = VAL_RAW) -> dict[str, Path]:
+def raw_samples(
+    train_raw_dir: Path = TRAIN_RAW_DIR, val_raw_dir: Path = VAL_RAW_DIR
+) -> dict[str, Path]:
     """两侧原始目录并集 -> {样本名: 源文件}。"""
     return union_png_samples((train_raw_dir, val_raw_dir))
 
@@ -85,7 +82,7 @@ def directory_split(
 
 def generate_processed(
     samples: Mapping[str, Path],
-    processed_dir: Path = PROCESSED,
+    processed_dir: Path = PROCESSED_DIR,
     force: bool = False,
     workers: int = IO_WORKERS,
 ) -> list[str]:
@@ -134,9 +131,9 @@ def generate_processed(
 def link_split(
     train_names: list[str],
     val_names: list[str],
-    train_dir: Path = TRAIN,
-    val_dir: Path = VAL,
-    processed_dir: Path = PROCESSED,
+    train_dir: Path = TRAIN_DIR,
+    val_dir: Path = VAL_DIR,
+    processed_dir: Path = PROCESSED_DIR,
     subdirs: tuple[str, ...] = (),
 ) -> None:
     """把划分后的样本链接到 train/val 目录；subdirs 是并行子树（ref 的 ref/）。"""
@@ -174,23 +171,17 @@ def accepted_records(locate_path: Path) -> tuple[dict[str, dict], dict[str, str]
     return accepted, skipped
 
 
-def ref_input_entries(resolved: list[tuple[str, dict, Path]]) -> list[str]:
-    """ref 前处理的输入指纹条目：样本名 + 它消费的定位字段（zone/x/y/scale）。
+def ref_input_entries(resolved: list[tuple[str, Placement]]) -> list[str]:
+    """ref 前处理的输入指纹条目：样本名 + 它消费的底图定位（zone/x/y/scale）。
 
     其他定位字段（latencyMs 等）不进指纹：重跑 locate_dataset.py 只刷新时间戳时
     不该触发数据重算；资产路径由 zone 决定，不另记。
     """
     entries = []
-    for name, record, _ in resolved:
+    for name, placement in resolved:
         entries.append(
             json.dumps(
-                [
-                    name,
-                    str(record.get("zone", "")),
-                    float(record["x"]),
-                    float(record["y"]),
-                    record_scale(record),
-                ],
+                [name, placement.zone, placement.x, placement.y, placement.scale],
                 ensure_ascii=True,
                 separators=(",", ":"),
             )
@@ -200,16 +191,15 @@ def ref_input_entries(resolved: list[tuple[str, dict, Path]]) -> list[str]:
 
 def _resolve_ref_inputs(
     accepted: dict[str, dict], assets_root: Path, skipped: dict[str, str]
-) -> list[tuple[str, dict, Path]]:
-    """accepted 记录 -> 可生成样本 (name, record, asset_path)；缺资产的计入 skipped。"""
-    resolved: list[tuple[str, dict, Path]] = []
+) -> list[tuple[str, Placement]]:
+    """accepted 记录 -> 可生成样本 (name, 底图定位)；缺资产的计入 skipped。"""
+    resolved: list[tuple[str, Placement]] = []
     for name in sorted(accepted):
-        record = accepted[name]
-        asset_path = zone_asset_path(str(record.get("zone", "")), assets_root)
-        if asset_path is None:
+        placement = Placement.from_record(accepted[name])
+        if placement.asset_path(assets_root) is None:
             skipped[name] = "asset_missing"
             continue
-        resolved.append((name, record, asset_path))
+        resolved.append((name, placement))
     return resolved
 
 
@@ -230,22 +220,22 @@ def _print_side_skips(
 
 
 def filter_coord_consistent(
-    resolved: list[tuple[str, dict, Path]], zmdmap_root: Path, assets_root: Path
-) -> tuple[list[tuple[str, dict, Path]], dict[str, str]]:
+    resolved: list[tuple[str, Placement]], zmdmap_root: Path, assets_root: Path
+) -> tuple[list[tuple[str, Placement]], dict[str, str]]:
     """标注坐标一致性过滤：返回 (保留样本, name -> 拒绝原因)。
 
     只在出现 MapTracker 命名样本时才读 ZmdMap/Base 换算数据（纯 zone 命名的数据集不需要镜像数据）。
     """
-    kept: list[tuple[str, dict, Path]] = []
+    kept: list[tuple[str, Placement]] = []
     rejected: dict[str, str] = {}
     data: coord_filter.FilterData | None = None
     for item in resolved:
-        name, record, _ = item
+        name, placement = item
         annotation = coord_filter.parse_annotation(name)
         if data is None and coord_filter.needs_conversion(annotation.zone):
-            maplocator.require_zmdmap(zmdmap_root)
+            workspace.require_zmdmap(zmdmap_root)
             data = coord_filter.load_filter_data(zmdmap_root, assets_root)
-        decision = coord_filter.evaluate(annotation, record, data)
+        decision = coord_filter.evaluate(annotation, placement, data)
         if decision.keep:
             kept.append(item)
         else:
@@ -257,7 +247,7 @@ def generate_processed_ref(
     samples: Mapping[str, Path],
     locate_path: Path = LOCATE_PATH,
     assets_root: Path | None = None,
-    processed_dir: Path = PROCESSED_REF,
+    processed_dir: Path = PROCESSED_REF_DIR,
     force: bool = False,
     workers: int = IO_WORKERS,
     zmdmap_root: Path | None = None,
@@ -271,9 +261,9 @@ def generate_processed_ref(
     """
     if not samples:
         raise SystemExit("no raw png samples in data/train_raw and data/val_raw")
-    assets = maplocator.require_assets(assets_root or maplocator.assets_root())
-    zmdmap = zmdmap_root or maplocator.zmdmap_root()
-    provenance = maplocator.provenance(assets)
+    assets = workspace.require_assets(assets_root or workspace.assets_root())
+    zmdmap = zmdmap_root or workspace.zmdmap_root()
+    provenance = workspace.provenance(assets)
     accepted, skipped = accepted_records(locate_path)
     accepted = {name: record for name, record in accepted.items() if name in samples}
     skipped = {name: reason for name, reason in skipped.items() if name in samples}
@@ -284,7 +274,7 @@ def generate_processed_ref(
     resolved, coord_rejected = filter_coord_consistent(resolved, zmdmap, assets)
     skipped.update(coord_rejected)
     entries = ref_input_entries(resolved)
-    names = [name for name, _, _ in resolved]
+    names = [name for name, _ in resolved]
     if (
         not force
         and png_names(processed_dir) == names
@@ -300,27 +290,16 @@ def generate_processed_ref(
     preprocess_cache.remove_stamp(processed_dir)
     clear_pngs(processed_dir)
     clear_pngs(processed_dir / REF_SUBDIR)
-    # 每 zone 的底图只转一次 float32（逐样本整图 Cast 是热点）；采样语义仍在定义模块
-    prepared_assets: dict[Path, torch.Tensor] = {}
+    # 底图按资产路径复用（只读一次、只转一次 float32），采样语义仍在定义模块
+    sampler = ReferenceSampler(assets)
 
-    def load_observation(item: tuple[str, dict, Path]) -> np.ndarray:
+    def load_observation(item: tuple[str, Placement]) -> np.ndarray:
         return preprocess.observed_roi(load_source_frame(samples[item[0]]))
 
-    for index, ((name, record, asset_path), observed) in enumerate(
+    for index, ((name, placement), observed) in enumerate(
         zip(resolved, _parallel_load(resolved, load_observation, workers), strict=True), 1
     ):
-        asset_float = prepared_assets.get(asset_path)
-        if asset_float is None:
-            asset_float = prepared_assets[asset_path] = preprocess.prepare_asset(
-                load_reference_image(asset_path)
-            )
-        observed_strip, reference = preprocess.strip_pair_prepared(
-            observed,
-            asset_float,
-            float(record["x"]),
-            float(record["y"]),
-            record_scale(record),
-        )
+        observed_strip, reference = sampler.strips(observed, placement)
         observed_path, reference_path = processed_dir / name, processed_dir / REF_SUBDIR / name
         if not cv2.imwrite(str(observed_path), observed_strip):
             raise RuntimeError(f"failed to write {observed_path}")
@@ -361,10 +340,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--maplocator-root",
         type=Path,
-        default=maplocator.WORKSPACE_ROOT,
+        default=workspace.WORKSPACE_ROOT,
         help=(
             "本地 MapLocator 工作台根目录（布局、CLI 契约与重建见 "
-            f"{maplocator.DOC_PATH}）；ref 模式消费其中的 resource/image/MapLocator "
+            f"{workspace.DOC_PATH}）；ref 模式消费其中的 resource/image/MapLocator "
             "与 data/ZmdMap"
         ),
     )
@@ -387,12 +366,12 @@ def parse_args() -> argparse.Namespace:
 
 def run_ref(
     assets_root: Path,
-    train_raw_dir: Path = TRAIN_RAW,
-    val_raw_dir: Path = VAL_RAW,
+    train_raw_dir: Path = TRAIN_RAW_DIR,
+    val_raw_dir: Path = VAL_RAW_DIR,
     locate_path: Path = LOCATE_PATH,
-    processed_dir: Path = PROCESSED_REF,
-    train_dir: Path = TRAIN_REF,
-    val_dir: Path = VAL_REF,
+    processed_dir: Path = PROCESSED_REF_DIR,
+    train_dir: Path = TRAIN_REF_DIR,
+    val_dir: Path = VAL_REF_DIR,
     force: bool = False,
     workers: int = IO_WORKERS,
     zmdmap_root: Path | None = None,
@@ -429,11 +408,11 @@ def run_ref(
 
 
 def run_polar(
-    train_raw_dir: Path = TRAIN_RAW,
-    val_raw_dir: Path = VAL_RAW,
-    processed_dir: Path = PROCESSED,
-    train_dir: Path = TRAIN,
-    val_dir: Path = VAL,
+    train_raw_dir: Path = TRAIN_RAW_DIR,
+    val_raw_dir: Path = VAL_RAW_DIR,
+    processed_dir: Path = PROCESSED_DIR,
+    train_dir: Path = TRAIN_DIR,
+    val_dir: Path = VAL_DIR,
     force: bool = False,
     workers: int = IO_WORKERS,
 ) -> None:
@@ -451,10 +430,10 @@ def main() -> None:
     args = parse_args()
     if args.mode == "ref":
         run_ref(
-            maplocator.assets_root(args.maplocator_root),
+            workspace.assets_root(args.maplocator_root),
             force=args.force,
             workers=args.workers,
-            zmdmap_root=maplocator.zmdmap_root(args.maplocator_root),
+            zmdmap_root=workspace.zmdmap_root(args.maplocator_root),
         )
         return
     run_polar(force=args.force, workers=args.workers)

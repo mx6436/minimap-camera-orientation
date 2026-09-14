@@ -27,8 +27,8 @@ from torch import nn
 
 from endfield import run_record
 from endfield.model import load_model
-from endfield.polar import IMG_H as POLAR_H
-from endfield.polar import IMG_W as POLAR_W
+from endfield.preprocess import IMG_H as POLAR_H
+from endfield.preprocess import IMG_W as POLAR_W
 from endfield.run_record import InputMode, RunRecord
 
 ROOT = Path(__file__).resolve().parent

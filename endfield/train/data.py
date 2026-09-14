@@ -11,16 +11,15 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 
 from endfield.data_utils import load_bgr, load_bgra, parse_angle
-from endfield.ref import REF_SUBDIR, assemble_ref_pair, reference_gap_fraction
+from endfield.dataset import (
+    REF_SUBDIR,
+    TRAIN_DIR,
+    TRAIN_REF_DIR,
+    VAL_DIR,
+    VAL_REF_DIR,
+)
+from endfield.input_encoding import assemble_ref_pair, reference_gap_fraction
 from endfield.run_record import InputMode, input_channels
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-TRAIN_DIR = REPO_ROOT / "data" / "train"
-VAL_DIR = REPO_ROOT / "data" / "val"
-TRAIN_REF_DIR = REPO_ROOT / "data" / "train_ref"
-VAL_REF_DIR = REPO_ROOT / "data" / "val_ref"
-# ref 条带的落盘目录，train_ref / val_ref 是它的符号链接视图
-PROCESSED_REF_DIR = REPO_ROOT / "data" / "processed_ref"
 
 SPLIT_DIRS: dict[InputMode, tuple[Path, Path]] = {
     InputMode.POLAR: (TRAIN_DIR, VAL_DIR),

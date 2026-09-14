@@ -22,24 +22,22 @@ from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from endfield import maplocator
 from endfield.data_utils import union_png_samples
-from endfield.locate import (
-    accept,
+from endfield.dataset import LOCATE_PATH, LOCATE_SUMMARY_PATH, TRAIN_RAW_DIR, VAL_RAW_DIR
+from placement import workspace
+from placement.locator import run_cli
+from placement.placement import accept, summarize
+from placement.records import (
     load_records,
     merge_records,
     pending_names,
-    run_cli,
     split_shards,
-    summarize,
     write_jsonl,
 )
 
-ROOT = Path(__file__).resolve().parent
-RAW_DIRS = (ROOT / "data" / "train_raw", ROOT / "data" / "val_raw")
-OUT_DIR = ROOT / "data" / "locator"
-OUT_PATH = OUT_DIR / "locate.jsonl"
-SUMMARY_PATH = OUT_DIR / "summary.json"
+RAW_DIRS = (TRAIN_RAW_DIR, VAL_RAW_DIR)
+OUT_PATH = LOCATE_PATH
+SUMMARY_PATH = LOCATE_SUMMARY_PATH
 
 
 def parse_args() -> argparse.Namespace:
@@ -49,8 +47,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--maplocator-root",
         type=Path,
-        default=maplocator.WORKSPACE_ROOT,
-        help=f"本地 MapLocator 工作台根目录（布局、CLI 契约与重建见 {maplocator.DOC_PATH}）",
+        default=workspace.WORKSPACE_ROOT,
+        help=f"本地 MapLocator 工作台根目录（布局、CLI 契约与重建见 {workspace.DOC_PATH}）",
     )
     parser.add_argument("--out", type=Path, default=OUT_PATH, help="产物 JSONL 路径")
     parser.add_argument("--jobs", type=int, default=4, help="并行定位进程数")
@@ -118,7 +116,7 @@ def print_summary(summary: dict) -> None:
 
 def main() -> None:
     args = parse_args()
-    cli, resource_dir = maplocator.require_locator(args.maplocator_root)
+    cli, resource_dir = workspace.require_locator(args.maplocator_root)
 
     samples = union_png_samples(RAW_DIRS)
     names = sorted(samples)

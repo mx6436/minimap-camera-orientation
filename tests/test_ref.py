@@ -17,18 +17,18 @@ import numpy as np
 import pytest
 
 import prepare_data
-from endfield import maplocator, preprocess, preprocess_cache
-from endfield.locate import accept, load_records, record_scale, write_jsonl, zone_asset_path
-from endfield.polar import IMG_H, IMG_W, imread_png, load_source_frame
-from endfield.preprocess import observed_roi
-from endfield.ref import (
-    REF_CHANNELS,
-    REF_SUBDIR,
-    assemble_ref_pair,
-    load_reference_image,
-    ref_pair,
-    reference_gap_fraction,
-)
+from endfield import preprocess, preprocess_cache
+from endfield.dataset import REF_SUBDIR
+from endfield.input_encoding import assemble_ref_pair, reference_gap_fraction
+from endfield.polar import imread_png, load_source_frame
+from endfield.preprocess import IMG_H, IMG_W, observed_roi
+from endfield.run_record import InputMode, input_channels
+from placement import workspace
+from placement.placement import Placement, accept
+from placement.records import load_records, write_jsonl
+from placement.sample import ReferenceSampler, load_reference_image
+
+REF_CHANNELS = input_channels(InputMode.REF)
 
 
 def test_load_reference_image_reads_bgra_png(tmp_path: Path) -> None:
@@ -44,28 +44,20 @@ def test_reference_gap_fraction_counts_any_alpha_below_255() -> None:
     assert reference_gap_fraction(reference) == pytest.approx(3 / 4)
 
 
-def test_ref_pair_normalizes_three_channel_asset_at_the_entry() -> None:
-    observed = np.zeros((preprocess.ROI_H, preprocess.ROI_W, 3), dtype=np.uint8)
+def test_sampler_treats_three_channel_asset_as_fully_opaque(tmp_path: Path) -> None:
+    """3 通道资产在采样入口按完全不透明处理（补 255 alpha）。"""
+    (tmp_path / "Test").mkdir()
     asset = np.full((200, 200, 3), 9, dtype=np.uint8)
+    assert cv2.imwrite(str(tmp_path / "Test" / "Base.png"), asset)
+    observed = np.zeros((preprocess.ROI_H, preprocess.ROI_W, 3), dtype=np.uint8)
 
-    ref = ref_pair(observed, asset, 100.0, 100.0)
+    observed_strip, reference = ReferenceSampler(tmp_path).strips(
+        observed, Placement(zone="Test_Base", x=100.0, y=100.0, scale=1.0)
+    )
 
-    assert ref.shape == (IMG_H, IMG_W, REF_CHANNELS)
-    assert np.all(ref[..., 6] == 255)  # 3 通道资产按完全不透明处理
-
-
-def test_ref_pair_copies_observed_channel_where_reference_is_missing() -> None:
-    rng = np.random.default_rng(8)
-    asset = rng.integers(0, 256, (200, 200, 4), dtype=np.uint8)
-    asset[:, 90:110, 3] = 0
-    observed = rng.integers(0, 256, (preprocess.ROI_H, preprocess.ROI_W, 3), dtype=np.uint8)
-
-    ref = ref_pair(observed, asset, 100.0, 100.0)
-    alpha = ref[..., 6]
-
-    assert np.any(alpha == 0)
-    # 参考缺失处 ref.BGR 逐像素等于 obs.BGR
-    assert np.array_equal(ref[..., 3:6][alpha == 0], ref[..., :3][alpha == 0])
+    assert observed_strip.shape == (IMG_H, IMG_W, 3)
+    assert reference.shape == (IMG_H, IMG_W, 4)
+    assert np.all(reference[..., 3] == 255)
 
 
 def test_assemble_ref_pair_concatenates_channels_in_spec_order() -> None:
@@ -537,7 +529,7 @@ def real_raw_path(name: str) -> Path | None:
 
 
 @pytest.mark.skipif(
-    not REAL_LOCATE_PATH.exists() or not maplocator.assets_root().is_dir(),
+    not REAL_LOCATE_PATH.exists() or not workspace.assets_root().is_dir(),
     reason="real MapLocator locate.jsonl / assets not available",
 )
 def test_real_accepted_sample_builds_ref_pair() -> None:
@@ -548,13 +540,14 @@ def test_real_accepted_sample_builds_ref_pair() -> None:
             break
     else:
         pytest.skip("no accepted real sample with a raw png and _L zone")
-    zone = str(record["zone"])
-    asset_path = zone_asset_path(zone, maplocator.assets_root())
-    assert asset_path is not None
-    x, y = float(record["x"]), float(record["y"])
+    placement = Placement.from_record(record)
+    assert placement.asset_path(workspace.assets_root()) is not None
     observed = observed_roi(load_source_frame(raw_path))
 
-    ref = ref_pair(observed, load_reference_image(asset_path), x, y, record_scale(record))
+    observed_strip, reference_strip = ReferenceSampler(workspace.assets_root()).strips(
+        observed, placement
+    )
+    ref = assemble_ref_pair(observed_strip, reference_strip)
     alpha = ref[..., 6]
 
     assert ref.shape == (IMG_H, IMG_W, REF_CHANNELS)
