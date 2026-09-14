@@ -19,7 +19,8 @@ import numpy as np
 
 from endfield.locate import record_scale, zone_asset_path
 from endfield.polar import BASE_SIZE
-from endfield.ref import load_reference_image, observed_roi, ref_strip
+from endfield.preprocess import observed_roi
+from endfield.ref import load_reference_image, ref_strip
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 INPUT_MODES = ("polar", "ref")

@@ -1,4 +1,4 @@
-"""前处理定义模块：条带几何、双线性采样与参考合成。
+"""前处理定义模块：整帧到观测 ROI 的几何、条带几何、双线性采样与参考合成。
 
 观测：在 118x120 观测 ROI 上按条带网格一次双线性采样（`padding_mode="border"`）。
 参考：先由 `(x, y, scale)` 与条带几何裁出覆盖全部采样点及双线性支撑的采样窗（裁到
@@ -8,7 +8,8 @@
 合成在条带域一次完成：`ref.BGR = rgb * (a/255) + obs * (1 - a/255)`；每个输出一次
 Round（半偶）+ Cast 回 uint8。
 
-几何约定：极点 = ROI 内 (59.0, 60.0) 像素中心；角度 -> x 轴，第 j 列的像素中心对应
+几何约定：720p 基准帧以 (108.0, 111.0) 为中心裁出 118x120 观测 ROI；极点 = ROI 内
+(59.0, 60.0) 像素中心；角度 -> x 轴，第 j 列的像素中心对应
 方位角 j 度（正北 = 列 0，顺时针为正）；半径 -> y 轴，第 i 行对应
 `r_in + (i + 0.5) * step`（内径在上），基准下 `r_in = 12`、`r_out = 54`、`step = 1`，
 条带 42x360。
@@ -27,6 +28,7 @@ from torch import nn
 # ROI 几何（720p 基准下 MapLocator 的小地图 ROI）
 ROI_W, ROI_H = 118, 120
 ROI_POLE = (59.0, 60.0)
+ROI_CENTER = (108.0, 111.0)
 INNER_R, OUTER_R = 12.0, 54.0
 # 输出条带：42 行（半径）× 360 列（1 度/列）
 IMG_H, IMG_W = 42, 360
@@ -64,6 +66,31 @@ def _require_roi(roi: np.ndarray) -> np.ndarray:
         raise ValueError(
             f"minimap ROI must be uint8 {ROI_H}x{ROI_W}x3 (HxWxBGR), got {roi.dtype} {roi.shape}"
         )
+    return roi
+
+
+def observed_roi(frame: np.ndarray) -> np.ndarray:
+    """720p 基准整帧（BGR 或 BGRA uint8）-> 118x120 BGR 观测 ROI。
+
+    4 通道输入先对 ROI 内的全透明像素清零 RGB 再丢 alpha；不改写调用方数组。
+    """
+    frame = np.asarray(frame)
+    if frame.dtype != np.uint8 or frame.ndim != 3 or frame.shape[2] not in (3, 4):
+        raise ValueError(
+            f"frame must be uint8 HxWx3 or HxWx4 (HxWxBGR(A)), got {frame.dtype} {frame.shape}"
+        )
+    left = int(ROI_CENTER[0]) - ROI_W // 2
+    top = int(ROI_CENTER[1]) - ROI_H // 2
+    if top < 0 or left < 0 or top + ROI_H > frame.shape[0] or left + ROI_W > frame.shape[1]:
+        raise ValueError(
+            f"frame {frame.shape[1]}x{frame.shape[0]} too small for {ROI_W}x{ROI_H} "
+            f"ROI at {ROI_CENTER}"
+        )
+    roi = frame[top : top + ROI_H, left : left + ROI_W]
+    if roi.shape[2] == 4:
+        roi = roi.copy()
+        roi[roi[..., 3] == 0, :3] = 0
+        roi = roi[..., :3]
     return roi
 
 

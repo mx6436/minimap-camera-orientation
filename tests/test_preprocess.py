@@ -1,6 +1,6 @@
-"""前处理定义模块（#25）的行为规格：几何、采样、参考合成与越界。
+"""前处理定义模块（#25）的行为规格：整帧到 ROI、几何、采样、参考合成与越界。
 
-断言通过公开入口（`observed_strip` / `strips`）观察行为，期望值是手算的规格
+断言通过公开入口（`observed_roi` / `observed_strip` / `strips`）观察行为，期望值是手算的规格
 （方位零点是正北、顺时针为正；半径自上而下由内向外），不复用实现内部公式。
 """
 
@@ -54,6 +54,44 @@ def test_radius_rows_run_inward_to_outward() -> None:
     observed = preprocess.observed_strip(roi)
 
     assert observed[..., 0].sum(axis=1).argmax() == 28
+
+
+def test_observed_roi_crops_at_the_spec_center() -> None:
+    frame = np.zeros((240, 240, 3), dtype=np.uint8)
+    frame[51, 49] = (1, 2, 3)  # 中心 (108.0, 111.0) - 半宽/半高 -> left 49, top 51
+    frame[50, 49] = (9, 9, 9)  # 紧邻 ROI 上边界之外
+
+    roi = preprocess.observed_roi(frame)
+
+    assert roi.shape == (preprocess.ROI_H, preprocess.ROI_W, 3)
+    assert tuple(roi[0, 0]) == (1, 2, 3)
+
+
+def test_observed_roi_zeroes_transparent_pixels_and_drops_alpha() -> None:
+    frame = np.zeros((240, 240, 4), dtype=np.uint8)
+    frame[51:171, 49:167] = (10, 20, 30, 255)
+    frame[60, 60] = (99, 99, 99, 0)  # ROI 内全透明像素
+
+    roi = preprocess.observed_roi(frame)
+
+    assert roi.shape == (preprocess.ROI_H, preprocess.ROI_W, 3)
+    assert tuple(roi[9, 11]) == (0, 0, 0)
+    assert tuple(roi[0, 0]) == (10, 20, 30)
+
+
+def test_observed_roi_does_not_mutate_the_caller_frame() -> None:
+    frame = np.zeros((240, 240, 4), dtype=np.uint8)
+    frame[60, 60] = (99, 99, 99, 0)
+    before = frame.copy()
+
+    preprocess.observed_roi(frame)
+
+    assert np.array_equal(frame, before)
+
+
+def test_observed_roi_rejects_frame_too_small() -> None:
+    with pytest.raises(ValueError, match="too small"):
+        preprocess.observed_roi(np.zeros((100, 100, 3), dtype=np.uint8))
 
 
 def _bgra(width: int, height: int, rgb: tuple[int, int, int], alpha: int) -> np.ndarray:

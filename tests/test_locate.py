@@ -29,7 +29,7 @@ from endfield.locate import (
     write_jsonl,
     zone_asset_path,
 )
-from endfield.polar import load_source_bgr
+from endfield.polar import load_source_frame
 
 OK = {
     "name": "Wuling_Base_x1000.0_y1403.0_r346.1.png",
@@ -271,7 +271,7 @@ def test_localizer_stream_keeps_tracking_without_reset(tmp_path: Path) -> None:
             break
     else:
         pytest.skip("no accepted real sample with a raw png")
-    frame = load_source_bgr(raw_path)
+    frame = load_source_frame(raw_path)
     stream = LocalizerStream([str(STREAM_CLI_PATH)], STREAM_RESOURCE_DIR, tmp_path)
     stream.start()
     try:

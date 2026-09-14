@@ -20,8 +20,9 @@ from endfield.live import (
     to_base_frame,
 )
 from endfield.locate import accept, load_records, write_jsonl, zone_asset_path
-from endfield.polar import BASE_SIZE, IMG_H, IMG_W, imread_png, load_source_bgr
-from endfield.ref import REF_CHANNELS, observed_roi, ref_strip
+from endfield.polar import BASE_SIZE, IMG_H, IMG_W, imread_png, load_source_frame
+from endfield.preprocess import observed_roi
+from endfield.ref import REF_CHANNELS, ref_strip
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 REAL_RAW_DIRS = (REPO_ROOT / "data" / "train_raw", REPO_ROOT / "data" / "val_raw")
@@ -226,7 +227,7 @@ def test_live_ref_strip_matches_regenerated_training_artifacts(tmp_path: Path) -
 
     for name, record, path in chosen:
         assert path is not None
-        frame = load_source_bgr(path)
+        frame = load_source_frame(path)
         strip = ref_strip_at(frame, record, REAL_ASSETS_ROOT)
         observed = imread_png(processed / name)
         reference = imread_png(processed / "ref" / name)

@@ -45,7 +45,7 @@ from endfield.live import (
 )
 from endfield.locate import LocalizerStream, accept
 from endfield.model import choose_device, load_model, predict_probs
-from endfield.ref import observed_roi
+from endfield.preprocess import observed_roi
 
 DISPLAY_BOX = 108  # 外径 54 的外接正方形，720p 基准
 DISPLAY_SCALE = 6

@@ -10,7 +10,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from endfield.preprocess import IMG_H, IMG_W, INNER_R, OUTER_R
+from endfield.preprocess import IMG_H, IMG_W, INNER_R, OUTER_R, ROI_CENTER
 
 __all__ = [
     "BASE_SIZE",
@@ -21,13 +21,12 @@ __all__ = [
     "OUTER_R",
     "PNG_MAGIC",
     "imread_png",
-    "load_source_bgr",
+    "load_source_frame",
     "scaled_roi",
 ]
 
-# 采集几何（训练数据采集的 720p 基准）
+# 采集几何（训练数据采集的 720p 基准）；ROI 中心由前处理定义持有
 BASE_SIZE = (1280, 720)
-ROI_CENTER = (108.0, 111.0)
 
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
@@ -43,14 +42,14 @@ def imread_png(path: Path) -> np.ndarray:
     return image
 
 
-def load_source_bgr(path: Path) -> np.ndarray:
-    """原始截图 PNG -> BGR uint8 HWC；全透明像素置 0，保留原 RGBA 约定。"""
+def load_source_frame(path: Path) -> np.ndarray:
+    """原始截图 PNG -> 原样通道的 uint8 HWC frame（BGR 或 BGRA）。
+
+    透明像素清零与 ROI 裁剪属前处理定义（`preprocess.observed_roi`）；本函数只解码并保留原通道。
+    """
     image = imread_png(path)
     if image.ndim != 3 or image.shape[2] not in (3, 4):
         raise ValueError(f"{path}: expected 3/4-channel PNG, got shape {image.shape}")
-    if image.shape[2] == 4:
-        image[image[..., 3] == 0, :3] = 0
-        image = image[..., :3]
     return image
 
 

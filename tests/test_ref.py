@@ -1,8 +1,8 @@
 """参考输入（ref）编码的回归测试：定义模块适配、7 通道编码与 ref 数据管线。
 
 定义模块（`endfield/preprocess.py`）的语义行为由 `tests/test_preprocess.py` 按
-规格断言；本文件验证适配层的机械动作（资产 I/O、ROI、拼接、缺口占比）与数据
-管线，期望值取自定义模块的公开输出。
+规格断言；本文件验证适配层的机械动作（资产 I/O、拼接、缺口占比）与数据管线，
+期望值取自定义模块的公开输出。
 """
 
 from __future__ import annotations
@@ -19,13 +19,13 @@ import pytest
 import prepare_data
 from endfield import preprocess, preprocess_cache
 from endfield.locate import accept, load_records, record_scale, write_jsonl, zone_asset_path
-from endfield.polar import IMG_H, IMG_W, imread_png, load_source_bgr
+from endfield.polar import IMG_H, IMG_W, imread_png, load_source_frame
+from endfield.preprocess import observed_roi
 from endfield.ref import (
     MAP_ASSETS_ROOT,
     REF_CHANNELS,
     REF_SUBDIR,
     load_reference_image,
-    observed_roi,
     ref_strip,
     ref_tensor,
     reference_gap_fraction,
@@ -531,7 +531,7 @@ def test_real_accepted_sample_builds_ref_strip() -> None:
     asset_path = zone_asset_path(zone, MAP_ASSETS_ROOT)
     assert asset_path is not None
     x, y = float(record["x"]), float(record["y"])
-    observed = observed_roi(load_source_bgr(raw_path))
+    observed = observed_roi(load_source_frame(raw_path))
 
     ref = ref_strip(observed, load_reference_image(asset_path), x, y, record_scale(record))
     alpha = ref[..., 6]

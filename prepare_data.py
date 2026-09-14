@@ -21,13 +21,12 @@ from endfield.polar import (
     IMG_H,
     IMG_W,
     imread_png,
-    load_source_bgr,
+    load_source_frame,
 )
 from endfield.ref import (
     MAP_ASSETS_ROOT,
     REF_SUBDIR,
     load_reference_image,
-    observed_roi,
 )
 
 ROOT = Path(__file__).resolve().parent
@@ -108,7 +107,7 @@ def generate_processed(
     clear_pngs(processed_dir)
 
     def load_roi(name: str) -> np.ndarray:
-        return observed_roi(load_source_bgr(samples[name]))
+        return preprocess.observed_roi(load_source_frame(samples[name]))
 
     total = len(input_names)
     for i, (name, roi) in enumerate(
@@ -303,7 +302,7 @@ def generate_processed_ref(
     prepared_assets: dict[Path, torch.Tensor] = {}
 
     def load_observation(item: tuple[str, dict, Path]) -> np.ndarray:
-        return observed_roi(load_source_bgr(samples[item[0]]))
+        return preprocess.observed_roi(load_source_frame(samples[item[0]]))
 
     for index, ((name, record, asset_path), observed) in enumerate(
         zip(resolved, _parallel_load(resolved, load_observation, workers), strict=True), 1

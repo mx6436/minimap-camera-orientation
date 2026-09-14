@@ -2,7 +2,7 @@
 
 本模块的机械动作：
 
-- 资产 I/O（`load_reference_image`）与 720p 观测 ROI 提取（`observed_roi`）；
+- 资产 I/O（`load_reference_image`）；
 - 3 通道资产的入口归一化（`normalize_asset`，转发定义模块）；
 - 7 通道拼接 `[obs.BGR, ref.BGR, ref.A]`（`ref_tensor` / `ref_strip`）与缺口占比。
 
@@ -18,7 +18,7 @@ from pathlib import Path
 import numpy as np
 
 from endfield import preprocess
-from endfield.polar import ROI_CENTER, imread_png
+from endfield.polar import imread_png
 from endfield.preprocess import ROI_H, ROI_POLE, ROI_W
 
 __all__ = [
@@ -29,7 +29,6 @@ __all__ = [
     "ROI_H",
     "ROI_POLE",
     "load_reference_image",
-    "observed_roi",
     "normalize_asset",
     "ref_tensor",
     "reference_strip",
@@ -58,18 +57,6 @@ def load_reference_image(path: Path) -> np.ndarray:
 def normalize_asset(asset: np.ndarray) -> np.ndarray:
     """3 通道资产补 255 alpha 成全不透明 BGRA；4 通道原样（入口归一化）。"""
     return preprocess.normalize_asset(asset)
-
-
-def observed_roi(frame: np.ndarray) -> np.ndarray:
-    """从 720p 基准整帧裁出 118x120 观测 ROI（中心 = polar.ROI_CENTER）。"""
-    left = int(ROI_CENTER[0]) - ROI_W // 2
-    top = int(ROI_CENTER[1]) - ROI_H // 2
-    if top < 0 or left < 0 or top + ROI_H > frame.shape[0] or left + ROI_W > frame.shape[1]:
-        raise ValueError(
-            f"frame {frame.shape[1]}x{frame.shape[0]} too small for {ROI_W}x{ROI_H} "
-            f"ROI at {ROI_CENTER}"
-        )
-    return frame[top : top + ROI_H, left : left + ROI_W]
 
 
 def ref_tensor(observed: np.ndarray, reference: np.ndarray) -> np.ndarray:
