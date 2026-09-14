@@ -13,9 +13,9 @@
 依赖由 [uv](https://docs.astral.sh/uv/) 管理。先运行一次 `uv sync` 创建 `.venv` 并安装锁定依赖，之后通过 `uv run` 执行各脚本：
 
 ```bash
-uv run locate_dataset.py                  # ref 前置：对 data/raw 批量定位（可断点续跑）
-uv run prepare_data.py                    # polar：极坐标展开 + 清单切分
-uv run prepare_data.py --mode ref         # ref：观测/参考各自展开 + 清单切分
+uv run locate_dataset.py                  # ref 前置：对 train_raw + val_raw 并集批量定位（可断点续跑）
+uv run prepare_data.py                    # polar：极坐标展开 + 目录划分
+uv run prepare_data.py --mode ref         # ref：观测/参考各自展开 + 目录划分
 uv run train --run-dir runs/<name>        # 输入由 train.toml 的 input_mode 选择
 uv run export_preprocess.py --out runs/<name>/bundle/preprocess.onnx   # 前处理图（定义模块导出）
 uv run export_onnx.py --run-dir runs/<name>                            # 分类器图 polar.onnx / polar_with_ref.onnx
@@ -24,9 +24,9 @@ uv run export_artifact.py --out runs/<name>/bundle --polar-run runs/<polar_run> 
 
 测试通过 pytest 运行：`uv run pytest`。
 
-`prepare_data.py` 是唯一的前处理脚本，一条命令完成 raw → 模型输入 → 划分（polar 或 ref）。验证集成员由 `data/val_manifest.json` 直接指定（val = 清单 ∩ processed，清单引用不存在的文件名则报错；train = 其余全部），清单由人维护，是运行脚本的前置条件。角度标签支持一位小数（如 `_r210.9.png`），训练目标保留浮点精度。
+`prepare_data.py` 是唯一的前处理脚本，一条命令完成 raw → 模型输入 → 划分（polar 或 ref）。原始输入是 `data/train_raw`（训练侧）与 `data/val_raw`（验证侧）两个目录，**由人维护、脚本只读**；划分由样本所在目录表达，没有清单机制，跨侧同名样本硬报错（划分不得泄漏）。polar 的 train/val 就是两目录各自全量；ref 的 train/val 是各自一侧经定位、资产、坐标一致性过滤后的子集，任一侧为空硬报错。角度标签支持一位小数（如 `_r210.9.png`），训练目标保留浮点精度。
 
-每种模式各自维护自己的 processed / train / val 目录（processed 是否重写由缓存戳决定，见下）；只有 `data/raw` 与 `data/val_manifest.json` 永不被脚本改动。ref 模式的定位产物单独维护在 `data/locator/`（不随 `prepare_data.py` 清空）。processed 目录挂 `.preprocess.json` 缓存戳（定义哈希 + 图版本 + 输入指纹）：与当前定义一致且产物文件齐全时跳过重写，定义变更 / 样本或定位字段变更 / `--force` 时重生成；train/val 符号链接视图每次运行都重建。原始图解码用线程池并行（`--workers`，默认 `min(16, CPU 数)`；`--workers 1` 串行），前处理与落盘仍在主线程串行，产物与串行路径逐字节一致。
+每种模式各自清空并重写自己的 processed / train / val 目录（processed 是否重写由缓存戳决定，见下）；只有 `data/train_raw` 与 `data/val_raw` 永不被脚本改动。ref 模式的定位产物单独维护在 `data/locator/`（不随 `prepare_data.py` 清空）。processed 目录挂 `.preprocess.json` 缓存戳（定义哈希 + 图版本 + 输入指纹）：与当前定义一致且产物文件齐全时跳过重写，定义变更 / 输入增删 / `--force` 时重生成；polar 的指纹是两侧样本名并集，ref 另含所消费的 `zone`/`x`/`y`/`scale`，样本在两目录间移动不改变并集、不触发重算。train/val 是 processed 的符号链接视图，每次运行重建并校验悬空链接。原始图解码用线程池并行（`--workers`，默认 `min(16, CPU 数)`；`--workers 1` 串行），前处理与落盘仍在主线程串行，产物与串行路径逐字节一致。
 
 训练入口是控制台命令 `uv run train`，只负责训练：读取训练/验证目录，从不复制、移动或划分图像。全部训练参数集中在根目录 [`train.toml`](./train.toml)：每个键都有代码内默认值，文件明示当前基线，未知键硬报错。CLI 只保留调用管道：`--config`（默认 `train.toml`）、`--run-dir`（必填，run 产物目录）、`--device`（auto/cpu/cuda）、`--threads`（CPU 线程，默认 8）与 `--smoke`（正常路径只跑一个 epoch，用于验证流程，不能替代完整训练）。
 
@@ -178,7 +178,7 @@ fixture 是「输入场景」，期望输出在比对时由参考实现实时计
 
 ## 数据定位（MapLocator 批量）
 
-`locate_dataset.py` 对 `data/raw` 全量截图逐张运行 MapLocator，产出 ref 前处理所需的定位产物与汇总：
+`locate_dataset.py` 对 `data/train_raw` 与 `data/val_raw` 的并集逐张运行 MapLocator，产出 ref 前处理所需的定位产物与汇总：
 
 ```bash
 uv run locate_dataset.py                 # 默认 4 个并行进程；已成功样本跳过，可断点续跑
@@ -214,7 +214,7 @@ uv run locate_dataset.py                 # 默认 4 个并行进程；已成功�
 
 - **姿态来源**：`locate.jsonl` 中 `accepted=true` 的记录；参考裁剪的 `(zone, x, y, scale)` 一律取自 MapLocator 输出。文件名的 `(map, x, y)` **不参与裁剪**，只用于坐标一致性核对（见下）。
 - **坐标一致性过滤（#33）**：文件名标注与定位记录是两批独立采集（MapLocator 命名族、MapTracker 命名族）；`endfield/coord_filter.py` 把标标注换算到定位记录所在资产帧（region↔前缀表、ZmdMap level 矩形、`SCALE_MAP_FACTOR=0.1625`、`Base.png` 尺寸，均取自上游既有约定），`max(|Δx|, |Δy|) > 5`、zone/区域对不上、以及命名不在支持范围内的样本**不进入数据集**（计入 skipped 原因 `coord_delta` / `coord_zone` / `coord_unsupported`）。换算需要 `local/maplocator/data/ZmdMap/`（MaaEnd `assets/data/ZmdMap/*_layout.json` 的镜像）；只有出现 MapTracker 命名样本时才读，可用 `--zmdmap-data-root` 指定。
-- **样本范围**：定位失败 / held / 低分（`accepted=false`）与 zone 资产缺失的样本跳过并计数，不算错误。
+- **样本范围与划分**：定位失败 / held / 低分（`accepted=false`）、zone 资产缺失、坐标一致性过滤拒绝的样本跳过并计数，不算错误；划分 = 样本所在目录一侧的可用子集（任一侧为空硬报错），train/val 视图只链接各自一侧的可用样本。
 - **参考底图**：按 `zone` 反解资产路径（`{P}_Base → {P}/Base.png`、`{P}_L{n}_{m} → {P}/Lv{int(n):03d}Tier{m}.png`、其它 → 任意子目录下 stem 同名文件）；tier zone 的 `(x,y)` 就是切片自身像素空间（实测与观测小地图 1:1，直接裁切片，无需仿射）。
 - **参考裁剪**：由定义模块一次采样完成：资产坐标 = `(x, y) + (q_roi - 极点) * scale`（精确亚像素中心与精确 `scale`），尺度取定位记录的 `scale` 字段（即 MapLocator 的 `ZoneTemplateScale`）：绝大多数 zone 是 1:1；`ValleyIV_Base` 的底图相对观测缩放过 6.7%（15/16）。越界处读 0 = 参考缺失，不失败。
 - **观测流**：原始截图按 720p 基准裁出 118x120 ROI，由定义模块在条带网格上双线性采样一次，输出 42x360x3 BGR，与 polar 模式的 `data/processed` 同源同几何。
@@ -222,19 +222,19 @@ uv run locate_dataset.py                 # 默认 4 个并行进程；已成功�
 - **产物布局**（两路分别落盘）：`data/processed_ref/<name>.png` 为观测流（42x360x3 BGR），`data/processed_ref/ref/<name>.png` 为参考流（42x360x4 BGRA，B/G/R = 参考 BGR，A = 原始 alpha）；`data/train_ref`、`data/val_ref` 是同一布局的符号链接视图，`ref/` 子树一并链接。
 - **模型输入**：两路按通道拼接为 42x360x7；训练侧由 `train.toml` 的 `input_mode = "ref"` 选择数据根；`record.json` 记 `ref_reference_assets_root`；`live.py` 的 ref 推理路径与 `prepare_data.py` 共用定义模块 `endfield/preprocess.py`，产物同源。
 - **确定性**：重复运行产物逐字节一致。
-- **缓存**：`data/processed_ref/.preprocess.json` 挂定义哈希 + 图版本 + 输入指纹（样本名与 `zone`/`x`/`y`/`scale`，其他定位字段不入指纹）；命中且两路产物齐全即跳过重写，定义 / 定位记录 / 样本变更或 `--force` 触发重生成。
+- **缓存**：`data/processed_ref/.preprocess.json` 挂定义哈希 + 图版本 + 输入指纹（可用样本名与 `zone`/`x`/`y`/`scale`，其他定位字段不入指纹）；命中且两路产物齐全即跳过重写，定义 / 定位记录 / 输入样本变更或 `--force` 触发重生成。
 - **训练样本过滤（可选；与上条数据层过滤不同层，两层同时生效）**：`train.toml` 的 `max_ref_missing`（0~1）在读取训练集时排除环内 `ref.A<255` 占比**严格大于**阈值的样本（等于阈值保留），只影响训练集，val 不变；`prepare_data.py` 始终按数据层过滤后的集合落盘，`max_ref_missing` 不改磁盘数据。
 
 ## 数据目录
 
-除 `data/raw` 与 `data/val_manifest.json` 外，以下内容均为脚本输出；processed 目录带缓存戳（命中则跳过重写），train/val 视图每次运行重建：
+只有 `data/train_raw` 与 `data/val_raw` 是人工维护的输入目录，脚本只读；其余内容均为脚本输出。划分由样本所在目录表达：polar 两目录各自全量，ref 取各自一侧的可用子集。processed 目录带缓存戳（命中则跳过重写），train/val 是 processed 的符号链接视图、每次运行重建：
 
-- `data/raw`：原始截图；任何脚本都不会修改它。
-- `data/val_manifest.json`：清单切分的验证集成员清单，由人维护，脚本只读。
-- `data/processed`：polar 处理输出（全部样本的极坐标展开）。
-- `data/train` / `data/val`：polar 划分后的训练/验证图像副本（磁盘上不做增强）。
-- `data/processed_ref`：ref 处理输出（`accepted=true` 样本的观测流与 `ref/` 参考流）。
-- `data/train_ref` / `data/val_ref`：ref 划分后的训练/验证图像副本（含 `ref/` 子树）。
+- `data/train_raw`：训练侧原始截图（`_r<角度>.png`）；任何脚本都不会修改它。
+- `data/val_raw`：验证侧原始截图，语义同上；跨侧同名样本硬报错。
+- `data/processed`：polar 处理输出（两侧并集的极坐标展开）。
+- `data/train` / `data/val`：polar 划分视图（符号链接到 `data/processed`；磁盘上不做增强）。
+- `data/processed_ref`：ref 处理输出（可用样本的观测流与 `ref/` 参考流）。
+- `data/train_ref` / `data/val_ref`：ref 划分视图（符号链接到 `data/processed_ref`，含 `ref/` 子树）。
 - `data/processed/.preprocess.json` / `data/processed_ref/.preprocess.json`：缓存戳（定义哈希、图版本、commit、输入指纹）；删除它或用 `--force` 即强制重生成。
 - `runs/`：checkpoint 与 JSON 实验结果。
 - `data/locator/`：MapLocator 定位产物（`locate.jsonl`、`summary.json`），由 `locate_dataset.py` 增量维护（不随 `prepare_data.py` 清空）。

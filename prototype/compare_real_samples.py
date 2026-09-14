@@ -1,14 +1,20 @@
 """#23 prototype: current cv2 vs clean vs replica preprocess strips on real samples.
 
+DEPRECATED (#44): #23 已闭合；本脚本依赖的旧 cv2 前处理 API（`endfield.polar.unwrap`、
+`endfield.ref.reference_crop` 等）已在 #25 删除，不再可运行，仅作方法与结论存档
+（见 prototype/README.md）；原始目录已更新为 `data/train_raw` / `data/val_raw` 并集，
+但实现不再维护。
+
 Throwaway. Run:
 
     uv run python -m prototype.export_drafts
     uv run python -m prototype.compare_real_samples [--limit N | --all] [--timing N]
 
-Compares, per real accepted sample (data/raw + data/locator/locate.jsonl + MapLocator
-assets), the current cv2 path (`endfield.ref`, with the per-zone black composite cached;
-byte-identity with `ref_strip` is asserted on a few samples) against the draft ONNX
-variants under ORT 1.19.2, and against torch eager on a subset.
+Compares, per real accepted sample (data/train_raw + data/val_raw union +
+data/locator/locate.jsonl + MapLocator assets), the current cv2 path (`endfield.ref`,
+with the per-zone black composite cached; byte-identity with `ref_strip` is asserted on
+a few samples) against the draft ONNX variants under ORT 1.19.2, and against torch eager
+on a subset.
 
 Outputs (local, data-derived; not committed): out/samples.jsonl, out/summary.json,
 out/visuals/*.png (worst samples for the headline comparisons).
@@ -26,7 +32,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from endfield.data_utils import png_names
+from endfield.data_utils import union_png_samples
 from endfield.locate import accept, load_records, record_scale, zone_asset_path
 from endfield.polar import INNER_R, OUTER_R, load_source_bgr, unwrap
 from endfield.ref import (
@@ -46,8 +52,14 @@ from endfield.ref import (
 from prototype.preprocess_variants import VARIANTS
 
 ROOT = Path(__file__).resolve().parents[1]
-RAW_DIR = ROOT / "data" / "raw"
+RAW_DIRS = (ROOT / "data" / "train_raw", ROOT / "data" / "val_raw")
 LOCATE_PATH = ROOT / "data" / "locator" / "locate.jsonl"
+
+
+def raw_samples() -> dict[str, Path]:
+    """两侧原始目录并集（目录即划分；脚本废弃，仅保持路径引用与现行契约一致）。"""
+    return union_png_samples(RAW_DIRS)
+
 
 # (base, variant) graphs compared per sample; headline = base is the current cv2 path
 COMPARISONS = {
@@ -275,7 +287,8 @@ def main() -> None:
     import onnxruntime as ort
 
     records = load_records(LOCATE_PATH)
-    raw_names = set(png_names(RAW_DIR))
+    samples = raw_samples()
+    raw_names = set(samples)
     accepted_zones = sorted(
         {str(r.get("zone", "")) for n, r in records.items() if accept(r)[0] and n in raw_names}
     )
@@ -289,7 +302,7 @@ def main() -> None:
         record_ = records[name]
         zone = str(record_.get("zone", ""))
         asset, black, alpha_plane = assets[zone]
-        roi = observed_roi(load_source_bgr(RAW_DIR / name))
+        roi = observed_roi(load_source_bgr(samples[name]))
         x, y, scale = float(record_["x"]), float(record_["y"]), record_scale(record_)
         obs, ref = current_strips(roi, black, alpha_plane, x, y, scale)
         full = ref_strip(roi, asset, x, y, scale)
@@ -322,7 +335,7 @@ def main() -> None:
         record_ = records[name]
         zone = str(record_.get("zone", ""))
         asset, black, alpha_plane = assets[zone]
-        roi = observed_roi(load_source_bgr(RAW_DIR / name))
+        roi = observed_roi(load_source_bgr(samples[name]))
         x, y, scale = float(record_["x"]), float(record_["y"]), record_scale(record_)
 
         t0 = time.perf_counter()
@@ -457,7 +470,7 @@ def main() -> None:
             record_ = records[name]
             zone = str(record_.get("zone", ""))
             asset, black, alpha_plane = assets[zone]
-            roi = observed_roi(load_source_bgr(RAW_DIR / name))
+            roi = observed_roi(load_source_bgr(samples[name]))
             x, y, scale = float(record_["x"]), float(record_["y"]), record_scale(record_)
             if base == "current":
                 base_obs, base_ref = current_strips(roi, black, alpha_plane, x, y, scale)

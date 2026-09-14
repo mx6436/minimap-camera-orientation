@@ -4,6 +4,12 @@
 「干净重定义」还是「现行 cv2 顺序复刻」，以及 torch 语义与草稿图在 ORT 1.19.2
 上的行为是否一致。不是生产代码；生产定义模块在 #25 落地。
 
+> **已废弃（#44）**：#23 已闭合，结论见下；生产实现以 `endfield/preprocess.py`
+> 为准。以下脚本依赖的旧 cv2 前处理 API（`endfield.polar.unwrap`、
+> `endfield.ref.reference_crop` / `composite_on_black` / `compose_observed_backdrop` /
+> `reference_alpha_plane`）已在 #25 删除，脚本不再可运行，也不再随数据布局
+> （现为 `data/train_raw` / `data/val_raw` 目录划分）维护；本目录只保留方法与结论记录。
+
 ## 三个语义
 
 三个变体共用同一 strip 几何（极点、内外径、1°/列），差别只在资产侧的采样映射与
@@ -22,7 +28,7 @@
 `GridSample(padding_mode="zeros")`；观测侧仍用 `border`（对应 cv2 `BORDER_REPLICATE`，
 有效几何下不会触发）。
 
-## 运行
+## 运行（历史命令；脚本已废弃，仅存档）
 
 ```bash
 uv run python -m prototype.export_drafts                       # -> prototype/drafts/*.onnx
@@ -31,7 +37,8 @@ uv run python -m prototype.compare_real_samples --limit 600    # 跨方案条带
 uv run python -m prototype.compare_real_samples --limit 0      # 全部 accepted 样本
 ```
 
-依赖：`data/raw`、`data/locator/locate.jsonl`、本地 MapLocator 底图资产
+依赖（历史）：原始截图目录（现为 `data/train_raw` / `data/val_raw`）、
+`data/locator/locate.jsonl` 与本地 MapLocator 底图资产
 （`local/maplocator`，gitignored）；ORT 1.19.2（dev 依赖已固定）。
 
 判据：**跨方案条带像素差是「定义不同」的必然结果，不能用来排序方案**；判据是每个

@@ -1,5 +1,10 @@
 """#23 corrected evaluation: per-scheme `observed` <-> `ref` pair consistency.
 
+DEPRECATED (#44): #23 已闭合；本脚本依赖的旧 cv2 前处理 API（`endfield.polar.unwrap`、
+`endfield.ref.reference_crop` 等）已在 #25 删除，不再可运行，仅作方法与结论存档
+（见 prototype/README.md）；原始目录已更新为 `data/train_raw` / `data/val_raw` 并集，
+但实现不再维护。
+
 Cross-scheme strip deltas are expected — different definitions must differ; they cannot
 rank schemes. What must hold is that each scheme's `ref` stays *paired* with its own
 `observed` strip (same world content, same strip geometry). This script measures, per real
@@ -28,7 +33,7 @@ from pathlib import Path
 
 import numpy as np
 
-from endfield.data_utils import png_names
+from endfield.data_utils import union_png_samples
 from endfield.locate import accept, load_records, record_scale, zone_asset_path
 from endfield.polar import INNER_R, OUTER_R, load_source_bgr, unwrap
 from endfield.ref import (
@@ -45,10 +50,15 @@ from prototype.compare_real_samples import crop_oob, ort_strips
 from prototype.preprocess_variants import VARIANTS
 
 ROOT = Path(__file__).resolve().parents[1]
-RAW_DIR = ROOT / "data" / "raw"
+RAW_DIRS = (ROOT / "data" / "train_raw", ROOT / "data" / "val_raw")
 LOCATE_PATH = ROOT / "data" / "locator" / "locate.jsonl"
 SCHEMES = ("current", *VARIANTS)
 PAD, MAX_SHIFT, MIN_PIXELS = 5, 4, 400
+
+
+def raw_samples() -> dict[str, Path]:
+    """两侧原始目录并集（目录即划分；脚本废弃，仅保持路径引用与现行契约一致）。"""
+    return union_png_samples(RAW_DIRS)
 
 
 def current_strips(roi, black, alpha_plane, x, y, scale):
@@ -162,7 +172,8 @@ def main() -> None:
     import onnxruntime as ort
 
     records = load_records(LOCATE_PATH)
-    raw_names = set(png_names(RAW_DIR))
+    samples = raw_samples()
+    raw_names = set(samples)
     accepted = sorted(
         name for name, record in records.items() if accept(record)[0] and name in raw_names
     )
@@ -188,7 +199,7 @@ def main() -> None:
         record = records[name]
         zone = str(record.get("zone", ""))
         asset = assets[zone]
-        roi = observed_roi(load_source_bgr(RAW_DIR / name))
+        roi = observed_roi(load_source_bgr(samples[name]))
         x, y, scale = float(record["x"]), float(record["y"]), record_scale(record)
         current = current_strips(roi, black_cache[zone], alpha_cache[zone], x, y, scale)
         strips = {"current": current}
@@ -353,7 +364,7 @@ def main() -> None:
             record = records[name]
             zone = str(record.get("zone", ""))
             asset = assets[zone]
-            roi = observed_roi(load_source_bgr(RAW_DIR / name))
+            roi = observed_roi(load_source_bgr(samples[name]))
             x, y, scale = float(record["x"]), float(record["y"]), record_scale(record)
             obs_cur, ref_cur = current_strips(
                 roi, black_cache[zone], alpha_cache[zone], x, y, scale
