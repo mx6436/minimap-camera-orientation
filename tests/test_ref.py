@@ -17,12 +17,11 @@ import numpy as np
 import pytest
 
 import prepare_data
-from endfield import preprocess, preprocess_cache
+from endfield import maplocator, preprocess, preprocess_cache
 from endfield.locate import accept, load_records, record_scale, write_jsonl, zone_asset_path
 from endfield.polar import IMG_H, IMG_W, imread_png, load_source_frame
 from endfield.preprocess import observed_roi
 from endfield.ref import (
-    MAP_ASSETS_ROOT,
     REF_CHANNELS,
     REF_SUBDIR,
     assemble_ref_pair,
@@ -259,6 +258,28 @@ def test_generate_processed_ref_skips_regeneration_on_cache_hit(tmp_path: Path) 
     stamp = json.loads((processed_dir / preprocess_cache.STAMP_NAME).read_text(encoding="utf-8"))
     assert stamp["mode"] == "ref"
     assert stamp["definition_hash"] == preprocess.definition_hash()
+    assert stamp["provenance"] == {"assets_root": str(fx.assets_root)}
+
+
+def test_generate_processed_ref_regenerates_when_assets_root_provenance_differs(
+    tmp_path: Path,
+) -> None:
+    fx = ref_fixture(tmp_path)
+    processed_dir = tmp_path / "processed_ref"
+    prepare_data.generate_processed_ref(fx.samples, fx.locate_path, fx.assets_root, processed_dir)
+    observed_path = processed_dir / fx.names["ok"]
+    assert cv2.imwrite(str(observed_path), np.full((IMG_H, IMG_W, 3), 123, np.uint8))
+    stamp_path = processed_dir / preprocess_cache.STAMP_NAME
+    stamp = json.loads(stamp_path.read_text(encoding="utf-8"))
+    stamp["provenance"]["assets_root"] = str(tmp_path / "other_assets")
+    stamp_path.write_text(json.dumps(stamp), encoding="utf-8")
+
+    prepare_data.generate_processed_ref(fx.samples, fx.locate_path, fx.assets_root, processed_dir)
+
+    assert np.all(imread_png(observed_path) == 200)
+    assert json.loads(stamp_path.read_text(encoding="utf-8"))["provenance"] == {
+        "assets_root": str(fx.assets_root)
+    }
 
 
 def test_generate_processed_ref_regenerates_when_locate_fields_change(tmp_path: Path) -> None:
@@ -516,7 +537,7 @@ def real_raw_path(name: str) -> Path | None:
 
 
 @pytest.mark.skipif(
-    not REAL_LOCATE_PATH.exists() or not MAP_ASSETS_ROOT.is_dir(),
+    not REAL_LOCATE_PATH.exists() or not maplocator.assets_root().is_dir(),
     reason="real MapLocator locate.jsonl / assets not available",
 )
 def test_real_accepted_sample_builds_ref_pair() -> None:
@@ -528,7 +549,7 @@ def test_real_accepted_sample_builds_ref_pair() -> None:
     else:
         pytest.skip("no accepted real sample with a raw png and _L zone")
     zone = str(record["zone"])
-    asset_path = zone_asset_path(zone, MAP_ASSETS_ROOT)
+    asset_path = zone_asset_path(zone, maplocator.assets_root())
     assert asset_path is not None
     x, y = float(record["x"]), float(record["y"])
     observed = observed_roi(load_source_frame(raw_path))

@@ -30,7 +30,7 @@ uv run export_artifact.py --out runs/<name>/bundle --polar-run runs/<polar_run> 
 
 训练入口是控制台命令 `uv run train`，只负责训练：读取训练/验证目录，从不复制、移动或划分图像。全部训练参数集中在根目录 [`train.toml`](./train.toml)：每个键都有代码内默认值，文件明示当前基线，未知键硬报错。CLI 只保留调用管道：`--config`（默认 `train.toml`）、`--run-dir`（必填，run 产物目录）、`--device`（auto/cpu/cuda）、`--threads`（CPU 线程，默认 8）与 `--smoke`（正常路径只跑一个 epoch，用于验证流程，不能替代完整训练）。
 
-`train.toml` 的 `input_mode` 选择训练数据：`"polar"`（默认）读 `data/train`、`data/val`；`"ref"` 读 `data/train_ref`、`data/val_ref`。`map_assets_root` 指向 ref 使用的 MapLocator 底图资产目录（默认本地 MaaEnd 工作副本，需与 `prepare_data.py --mode ref` 一致），写在 run 的 `record.json`（`ref_reference_assets_root`），供实机推理读取。ref 模式还可选 `max_ref_missing`（0~1）：训练集在读取时排除环内 `ref.A<255` 占比**严格大于**阈值的样本（等于阈值保留），val 不变；阈值一并写入 `record.json`。
+`train.toml` 的 `input_mode` 选择训练数据：`"polar"`（默认）读 `data/train`、`data/val`；`"ref"` 读 `data/train_ref`、`data/val_ref`。ref 数据的资产根不在配置里：`prepare_data.py --mode ref` 把它写进 `data/processed_ref` 的缓存戳，训练读戳并写入 run 的 `record.json`（`ref_reference_assets_root`），供实机推理读取；换资产根会触发数据重生成。ref 模式还可选 `max_ref_missing`（0~1）：训练集在读取时排除环内 `ref.A<255` 占比**严格大于**阈值的样本（等于阈值保留），val 不变；阈值一并写入 `record.json`。
 
 `endfield/preprocess.py` 是前处理的**唯一定义模块**（#25）：极坐标展开几何、参考采样与条带域合成、采样/取整约定都在这里，训练数据生成、`preprocess.onnx` 导出与 live 共用它。`export_preprocess.py --out <path>` 导出交付的前处理图（契约见图 metadata 与下节）：输入 `minimap` `[1,120,118,3]` uint8、`asset` `[1,H,W,4]` BGRA uint8（H/W 动态）、标量 `x`/`y`/`scale`，输出 `observed` `[1,42,360,3]` 与 `reference` `[1,42,360,4]` uint8；7 通道拼装留给消费方。
 
@@ -49,7 +49,7 @@ uv run export_artifact.py --out runs/<name>/bundle \
 uv run verify_artifact.py --bundle runs/<name>/bundle --report <report.json>   # 数值 conformance（证据落报告）
 ```
 
-`live.py` 对运行中的游戏做实时推理：从 `--run-dir` 的 `record.json` 读取 `input_mode`（旧 record 无此字段时按 polar 兼容），polar 每帧经定义模块展开；ref 起 `map-locate --stream` 常驻子进程做流式定位（定位在独立线程，显示循环不阻塞），按定位 `(zone, x, y, scale)` 由定义模块裁参考、合成后拼 `[obs.BGR, ref.BGR, ref.A]` 7 通道张量，再喂模型；定位不可用（失败 / held / 低分 / 资产缺失）时 overlay 显示等待态。overlay 展示圆盘、当前模型输入（极坐标展开 / ref 的 obs 与 ref 两路）与 360 bin 概率曲线；`--snapshot <path>` 在拿到首个有效定位后保存一张 overlay 并退出（实机 smoke 取证用）。ref 实机推理依赖 gitignored 的 `local/maplocator/`（含 `--stream` 的迭代二进制，见其 `README.local.md`）。
+`live.py` 对运行中的游戏做实时推理：从 `--run-dir` 的 `record.json` 读取 `input_mode`（旧 record 无此字段时按 polar 兼容），polar 每帧经定义模块展开；ref 起 `map-locate --stream` 常驻子进程做流式定位（定位在独立线程，显示循环不阻塞），按定位 `(zone, x, y, scale)` 由定义模块裁参考、合成后拼 `[obs.BGR, ref.BGR, ref.A]` 7 通道张量，再喂模型；定位不可用（失败 / held / 低分 / 资产缺失）时 overlay 显示等待态。overlay 展示圆盘、当前模型输入（极坐标展开 / ref 的 obs 与 ref 两路）与 360 bin 概率曲线；`--snapshot <path>` 在拿到首个有效定位后保存一张 overlay 并退出（实机 smoke 取证用）。ref 实机推理依赖 gitignored 的 `local/maplocator/`（含 `--stream` 的迭代二进制；布局、CLI 契约与重建见 [docs/maplocator-workspace.md](docs/maplocator-workspace.md)）。
 
 ## 工件校验（conformance）
 
@@ -187,24 +187,9 @@ uv run locate_dataset.py                 # 默认 4 个并行进程；已成功�
 - `data/locator/locate.jsonl`：每行一条定位记录（schema 见下表）。
 - `data/locator/summary.json`：成败计数、失败分类、调用次数分布、locConf 分布、按命名族成功率。
 
-定位 CLI 与资源放在 gitignored 的 `local/maplocator/`（本机工作台落点，来源与重建见该目录的 `README.local.md`）；仓库内脚本只引用该目录，不引用仓库外路径。
+定位 CLI 与资源放在 gitignored 的本地工作台 `local/maplocator/`（布局、来源与重建见 [docs/maplocator-workspace.md](docs/maplocator-workspace.md)）；仓库内脚本只引用该目录，不引用仓库外路径。
 
-`locate.jsonl` 字段：
-
-| 字段 | 含义 |
-| --- | --- |
-| `name` | 原始截图文件名（样本标识） |
-| `status` | MapLocator 状态：`0` Success / `1` TrackingLost / `2` ScreenBlocked / `3` Teleported / `4` YoloFailed / `5` NotInitialized；CLI 级失败为 `-1` 读图失败、`-2` 小地图 ROI 越界 |
-| `message` | 状态原文；失败分类见 `summary.json` 的 `excluded_by_reason` |
-| `zone` | 定位到的 MapLocator zone（如 `Wuling_Base`、`ValleyIV_L6_109`；tier zone 的 x/y 为切片坐标） |
-| `x`, `y` | zone 图上的像素坐标 |
-| `rot` | MapLocator 输出的箭头朝向，**不是**摄像机角度 |
-| `scale` | 该 zone 的 `ZoneTemplateScale`（参考底图与观测的像素尺度比；无缩放 zone 为 1.0）。定位侧携带的尺度真源：训练/实机侧的参考裁剪消费此字段，不在消费方镜像 zone -> scale 表 |
-| `locConf` | 匹配分数（原始值，未加工） |
-| `isHeld` | 全局搜索没有过线峰、放行裸峰的标记 |
-| `latencyMs` / `elapsedMs` | 单次 locate 内部耗时 / 单图端到端耗时 |
-| `attempts` | 该图实际 locate 调用次数（1 或 3，冷启动共识） |
-| `accepted` / `accept_reason` | 入选门：`status==0` 且 `!isHeld` 且 `locConf >= 0.55`；否则为 `held` / `below_loc_threshold` / 失败类别 |
+`locate.jsonl` 的字段是工作台 CLI 的输出契约（含 `scale` 语义），见上述工作台文档。解析后由脚本写入入选门标注：`status==0` 且 `!isHeld` 且 `locConf >= 0.55` 才入选，否则为 `held` / `below_loc_threshold` / 失败类别。
 
 重复运行幂等：已成功样本跳过，失败项重跑覆盖；held 与低分记录保留在产物中但 `accepted=false`。
 
@@ -213,14 +198,14 @@ uv run locate_dataset.py                 # 默认 4 个并行进程；已成功�
 `uv run prepare_data.py --mode ref` 消费上节的定位产物，把观测与参考各自展开后落盘为两路：
 
 - **姿态来源**：`locate.jsonl` 中 `accepted=true` 的记录；参考裁剪的 `(zone, x, y, scale)` 一律取自 MapLocator 输出。文件名的 `(map, x, y)` **不参与裁剪**，只用于坐标一致性核对（见下）。
-- **坐标一致性过滤（#33）**：文件名标注与定位记录是两批独立采集（MapLocator 命名族、MapTracker 命名族）；`endfield/coord_filter.py` 把标标注换算到定位记录所在资产帧（region↔前缀表、ZmdMap level 矩形、`SCALE_MAP_FACTOR=0.1625`、`Base.png` 尺寸，均取自上游既有约定），`max(|Δx|, |Δy|) > 5`、zone/区域对不上、以及命名不在支持范围内的样本**不进入数据集**（计入 skipped 原因 `coord_delta` / `coord_zone` / `coord_unsupported`）。换算需要 `local/maplocator/data/ZmdMap/`（MaaEnd `assets/data/ZmdMap/*_layout.json` 的镜像）；只有出现 MapTracker 命名样本时才读，可用 `--zmdmap-data-root` 指定。
+- **坐标一致性过滤（#33）**：文件名标注与定位记录是两批独立采集（MapLocator 命名族、MapTracker 命名族）；`endfield/coord_filter.py` 把标标注换算到定位记录所在资产帧（region↔前缀表、ZmdMap level 矩形、`SCALE_MAP_FACTOR=0.1625`、`Base.png` 尺寸，均取自上游既有约定），`max(|Δx|, |Δy|) > 5`、zone/区域对不上、以及命名不在支持范围内的样本**不进入数据集**（计入 skipped 原因 `coord_delta` / `coord_zone` / `coord_unsupported`）。换算需要工作台里的 `local/maplocator/data/ZmdMap/`（MaaEnd `assets/data/ZmdMap/*_layout.json` 的镜像）；只有出现 MapTracker 命名样本时才读（来源与刷新见工作台文档）。
 - **样本范围与划分**：定位失败 / held / 低分（`accepted=false`）、zone 资产缺失、坐标一致性过滤拒绝的样本跳过并计数，不算错误；划分 = 样本所在目录一侧的可用子集（任一侧为空硬报错），train/val 视图只链接各自一侧的可用样本。
 - **参考底图**：按 `zone` 反解资产路径（`{P}_Base → {P}/Base.png`、`{P}_L{n}_{m} → {P}/Lv{int(n):03d}Tier{m}.png`、其它 → 任意子目录下 stem 同名文件）；tier zone 的 `(x,y)` 就是切片自身像素空间（实测与观测小地图 1:1，直接裁切片，无需仿射）。
 - **参考裁剪**：由定义模块一次采样完成：资产坐标 = `(x, y) + (q_roi - 极点) * scale`（精确亚像素中心与精确 `scale`），尺度取定位记录的 `scale` 字段（即 MapLocator 的 `ZoneTemplateScale`）：绝大多数 zone 是 1:1；`ValleyIV_Base` 的底图相对观测缩放过 6.7%（15/16）。越界处读 0 = 参考缺失，不失败。
 - **观测流**：原始截图按 720p 基准裁出 118x120 ROI，由定义模块在条带网格上双线性采样一次，输出 42x360x3 BGR，与 polar 模式的 `data/processed` 同源同几何。
 - **参考流**：`ref.A` 为资产原始连续 alpha 的同一网格采样（不二值化、不设阈值），裁剪越界与资产 `alpha<255` 统一为「参考缺失」，`ref.A = 0`。`ref.BGR` 在条带域一次合成 `rgb*(a/255) + obs*(1 - a/255)`（每输出一次 Round）：alpha==0 处逐像素等于观测（缺失处 copy 观测）、alpha==255 处等于资产像素。
 - **产物布局**（两路分别落盘）：`data/processed_ref/<name>.png` 为观测流（42x360x3 BGR），`data/processed_ref/ref/<name>.png` 为参考流（42x360x4 BGRA，B/G/R = 参考 BGR，A = 原始 alpha）；`data/train_ref`、`data/val_ref` 是同一布局的符号链接视图，`ref/` 子树一并链接。
-- **模型输入**：两路按通道拼接为 42x360x7；训练侧由 `train.toml` 的 `input_mode = "ref"` 选择数据根；`record.json` 记 `ref_reference_assets_root`；`live.py` 的 ref 推理路径与 `prepare_data.py` 共用定义模块 `endfield/preprocess.py`，产物同源。
+- **模型输入**：两路按通道拼接为 42x360x7；训练侧由 `train.toml` 的 `input_mode = "ref"` 选择数据根；`record.json` 记 `ref_reference_assets_root`（取自数据缓存戳）；`live.py` 的 ref 推理路径与 `prepare_data.py` 共用定义模块 `endfield/preprocess.py`，产物同源。
 - **确定性**：重复运行产物逐字节一致。
 - **缓存**：`data/processed_ref/.preprocess.json` 挂定义哈希 + 图版本 + 输入指纹（可用样本名与 `zone`/`x`/`y`/`scale`，其他定位字段不入指纹）；命中且两路产物齐全即跳过重写，定义 / 定位记录 / 输入样本变更或 `--force` 触发重生成。
 - **训练样本过滤（可选；与上条数据层过滤不同层，两层同时生效）**：`train.toml` 的 `max_ref_missing`（0~1）在读取训练集时排除环内 `ref.A<255` 占比**严格大于**阈值的样本（等于阈值保留），只影响训练集，val 不变；`prepare_data.py` 始终按数据层过滤后的集合落盘，`max_ref_missing` 不改磁盘数据。

@@ -61,6 +61,7 @@ def build_record(
     val_count: int,
     train_sha256: str,
     val_sha256: str,
+    assets_root: str | None = None,
 ) -> dict[str, Any]:
     record: dict[str, Any] = {
         "version": 31,
@@ -103,7 +104,12 @@ def build_record(
         "val_files_sha256": val_sha256,
     }
     if config["input_mode"] == "ref":
-        record["ref_reference_assets_root"] = config["map_assets_root"]
+        if assets_root is None:
+            raise SystemExit(
+                "ref record requires the dataset's reference assets root; "
+                "run prepare_data.py --mode ref to write the stamp"
+            )
+        record["ref_reference_assets_root"] = assets_root
         # 训练集参考缺失占比过滤阈值；null = 不过滤
         record["max_ref_missing"] = config["max_ref_missing"]
     return record

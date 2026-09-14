@@ -36,7 +36,7 @@ import cv2
 import numpy as np
 
 import endfield.polar as polar
-from endfield import preprocess
+from endfield import maplocator, preprocess
 from endfield.live import (
     MissingZoneAsset,
     load_run_config,
@@ -67,10 +67,6 @@ STRIP_SCALE = 2
 STRIP_LABEL_H = 24
 # ref 输入一栏按通道分行展示的子标题
 REF_ROW_LABELS = ("obs.BGR", "ref.BGR", "ref.A")
-
-# MapLocator 流式定位 CLI 与资源（gitignored 本地工作台，重建见 local/maplocator/README.local.md）
-LOCATOR_CLI = Path(__file__).resolve().parent / "local" / "maplocator" / "bin" / "map-locate"
-LOCATOR_RESOURCE = Path(__file__).resolve().parent / "local" / "maplocator" / "resource"
 
 # Linux 控制器 config_json 字段值，枚举定义见 MaaFramework docs「2.4 控制方式说明」
 SCREENCAP_PIPEWIRE = 4
@@ -269,9 +265,7 @@ def _ref_input_panel(strip: np.ndarray | None, label: str) -> np.ndarray:
             cv2.LINE_AA,
         )
         y += STRIP_LABEL_H
-        panel[y : y + row_h, :] = cv2.resize(
-            plane, (width, row_h), interpolation=cv2.INTER_NEAREST
-        )
+        panel[y : y + row_h, :] = cv2.resize(plane, (width, row_h), interpolation=cv2.INTER_NEAREST)
         y += row_h
     return panel
 
@@ -480,11 +474,10 @@ def main() -> None:
             "请在项目根目录执行 `uv sync` 更新依赖"
         ) from exc
 
-    if localized_mode and (not LOCATOR_CLI.exists() or not LOCATOR_RESOURCE.is_dir()):
-        raise SystemExit(
-            f"{mode} 实机推理需要 {LOCATOR_CLI} 与 {LOCATOR_RESOURCE}；"
-            "见 local/maplocator/README.local.md"
-        )
+    locator_cli: Path | None = None
+    locator_resource: Path | None = None
+    if localized_mode:
+        locator_cli, locator_resource = maplocator.require_locator(stream=True)
 
     node_id, eis_socket = resolve_gamescope(Toolkit.find_gamescope_instances(), args)
     controller = LinuxController(
@@ -513,8 +506,9 @@ def main() -> None:
 
     try:
         if localized_mode:
+            assert locator_cli is not None and locator_resource is not None
             worker = LocatorWorker(
-                LocalizerStream([LOCATOR_CLI], LOCATOR_RESOURCE, Path(work_dir.name))
+                LocalizerStream([locator_cli], locator_resource, Path(work_dir.name))
             )
             worker.start()
 

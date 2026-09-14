@@ -5,7 +5,7 @@
 供 live.py 之类的实时消费方使用）。真正的进程编排（分片、并行、进度）在
 `locate_dataset.py`。
 
-记录字段见 local/maplocator/README.local.md：name/status/message/zone/x/y/rot/scale/
+记录字段见 docs/maplocator-workspace.md：name/status/message/zone/x/y/rot/scale/
 locConf/isHeld/latencyMs/attempts/elapsedMs。其中 `scale` 是 zone 的
 `ZoneTemplateScale`（底图与观测的像素尺度比，无缩放 zone 为 1.0），由定位侧携带，
 训练/实机侧据此裁剪参考底图。

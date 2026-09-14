@@ -11,7 +11,7 @@
   `SCALE_MAP_FACTOR = 0.1625`；
 - level 矩形（canvas 单位）：MaaEnd `assets/data/ZmdMap/<prefix>_layout.json`；
 - canvas → MapLocator Base.png：`Base.png` 尺寸 / canvas 尺寸（本地镜像见
-  `local/maplocator/data/ZmdMap/`）。
+  `local/maplocator/data/ZmdMap/`，来源与刷新见 docs/maplocator-workspace.md）。
 
 判据（单次、无图像匹配）：把标注换算到定位记录所在资产帧后，`max(|Δx|, |Δy|)` 超过
 `MAX_DELTA` 即判不一致；标注与定位的 zone/区域不同（除「MapTracker 名 ↔ 同区域
@@ -101,7 +101,7 @@ def parse_annotation(name: str) -> Annotation:
     return Annotation(match.group("zone"), float(match.group("x")), float(match.group("y")))
 
 
-def load_filter_data(zmdmap_root: Path, map_assets_root: Path) -> FilterData:
+def load_filter_data(zmdmap_root: Path, assets_root: Path) -> FilterData:
     """读取各区域的 layout 与 Base.png 尺寸；缺任一文件即报错（数据未镜像/资产缺失）。"""
     levels: dict[str, dict[str, tuple[float, float]]] = {}
     scales: dict[str, float] = {}
@@ -112,7 +112,7 @@ def load_filter_data(zmdmap_root: Path, map_assets_root: Path) -> FilterData:
                 f"missing ZmdMap layout for {prefix}: {layout_path} "
                 "(mirror MaaEnd assets/data/ZmdMap/<prefix>_layout.json)"
             )
-        base_path = map_assets_root / region / "Base.png"
+        base_path = assets_root / region / "Base.png"
         if not base_path.is_file():
             raise FileNotFoundError(f"missing MapLocator base image: {base_path}")
         layout = json.loads(layout_path.read_text(encoding="utf-8"))

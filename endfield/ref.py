@@ -21,7 +21,6 @@ from endfield.polar import imread_png
 from endfield.preprocess import ROI_H, ROI_POLE, ROI_W
 
 __all__ = [
-    "MAP_ASSETS_ROOT",
     "REF_CHANNELS",
     "REF_SUBDIR",
     "ROI_W",
@@ -32,10 +31,6 @@ __all__ = [
     "ref_pair",
     "reference_gap_fraction",
 ]
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-# 本地 MaaEnd 工作副本的 MapLocator 底图目录（gitignored），见 local/maplocator/README.local.md
-MAP_ASSETS_ROOT = REPO_ROOT / "local" / "maplocator" / "resource" / "image" / "MapLocator"
 
 # 输入通道数：[obs.BGR, ref.BGR, ref.A]
 REF_CHANNELS = 7

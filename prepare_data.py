@@ -14,7 +14,7 @@ import cv2
 import numpy as np
 import torch
 
-from endfield import coord_filter, preprocess, preprocess_cache
+from endfield import coord_filter, maplocator, preprocess, preprocess_cache
 from endfield.data_utils import png_names, union_png_samples
 from endfield.locate import accept, load_records, record_scale, zone_asset_path
 from endfield.polar import (
@@ -24,7 +24,6 @@ from endfield.polar import (
     load_source_frame,
 )
 from endfield.ref import (
-    MAP_ASSETS_ROOT,
     REF_SUBDIR,
     load_reference_image,
 )
@@ -39,8 +38,6 @@ PROCESSED_REF = ROOT / "data" / "processed_ref"
 TRAIN_REF = ROOT / "data" / "train_ref"
 VAL_REF = ROOT / "data" / "val_ref"
 LOCATE_PATH = ROOT / "data" / "locator" / "locate.jsonl"
-# ZmdMap 标注数据（MaaEnd assets/data/ZmdMap 的本地镜像；坐标一致性过滤用）
-ZMDMAP_DATA_ROOT = ROOT / "local" / "maplocator" / "data" / "ZmdMap"
 
 # 原始截图解码（cv2.imread 释放 GIL）是管线大头：每张 ~10ms，而定义模块前处理 ~1ms。
 # 解码/ROI 提取按 CPU 数并行；定义模块调用始终在主线程串行，产物与 workers=1 逐字节一致。
@@ -245,6 +242,7 @@ def filter_coord_consistent(
         name, record, _ = item
         annotation = coord_filter.parse_annotation(name)
         if data is None and coord_filter.needs_conversion(annotation.zone):
+            maplocator.require_zmdmap(zmdmap_root)
             data = coord_filter.load_filter_data(zmdmap_root, assets_root)
         decision = coord_filter.evaluate(annotation, record, data)
         if decision.keep:
@@ -257,29 +255,32 @@ def filter_coord_consistent(
 def generate_processed_ref(
     samples: Mapping[str, Path],
     locate_path: Path = LOCATE_PATH,
-    assets_root: Path = MAP_ASSETS_ROOT,
+    assets_root: Path | None = None,
     processed_dir: Path = PROCESSED_REF,
     force: bool = False,
     workers: int = IO_WORKERS,
-    zmdmap_root: Path = ZMDMAP_DATA_ROOT,
+    zmdmap_root: Path | None = None,
 ) -> tuple[list[str], dict[str, str]]:
     """对样本并集中 accepted 定位记录生成 ref 两路展开条带（观测 3ch / 参考 BGRA）。
 
     每条记录由定义模块 `preprocess.strip_pair` 一次算出两路条带，再按
     `[obs.BGR, ref.BGR, ref.A]` 切成两路落盘：观测 `<name>.png`、参考 `ref/<name>.png`。
     返回 (产物名, name -> 跳过原因)；跳过原因含 no_locate_record、accept 门原因与
-    asset_missing。
+    asset_missing。资产根与 ZmdMap 目录省略时取本地工作台的默认布局。
     """
     if not samples:
         raise SystemExit("no raw png samples in data/train_raw and data/val_raw")
+    assets = maplocator.require_assets(assets_root or maplocator.assets_root())
+    zmdmap = zmdmap_root or maplocator.zmdmap_root()
+    provenance = maplocator.provenance(assets)
     accepted, skipped = accepted_records(locate_path)
     accepted = {name: record for name, record in accepted.items() if name in samples}
     skipped = {name: reason for name, reason in skipped.items() if name in samples}
     for name in samples:
         if name not in accepted:
             skipped.setdefault(name, "no_locate_record")
-    resolved = _resolve_ref_inputs(accepted, assets_root, skipped)
-    resolved, coord_rejected = filter_coord_consistent(resolved, zmdmap_root, assets_root)
+    resolved = _resolve_ref_inputs(accepted, assets, skipped)
+    resolved, coord_rejected = filter_coord_consistent(resolved, zmdmap, assets)
     skipped.update(coord_rejected)
     entries = ref_input_entries(resolved)
     names = [name for name, _, _ in resolved]
@@ -287,7 +288,7 @@ def generate_processed_ref(
         not force
         and png_names(processed_dir) == names
         and png_names(processed_dir / REF_SUBDIR) == names
-        and preprocess_cache.cache_hit(processed_dir, "ref", entries)
+        and preprocess_cache.cache_hit(processed_dir, "ref", entries, provenance)
     ):
         print(
             f"ref: accepted={len(accepted)} processed={len(names)} skipped={len(skipped)} "
@@ -334,7 +335,7 @@ def generate_processed_ref(
             raise RuntimeError(f"invalid processed ref observation image: {name}")
         if imread_png(processed_dir / REF_SUBDIR / name).shape != (IMG_H, IMG_W, 4):
             raise RuntimeError(f"invalid processed ref reference image: {name}")
-    stamp = preprocess_cache.write_stamp(processed_dir, "ref", entries)
+    stamp = preprocess_cache.write_stamp(processed_dir, "ref", entries, provenance)
     print(
         f"ref: accepted={len(accepted)} processed={len(names)} skipped={len(skipped)} "
         f"{_skip_reasons(skipped)} cache=miss definition_hash={stamp['definition_hash'][:12]} "
@@ -357,18 +358,13 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--map-assets-root",
+        "--maplocator-root",
         type=Path,
-        default=MAP_ASSETS_ROOT,
-        help="MapLocator 底图资产目录（ref 模式；默认本地 MaaEnd 工作副本）",
-    )
-    parser.add_argument(
-        "--zmdmap-data-root",
-        type=Path,
-        default=ZMDMAP_DATA_ROOT,
+        default=maplocator.WORKSPACE_ROOT,
         help=(
-            "ZmdMap layout 数据目录（ref 坐标一致性过滤；"
-            "默认 local/maplocator/data/ZmdMap，MaaEnd assets/data/ZmdMap 的镜像）"
+            "本地 MapLocator 工作台根目录（布局、CLI 契约与重建见 "
+            f"{maplocator.DOC_PATH}）；ref 模式消费其中的 resource/image/MapLocator "
+            "与 data/ZmdMap"
         ),
     )
     parser.add_argument(
@@ -398,7 +394,7 @@ def run_ref(
     val_dir: Path = VAL_REF,
     force: bool = False,
     workers: int = IO_WORKERS,
-    zmdmap_root: Path = ZMDMAP_DATA_ROOT,
+    zmdmap_root: Path | None = None,
 ) -> None:
     """ref 全管线：两原始目录并集的两路展开 -> 按目录划分 -> train/val 符号链接视图。"""
     train_raw_names, val_raw_names = directory_split(
@@ -454,10 +450,10 @@ def main() -> None:
     args = parse_args()
     if args.mode == "ref":
         run_ref(
-            args.map_assets_root,
+            maplocator.assets_root(args.maplocator_root),
             force=args.force,
             workers=args.workers,
-            zmdmap_root=args.zmdmap_data_root,
+            zmdmap_root=maplocator.zmdmap_root(args.maplocator_root),
         )
         return
     run_polar(force=args.force, workers=args.workers)

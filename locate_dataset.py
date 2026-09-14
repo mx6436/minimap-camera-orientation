@@ -4,8 +4,8 @@ data/locator/locate.jsonl。
 用法:
     uv run locate_dataset.py [--jobs 4] [--limit N] [--no-retry-failed]
 
-定位 CLI 与资源默认取 gitignored 的 local/maplocator/（来源与重建见该目录的
-README.local.md）；本脚本只引用仓库内路径。
+定位 CLI 与资源默认取 gitignored 的本地工作台 local/maplocator/（布局、来源与重建见
+docs/maplocator-workspace.md）；本脚本只引用仓库内路径。
 
 断点续跑：已成功的样本跳过；失败项默认重跑（结果覆盖旧记录）。重复运行幂等。
 产物 `locate.jsonl` 每行一条记录，另有 `summary.json` 汇总（失败分类、调用次数
@@ -22,6 +22,7 @@ from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+from endfield import maplocator
 from endfield.data_utils import union_png_samples
 from endfield.locate import (
     accept,
@@ -39,17 +40,17 @@ RAW_DIRS = (ROOT / "data" / "train_raw", ROOT / "data" / "val_raw")
 OUT_DIR = ROOT / "data" / "locator"
 OUT_PATH = OUT_DIR / "locate.jsonl"
 SUMMARY_PATH = OUT_DIR / "summary.json"
-DEFAULT_CLI = ROOT / "local" / "maplocator" / "bin" / "map-locate"
-DEFAULT_RESOURCE_DIR = ROOT / "local" / "maplocator" / "resource"
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("--cli", type=Path, default=DEFAULT_CLI, help="map-locate 可执行文件")
     parser.add_argument(
-        "--resource-dir", type=Path, default=DEFAULT_RESOURCE_DIR, help="MapLocator 资源目录"
+        "--maplocator-root",
+        type=Path,
+        default=maplocator.WORKSPACE_ROOT,
+        help=f"本地 MapLocator 工作台根目录（布局、CLI 契约与重建见 {maplocator.DOC_PATH}）",
     )
     parser.add_argument("--out", type=Path, default=OUT_PATH, help="产物 JSONL 路径")
     parser.add_argument("--jobs", type=int, default=4, help="并行定位进程数")
@@ -117,10 +118,7 @@ def print_summary(summary: dict) -> None:
 
 def main() -> None:
     args = parse_args()
-    if not args.cli.exists():
-        raise SystemExit(f"定位 CLI 不存在: {args.cli}（见 local/maplocator/README.local.md）")
-    if not args.resource_dir.is_dir():
-        raise SystemExit(f"资源目录不存在: {args.resource_dir}")
+    cli, resource_dir = maplocator.require_locator(args.maplocator_root)
 
     samples = union_png_samples(RAW_DIRS)
     names = sorted(samples)
@@ -135,7 +133,7 @@ def main() -> None:
 
     if todo:
         new_records = run_shards(
-            args.cli, args.resource_dir, todo, samples, args.jobs, args.out.parent / "parts"
+            cli, resource_dir, todo, samples, args.jobs, args.out.parent / "parts"
         )
         merged = merge_records(done.values(), new_records)
         for record in merged:

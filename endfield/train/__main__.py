@@ -9,6 +9,7 @@ from typing import Any
 
 import torch
 
+from endfield import maplocator, preprocess_cache
 from endfield.data_utils import atomic_json_dump, png_names, seed_everything
 from endfield.model import (
     AzimuthNet,
@@ -20,6 +21,7 @@ from endfield.model import (
 from endfield.train.artifacts import ARTIFACT_NAMES, plot_loss_curves, save_checkpoint
 from endfield.train.config import load_config
 from endfield.train.data import (
+    PROCESSED_REF_DIR,
     AngleDataset,
     filter_reference_gap,
     input_channels,
@@ -82,8 +84,11 @@ def main() -> None:
     train_names = png_names(train_dir)
     val_names = png_names(val_dir)
     if not train_names or not val_names:
-        raise SystemExit(
-            f"missing {train_dir} or {val_dir} PNG files; run prepare_data.py first"
+        raise SystemExit(f"missing {train_dir} or {val_dir} PNG files; run prepare_data.py first")
+    assets_root = None
+    if config["input_mode"] == "ref":
+        assets_root = maplocator.assets_root_from_provenance(
+            preprocess_cache.read_stamp(PROCESSED_REF_DIR)
         )
     if config["max_ref_missing"] is not None:
         total = len(train_names)
@@ -124,6 +129,7 @@ def main() -> None:
         len(val_names),
         names_fingerprint(train_names),
         names_fingerprint(val_names),
+        assets_root=assets_root,
     )
     record["trainable_parameters"] = parameter_count
     optimizer = torch.optim.AdamW(

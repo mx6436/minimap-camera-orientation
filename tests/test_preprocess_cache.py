@@ -50,6 +50,32 @@ def test_cache_hit_requires_same_mode_and_inputs(tmp_path: Path) -> None:
     assert not preprocess_cache.cache_hit(tmp_path, "polar", ["a_r0.png"])
 
 
+def test_write_stamp_records_provenance(tmp_path: Path) -> None:
+    stamp = preprocess_cache.write_stamp(
+        tmp_path, "ref", ["a_r0.png"], provenance={"assets_root": "/tmp/assets"}
+    )
+
+    assert stamp["provenance"] == {"assets_root": "/tmp/assets"}
+    assert read_stamp_file(tmp_path)["provenance"] == {"assets_root": "/tmp/assets"}
+    assert preprocess_cache.write_stamp(tmp_path, "polar", ["a_r0.png"])["provenance"] == {}
+
+
+def test_cache_hit_requires_matching_provenance_when_given(tmp_path: Path) -> None:
+    entries = ["a_r0.png"]
+    preprocess_cache.write_stamp(
+        tmp_path, "ref", entries, provenance={"assets_root": "/tmp/assets"}
+    )
+
+    assert preprocess_cache.cache_hit(
+        tmp_path, "ref", entries, provenance={"assets_root": "/tmp/assets"}
+    )
+    assert not preprocess_cache.cache_hit(
+        tmp_path, "ref", entries, provenance={"assets_root": "/tmp/other"}
+    )
+    assert preprocess_cache.cache_hit(tmp_path, "ref", entries)
+    assert not preprocess_cache.cache_hit(tmp_path, "ref", entries, provenance={"other": "x"})
+
+
 def test_cache_hit_rejects_stale_definition_hash(tmp_path: Path) -> None:
     entries = ["a_r0.png"]
     preprocess_cache.write_stamp(tmp_path, "polar", entries)

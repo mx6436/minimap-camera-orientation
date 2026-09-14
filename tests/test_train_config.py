@@ -1,4 +1,4 @@
-"""训练配置（input_mode / map_assets_root）与输入模式→数据目录、run 档案的映射。"""
+"""训练配置（input_mode）与输入模式→数据目录、run 档案的映射。"""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 import torch
 
-from endfield.ref import MAP_ASSETS_ROOT
 from endfield.train.config import load_config
 from endfield.train.data import (
     TRAIN_DIR,
@@ -25,18 +24,15 @@ def write_config(tmp_path: Path, body: str) -> Path:
     return path
 
 
-def test_config_defaults_are_polar_and_local_assets(tmp_path: Path) -> None:
+def test_config_defaults_are_polar(tmp_path: Path) -> None:
     config = load_config(write_config(tmp_path, ""))
     assert config["input_mode"] == "polar"
-    assert config["map_assets_root"] == str(MAP_ASSETS_ROOT)
+    assert "map_assets_root" not in config
 
 
 def test_config_accepts_ref_input_mode(tmp_path: Path) -> None:
-    config = load_config(
-        write_config(tmp_path, 'input_mode = "ref"\nmap_assets_root = "/tmp/assets"\n')
-    )
+    config = load_config(write_config(tmp_path, 'input_mode = "ref"\n'))
     assert config["input_mode"] == "ref"
-    assert config["map_assets_root"] == "/tmp/assets"
 
 
 def test_config_rejects_unknown_input_mode(tmp_path: Path) -> None:
@@ -71,9 +67,10 @@ def test_config_rejects_invalid_max_ref_missing(tmp_path: Path, value: str) -> N
         load_config(write_config(tmp_path, body))
 
 
-def test_config_rejects_non_string_assets_root(tmp_path: Path) -> None:
-    with pytest.raises(SystemExit, match="map_assets_root"):
-        load_config(write_config(tmp_path, "map_assets_root = 3\n"))
+def test_config_rejects_removed_assets_root_key(tmp_path: Path) -> None:
+    """资产根不再是训练配置：ref 数据的资产根由 processed 戳携带。"""
+    with pytest.raises(SystemExit, match="unknown config keys"):
+        load_config(write_config(tmp_path, 'map_assets_root = "/tmp/assets"\n'))
 
 
 def test_config_still_rejects_unknown_keys(tmp_path: Path) -> None:
@@ -88,7 +85,7 @@ def test_split_dirs_follows_input_mode() -> None:
         split_dirs("bogus")
 
 
-def build(config: dict, tmp_path: Path) -> dict:
+def build(config: dict, tmp_path: Path, assets_root: str | None = None) -> dict:
     return build_record(
         config,
         threads=8,
@@ -97,6 +94,7 @@ def build(config: dict, tmp_path: Path) -> dict:
         val_count=1,
         train_sha256="a",
         val_sha256="b",
+        assets_root=assets_root,
     )
 
 
@@ -110,10 +108,8 @@ def test_record_declares_polar_representation_by_default(tmp_path: Path) -> None
 
 
 def test_record_declares_ref_representation_and_assets_root(tmp_path: Path) -> None:
-    config = load_config(
-        write_config(tmp_path, 'input_mode = "ref"\nmap_assets_root = "/tmp/assets"\n')
-    )
-    record = build(config, tmp_path)
+    config = load_config(write_config(tmp_path, 'input_mode = "ref"\n'))
+    record = build(config, tmp_path, assets_root="/tmp/assets")
     assert record["input_mode"] == "ref"
     assert record["input_representation"].startswith("ref_polar_unwrap")
     assert "obs*(1 - a/255)" in record["input_representation"]
@@ -123,15 +119,23 @@ def test_record_declares_ref_representation_and_assets_root(tmp_path: Path) -> N
     assert "pair_max_ref_missing" not in record
 
 
+def test_record_rejects_ref_without_assets_root(tmp_path: Path) -> None:
+    config = load_config(write_config(tmp_path, 'input_mode = "ref"\n'))
+    with pytest.raises(SystemExit, match="assets root"):
+        build(config, tmp_path)
+
+
 def test_record_declares_max_ref_missing_and_filter_text(tmp_path: Path) -> None:
-    config = load_config(
-        write_config(tmp_path, 'input_mode = "ref"\nmax_ref_missing = 0.3\n')
-    )
-    record = build(config, tmp_path)
+    config = load_config(write_config(tmp_path, 'input_mode = "ref"\nmax_ref_missing = 0.3\n'))
+    record = build(config, tmp_path, assets_root="/tmp/assets")
     assert record["max_ref_missing"] == 0.3
     assert "0.3" in record["input_representation"]
 
 
 def test_record_max_ref_missing_defaults_to_null(tmp_path: Path) -> None:
-    record = build(load_config(write_config(tmp_path, 'input_mode = "ref"\n')), tmp_path)
+    record = build(
+        load_config(write_config(tmp_path, 'input_mode = "ref"\n')),
+        tmp_path,
+        assets_root="/tmp/assets",
+    )
     assert record["max_ref_missing"] is None

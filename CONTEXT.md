@@ -38,6 +38,10 @@ _Avoid_: 展开图、矩形条带、双路图
 训练、数据生成、live 与交付共用的唯一前处理实现，落在 `endfield/preprocess.py`：整帧到观测 ROI 的几何（含全透明像素处理与裁剪中心）、极坐标展开几何、参考采样与条带域合成、采样与取整约定。交付的 `preprocess.onnx` 由它导出，训练数据与实机输入都由它生成，落盘产物（`processed*`）挂定义哈希缓存戳（定义变更即失效重生成）；全仓不得出现第二份展开或合成实现（MaaEnd 侧只消费图）。
 _Avoid_: 前处理工具、预处理脚本
 
+**本地工作台 (Local Workspace)**:
+gitignored 的 `local/maplocator/`：MapLocator 定位 CLI 与 MaaEnd 资产的机器本地落点，也是本仓对 MaaEnd 的唯一依赖面。布局、CLI 契约与重建口径见 `docs/maplocator-workspace.md`。
+_Avoid_: 本地依赖、外部工具目录
+
 **参考底图 (Reference Map)**:
 MapLocator 资产中的 zone 底图，按定位结果 `(x, y)` 提供与观测小地图同视野、同尺度的参考裁剪，用于构造参考配对（`ref` 模式）。`(x,y)` 在底图自身像素空间，tier zone 的底图就是切片本身；个别 zone 的底图相对观测有整体缩放（见 MapLocator 的 `ZoneTemplateScale`）。
 _Avoid_: 地图资源、底图切片

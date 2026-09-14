@@ -18,6 +18,8 @@ TRAIN_DIR = REPO_ROOT / "data" / "train"
 VAL_DIR = REPO_ROOT / "data" / "val"
 TRAIN_REF_DIR = REPO_ROOT / "data" / "train_ref"
 VAL_REF_DIR = REPO_ROOT / "data" / "val_ref"
+# ref 条带的落盘目录，train_ref / val_ref 是它的符号链接视图
+PROCESSED_REF_DIR = REPO_ROOT / "data" / "processed_ref"
 
 SPLIT_DIRS: dict[str, tuple[Path, Path]] = {
     "polar": (TRAIN_DIR, VAL_DIR),

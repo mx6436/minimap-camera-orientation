@@ -18,6 +18,9 @@ FAKE_CLI = (
     "import json, sys\n"
     "from pathlib import Path\n"
     "args = sys.argv[1:]\n"
+    "if not args:\n"
+    "    print('usage: map-locate --resource-dir <dir> [--stream]', file=sys.stderr)\n"
+    "    raise SystemExit(2)\n"
     "assert '--resource-dir' in args, args\n"
     "for line in sys.stdin:\n"
     "    path = Path(line.strip())\n"
@@ -36,23 +39,25 @@ def write_png(path: Path) -> None:
     path.write_bytes(b"fake png")
 
 
-def fake_cli(tmp_path: Path) -> Path:
-    cli = tmp_path / "fake_cli"
+def make_workspace(tmp_path: Path) -> Path:
+    workspace = tmp_path / "maplocator"
+    (workspace / "resource").mkdir(parents=True)
+    cli = workspace / "bin" / "map-locate"
+    cli.parent.mkdir(parents=True)
     cli.write_text(f"#!{sys.executable}\n" + FAKE_CLI, encoding="utf-8")
     cli.chmod(0o755)
-    return cli
+    return workspace
 
 
 def run_main(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *argv: str) -> Path:
     out = tmp_path / "locator" / "locate.jsonl"
     monkeypatch.setattr(locate_dataset, "OUT_PATH", out)
     monkeypatch.setattr(locate_dataset, "SUMMARY_PATH", out.parent / "summary.json")
-    resource = tmp_path / "resource"
-    resource.mkdir(exist_ok=True)
+    workspace = make_workspace(tmp_path)
     monkeypatch.setattr(
         sys,
         "argv",
-        ["locate_dataset.py", "--cli", str(fake_cli(tmp_path)), "--resource-dir", str(resource)],
+        ["locate_dataset.py", "--maplocator-root", str(workspace), *argv],
     )
     locate_dataset.main()
     return out
