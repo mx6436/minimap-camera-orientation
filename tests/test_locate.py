@@ -240,8 +240,16 @@ def test_localizer_stream_reports_cli_death(tmp_path: Path) -> None:
 REPO_ROOT = Path(__file__).resolve().parents[1]
 STREAM_CLI_PATH = REPO_ROOT / "local" / "maplocator" / "bin" / "map-locate"
 STREAM_RESOURCE_DIR = REPO_ROOT / "local" / "maplocator" / "resource"
-STREAM_RAW_DIR = REPO_ROOT / "data" / "raw"
+STREAM_RAW_DIRS = (REPO_ROOT / "data" / "train_raw", REPO_ROOT / "data" / "val_raw")
 STREAM_LOCATE_PATH = REPO_ROOT / "data" / "locator" / "locate.jsonl"
+
+
+def stream_raw_path(name: str) -> Path | None:
+    for directory in STREAM_RAW_DIRS:
+        path = directory / name
+        if path.is_file():
+            return path
+    return None
 
 
 @pytest.mark.skipif(
@@ -257,12 +265,13 @@ def test_localizer_stream_keeps_tracking_without_reset(tmp_path: Path) -> None:
     from concurrent.futures import TimeoutError as FutureTimeout
 
     records = load_records(STREAM_LOCATE_PATH)
-    name = next(
-        name
-        for name, record in sorted(records.items())
-        if accept(record)[0] and (STREAM_RAW_DIR / name).exists()
-    )
-    frame = load_source_bgr(STREAM_RAW_DIR / name)
+    for name, record in sorted(records.items()):
+        raw_path = stream_raw_path(name)
+        if accept(record)[0] and raw_path is not None:
+            break
+    else:
+        pytest.skip("no accepted real sample with a raw png")
+    frame = load_source_bgr(raw_path)
     stream = LocalizerStream([str(STREAM_CLI_PATH)], STREAM_RESOURCE_DIR, tmp_path)
     stream.start()
     try:

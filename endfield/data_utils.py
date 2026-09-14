@@ -5,7 +5,7 @@ import os
 import random
 import re
 import tempfile
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -81,16 +81,6 @@ def load_json(path: Path) -> dict:
 
 def png_names(directory: Path) -> list[str]:
     return sorted(path.name for path in directory.glob("*.png"))
-
-
-def validate_manifest_names(names: Iterable[str], available: set[str], label: str) -> list[str]:
-    values = list(names)
-    if len(values) != len(set(values)):
-        raise ValueError(f"{label} manifest contains duplicate filenames")
-    if not set(values).issubset(available):
-        missing = sorted(set(values) - available)
-        raise ValueError(f"{label} manifest references missing files: {missing[:5]}")
-    return values
 
 
 def seed_everything(seed: int = SEED) -> None:

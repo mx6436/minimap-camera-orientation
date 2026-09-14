@@ -24,9 +24,17 @@ from endfield.polar import BASE_SIZE, IMG_H, IMG_W, imread_png, load_source_bgr
 from endfield.ref import REF_CHANNELS, observed_roi, ref_strip
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-REAL_RAW_DIR = REPO_ROOT / "data" / "raw"
+REAL_RAW_DIRS = (REPO_ROOT / "data" / "train_raw", REPO_ROOT / "data" / "val_raw")
 REAL_LOCATE_PATH = REPO_ROOT / "data" / "locator" / "locate.jsonl"
 REAL_ASSETS_ROOT = REPO_ROOT / "local" / "maplocator" / "resource" / "image" / "MapLocator"
+
+
+def real_raw_path(name: str) -> Path | None:
+    for directory in REAL_RAW_DIRS:
+        path = directory / name
+        if path.is_file():
+            return path
+    return None
 
 
 def write_record(run_dir: Path, record: dict) -> None:
@@ -232,10 +240,10 @@ def test_live_ref_strip_matches_regenerated_training_artifacts(tmp_path: Path) -
 
     records = load_records(REAL_LOCATE_PATH)
     samples = [
-        (name, record)
+        (name, record, real_raw_path(name))
         for name, record in sorted(records.items())
         if accept(record)[0]
-        and (REAL_RAW_DIR / name).exists()
+        and real_raw_path(name) is not None
         and zone_asset_path(str(record.get("zone", "")), REAL_ASSETS_ROOT) is not None
     ]
     assert samples, "no accepted real sample with a zone asset"
@@ -244,15 +252,19 @@ def test_live_ref_strip_matches_regenerated_training_artifacts(tmp_path: Path) -
 
     raw_dir = tmp_path / "raw"
     raw_dir.mkdir()
-    for name, _ in chosen:
-        (raw_dir / name).symlink_to(REAL_RAW_DIR / name)
+    for name, _, path in chosen:
+        assert path is not None
+        (raw_dir / name).symlink_to(path)
     locate_path = tmp_path / "locate.jsonl"
-    write_jsonl(locate_path, [{**record, "name": name} for name, record in chosen])
+    write_jsonl(locate_path, [{**record, "name": name} for name, record, _ in chosen])
     processed = tmp_path / "processed_ref"
-    prepare_data.generate_processed_ref(raw_dir, locate_path, REAL_ASSETS_ROOT, processed)
+    prepare_data.generate_processed_ref(
+        {name: raw_dir / name for name, _, _ in chosen}, locate_path, REAL_ASSETS_ROOT, processed
+    )
 
-    for name, record in chosen:
-        frame = load_source_bgr(REAL_RAW_DIR / name)
+    for name, record, path in chosen:
+        assert path is not None
+        frame = load_source_bgr(path)
         strip = ref_strip_at(frame, record, REAL_ASSETS_ROOT)
         observed = imread_png(processed / name)
         reference = imread_png(processed / "ref" / name)

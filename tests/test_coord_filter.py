@@ -161,7 +161,12 @@ def test_generate_processed_ref_applies_coord_filter(tmp_path: Path) -> None:
     locate_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     names, skipped = prepare_data.generate_processed_ref(
-        raw_dir, locate_path, assets, processed, workers=1, zmdmap_root=zmd
+        prepare_data.raw_samples(raw_dir, tmp_path / "empty_raw"),
+        locate_path,
+        assets,
+        processed,
+        workers=1,
+        zmdmap_root=zmd,
     )
 
     assert names == [kept_name]
