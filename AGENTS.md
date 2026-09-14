@@ -10,6 +10,10 @@ Issue 存放在本仓库的 GitHub Issues，通过 `gh` CLI 操作。见 `docs/a
 
 使用五个规范 triage 角色的默认标签（标签名即角色名）。见 `docs/agents/triage-labels.md`。
 
+### Engineering notes
+
+跨模块契约、不变量与模块归属见 `docs/agents/engineering.md`。
+
 ### Domain docs
 
 单上下文布局：根目录 `CONTEXT.md` + `docs/adr/`。见 `docs/agents/domain.md`。

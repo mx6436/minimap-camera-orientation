@@ -1,225 +1,104 @@
 # 小地图摄像机角度识别
 
-本项目训练一个小型 PyTorch 模型，从《明日方舟：终末地》的小地图截图中预测**摄像机角度**，即训练样本文件名后缀 `_r<角度>.png` 所编码的角度。角度以度为单位，取值范围 `[0, 360)`。
+从《明日方舟：终末地》的实时小地图预测摄像机角度（`[0, 360)`，顺时针为正），供 MaaEnd 等自动化工具对齐视角。模型在极坐标展开的条带上做 360 bin 分类，输出角度概率分布。
 
-领域术语与核心约束（小地图世界锚定、方向指示器、视野扇形、箭头等）见 [CONTEXT.md](./CONTEXT.md)。
+## 背景
 
-模型输入是**极坐标展开**：把小地图环形区域展开为 360x42 BGR 图像——角度映射到 x 轴（1°/列，正北为第 0 列，顺时针为正），半径映射到 y 轴（内径在上）。位于中心圆内的箭头被排除在输入之外；0/360 接缝以循环卷积（circular padding）连通。
+小地图是世界锚定的：地形永远正北朝上，不随摄像机旋转，画面中唯一可靠的朝向信号是视野扇形。中心箭头指示的是角色朝向，与摄像机朝向可能不同步甚至相反，预处理时必须排除。完整术语与约束见 [CONTEXT.md](./CONTEXT.md)。
 
-**参考配对**输入（模式名 `ref`）在同一展开几何上增加一路参考：用 MapLocator 定位到的 zone 底图在 `(x, y)` 处裁出与观测同视野的 118x120 参考图（按 zone 尺度比，见下），观测与参考各自极坐标展开后并列拼接为 7 通道 `[obs.BGR, ref.BGR, ref.A]`（不预先相减）：`ref.BGR` 是参考裁剪的合成 BGR（观测背底合成，参考缺失处逐像素 copy 观测），`ref.A` 是底图资产的原始 alpha（0 = 参考缺失）。两种模式的数据、训练与实机推理路径都可用，模式由 `train.toml` / run `record.json` 选择。
+## 两种输入模式
 
-## 工作流
+观测小地图在极坐标下展开成条带后喂给模型：
 
-依赖由 [uv](https://docs.astral.sh/uv/) 管理。先运行一次 `uv sync` 创建 `.venv` 并安装锁定依赖，之后通过 `uv run` 执行各脚本：
+- **`polar`**：只用观测条带，3 通道 BGR。
+- **`ref`**：加上一路参考条带，7 通道 `[obs.BGR, ref.BGR, ref.A]`。参考由 MapLocator 定位到的 zone 底图按定位坐标裁出同视野、同尺度的一小块；`ref.A` 标记参考缺失（0 = 缺失）。模型对比两者地形差异判断朝向，精度更高，代价是数据管线多一步定位。
 
-```bash
-uv run locate_dataset.py                  # ref 前置：对 train_raw + val_raw 并集批量定位（可断点续跑）
-uv run prepare_data.py                    # polar：极坐标展开 + 目录划分
-uv run prepare_data.py --mode ref         # ref：观测/参考各自展开 + 目录划分
-uv run train --run-dir runs/<name>        # 输入由 train.toml 的 input_mode 选择
-uv run export_preprocess.py --out runs/<name>/bundle/preprocess.onnx   # 前处理图（定义模块导出）
-uv run export_onnx.py --run-dir runs/<name>                            # 分类器图 polar.onnx / polar_with_ref.onnx
-uv run export_artifact.py --out runs/<name>/bundle --polar-run runs/<polar_run> --ref-run runs/<ref_run>   # 交付三图 + manifest
-```
+## 快速开始
 
-测试通过 pytest 运行：`uv run pytest`。
-
-`prepare_data.py` 是唯一的前处理脚本，一条命令完成 raw → 模型输入 → 划分（polar 或 ref）。原始输入是 `data/train_raw`（训练侧）与 `data/val_raw`（验证侧）两个目录，**由人维护、脚本只读**；划分由样本所在目录表达，没有清单机制，跨侧同名样本硬报错（划分不得泄漏）。polar 的 train/val 就是两目录各自全量；ref 的 train/val 是各自一侧经定位、资产、坐标一致性过滤后的子集，任一侧为空硬报错。角度标签支持一位小数（如 `_r210.9.png`），训练目标保留浮点精度。
-
-每种模式各自清空并重写自己的 processed / train / val 目录（processed 是否重写由缓存戳决定，见下）；只有 `data/train_raw` 与 `data/val_raw` 永不被脚本改动。ref 模式的定位产物单独维护在 `data/locator/`（不随 `prepare_data.py` 清空）。processed 目录挂 `.preprocess.json` 缓存戳（定义哈希 + 图版本 + 输入指纹，定义哈希覆盖整帧到观测 ROI 的几何）：与当前定义一致且产物文件齐全时跳过重写，定义变更 / 输入增删 / `--force` 时重生成；polar 的指纹是两侧样本名并集，ref 另含所消费的 `zone`/`x`/`y`/`scale`，样本在两目录间移动不改变并集、不触发重算。train/val 是 processed 的符号链接视图，每次运行重建并校验悬空链接。原始图解码用线程池并行（`--workers`，默认 `min(16, CPU 数)`；`--workers 1` 串行），前处理与落盘仍在主线程串行，产物与串行路径逐字节一致。
-
-训练入口是控制台命令 `uv run train`，只负责训练：读取训练/验证目录，从不复制、移动或划分图像。全部训练参数集中在根目录 [`train.toml`](./train.toml)：每个键都有代码内默认值，文件明示当前基线，未知键硬报错。CLI 只保留调用管道：`--config`（默认 `train.toml`）、`--run-dir`（必填，run 产物目录）、`--device`（auto/cpu/cuda）、`--threads`（CPU 线程，默认 8）与 `--smoke`（正常路径只跑一个 epoch，用于验证流程，不能替代完整训练）。
-
-`train.toml` 的 `input_mode` 选择训练数据：`"polar"`（默认）读 `data/train`、`data/val`；`"ref"` 读 `data/train_ref`、`data/val_ref`。ref 数据的资产根不在配置里：`prepare_data.py --mode ref` 把它写进 `data/processed_ref` 的缓存戳，训练读戳并写入 run 的 `record.json`（`ref_reference_assets_root`），供实机推理读取；换资产根会触发数据重生成。运行档案的 schema 与输入模式词汇（合法模式、模式→输入通道数、资产根字段、旧档案默认）由 `endfield/run_record.py` 单点持有：训练经它写，实机与交付经它读，checkpoint 通道核对也在该 interface 上。ref 模式还可选 `max_ref_missing`（0~1）：训练集在读取时排除环内 `ref.A<255` 占比**严格大于**阈值的样本（等于阈值保留），val 不变；阈值一并写入 `record.json`。
-
-`endfield/preprocess.py` 是前处理的**唯一定义模块**（#25）：极坐标展开几何、参考采样与条带域合成、采样/取整约定都在这里，训练数据生成、`preprocess.onnx` 导出与 live 共用它。`export_preprocess.py --out <path>` 导出交付的前处理图（契约见图 metadata 与下节）：输入 `minimap` `[1,120,118,3]` uint8、`asset` `[1,H,W,4]` BGRA uint8（H/W 动态）、标量 `x`/`y`/`scale`，输出 `observed` `[1,42,360,3]` 与 `reference` `[1,42,360,4]` uint8；7 通道拼装留给消费方。
-
-`export_onnx.py` 把 run 的 `best.pt` 导出为 ONNX 交付格式（默认按模式命名 `<run-dir>/polar.onnx` / `<run-dir>/polar_with_ref.onnx`），输入布局与训练契约一致：polar 为 `[1,42,360,3]` 观测条带，ref 为 `[1,42,360,7]` `[obs.BGR, ref.BGR, ref.A]` 参考配对条带；模式从 run 的 `record.json` 读取。导出后即做结构断言并在 ORT 1.19.2 加载校验；`/255` 折入首层卷积，图内只留 HWC→CHW 转置与 softmax，输出 `[1,360]` 概率质量函数。
+需要 Python 3.12 与 [uv](https://docs.astral.sh/uv/)：
 
 ```bash
-uv run export_onnx.py --run-dir runs/<name>                        # 输出 runs/<name>/polar.onnx 或 polar_with_ref.onnx
-uv run export_onnx.py --run-dir runs/<name> --output /tmp/model.onnx
+uv sync
+uv run pytest
 ```
 
-`export_artifact.py` 是交付入口：把定义模块导出的 `preprocess.onnx` 与两个 run 的分类器图装进同一个 bundle，并写 `manifest.json`（git commit、definition hash、每图 sha256 与模型指标、fixture 清单、容差剖面）。导出后做结构自检（manifest ↔ 图 metadata ↔ 文件哈希互证、ORT 1.19.2 可加载），失败退出码 1。polar 与 polar_with_ref 分属不同 run，两个 run 在调用处必填；交付实例的来源由 bundle 自身的 `run_dir` / `metrics` 记录（本机产物，不进文档）。同一 run + 同一定义 + 同一工具链重复导出，图与 manifest 逐字节一致。
+### 数据
+
+单张截图是训练/验证样本，文件名以 `_r<角度>.png` 结尾标注摄像机角度，支持一位小数（如 `_r210.9.png`）。截图按训练侧与验证侧分开准备：
+
+- `data/train_raw`：训练侧原始截图。由人维护，脚本只读。
+- `data/val_raw`：验证侧，语义同上。划分由样本所在目录决定；跨侧同名样本会硬报错。
+
+### polar
+
+```bash
+uv run prepare_data.py                  # raw -> data/processed，并建 data/train、data/val 视图
+uv run train --run-dir runs/<name>      # 训练参数见 train.toml
+uv run live.py --run-dir runs/<name>    # 实机预览，见下
+```
+
+### ref
+
+先批量定位（可断点续跑），再生成观测与参考两路：
+
+```bash
+uv run locate_dataset.py                # -> data/locator
+uv run prepare_data.py --mode ref       # -> data/processed_ref，并建 data/train_ref、data/val_ref
+uv run train --run-dir runs/<name>      # train.toml 里 input_mode = "ref"
+```
+
+定位与 ref 实机推理依赖本机的 MapLocator 工作台 `local/maplocator/`，搭建见 [docs/maplocator-workspace.md](docs/maplocator-workspace.md)。
+
+### 数据目录
+
+- `data/processed`（polar）/ `data/processed_ref`（ref）：前处理产物，挂缓存戳，定义或输入变化时重生成。
+- `data/train`、`data/val`（polar）/ `data/train_ref`、`data/val_ref`（ref）：划分视图，符号链接到 processed。
+- `data/locator/`：ref 的定位产物（`locate_dataset.py` 增量维护）。
+- `runs/<name>/`：一次训练的产物目录（checkpoint、`record.json`、指标与曲线），由 `--run-dir` 指定，`live.py` 与导出从这里读。
+
+## 实机预览
+
+游戏在 gamescope 会话中运行时，叠加显示圆盘、模型输入与概率曲线：
+
+```bash
+uv run live.py --run-dir runs/<name>                            # 输入模式由 run 的 record.json 决定
+uv run live.py --run-dir runs/<name> --snapshot <overlay 路径>  # 保存一张 overlay 后退出
+```
+
+## 交付
+
+`export_artifact.py` 一次导出交付 bundle：`preprocess.onnx` + `polar.onnx` + `polar_with_ref.onnx` + `manifest.json`。
 
 ```bash
 uv run export_artifact.py --out runs/<name>/bundle \
     --polar-run runs/<polar_run> --ref-run runs/<ref_run>
-uv run verify_artifact.py --bundle runs/<name>/bundle --report <report.json>   # 数值 conformance（证据落报告）
 ```
 
-`live.py` 对运行中的游戏做实时推理：从 `--run-dir` 的 `record.json` 读取 `input_mode`（旧 record 无此字段时按 polar 兼容），polar 每帧经定义模块展开；ref 起 `map-locate --stream` 常驻子进程做流式定位（定位在独立线程，显示循环不阻塞），按定位 `(zone, x, y, scale)` 由定义模块裁参考、合成后拼 `[obs.BGR, ref.BGR, ref.A]` 7 通道张量，再喂模型；定位不可用（失败 / held / 低分 / 资产缺失）时 overlay 显示等待态。overlay 展示圆盘、当前模型输入（极坐标展开 / ref 的 obs 与 ref 两路）与 360 bin 概率曲线；`--snapshot <path>` 在拿到首个有效定位后保存一张 overlay 并退出（实机 smoke 取证用）。ref 实机推理依赖 gitignored 的 `local/maplocator/`（含 `--stream` 的迭代二进制；布局、CLI 契约与重建见 [docs/maplocator-workspace.md](docs/maplocator-workspace.md)）。
-
-## 工件校验（conformance）
-
-`verify_artifact.py` 对交付 bundle 做一致性校验：ORT 1.19.2 跑图，逐 fixture 与参考实现（定义模块 `endfield/preprocess.py`，唯一实现）比对并应用容差，输出通过/失败与差异明细。判定口径见 map 的「模型级等价」：不承诺与 C++ 逐位一致，uint8 条带按 ±1 LSB 预期。
-
-环境固定为 Python 3.12 + dev 依赖 `onnxruntime==1.19.2`（与 MaaEnd 运行时同版本，`pyproject.toml` 固定）；运行时版本不一致直接判 error（证据作废）。
-
-### 用法
+### 工件校验（conformance）
 
 ```bash
-uv run verify_artifact.py --bundle runs/<name>/bundle          # 结构 + 全量内置 fixtures
-uv run verify_artifact.py --bundle <dir> --run-dir runs/<name> # 追加分类器 ↔ checkpoint 数值比对
-uv run verify_artifact.py --bundle <dir> --fixture-dir <dir>   # 用本地真实样本 fixtures
-uv run verify_artifact.py --bundle <dir> --report report.json  # 落 JSON 证据
-uv run verify_artifact.py --dump-fixtures conformance/fixtures # 物化内置 fixtures
+uv run verify_artifact.py --bundle runs/<name>/bundle   # 结构自检 + 内置场景数值比对
 ```
 
-- 退出码：0 = 通过（允许 warning），1 = 存在 error 或超容差比对。
-- `--require` 缺省由 manifest 的 `graphs` 决定；无 manifest 的草稿 bundle 只要求 `preprocess`。
-- `--run-dir` 提供后，分类器图与 checkpoint 逐 fixture 比对 pmf（torch 侧 `ExportWrapper`）；manifest 的 `graphs.<role>.run_dir`（相对 bundle 目录）优先于 CLI。
+判定口径与其余用法见 `--help`，契约细节见 [docs/agents/engineering.md](docs/agents/engineering.md)。
 
-### bundle 与 manifest
+### 拷入 MaaEnd
 
-bundle 目录（对应 MaaEnd 交付布局）含 `preprocess.onnx`、`polar.onnx`、`polar_with_ref.onnx` 与 `manifest.json`（由 `export_artifact.py` 产出）：
-
-```json
-{
-  "schema_version": 1,
-  "git_commit": "<训练/导出时的 commit>",
-  "definition_hash": "<endfield.conformance.definition_hash() 的 sha256>",
-  "ort_version": "1.19.2",
-  "graphs": {
-    "preprocess": {"file": "preprocess.onnx", "sha256": "<文件 sha256>",
-                   "outputs": {"observed": "observed", "reference": "reference"}},
-    "polar": {"file": "polar.onnx", "sha256": "<文件 sha256>",
-              "run_dir": "../../<polar_run>", "input_mode": "polar", "input_channels": 3,
-              "metrics": {"best_epoch": "<int>", "val_count": "<int>",
-                          "val_rms_error_deg": "<float / 度>",
-                          "val_expected_abs_error_deg": "<float / 度>"}},
-    "polar_with_ref": {"file": "polar_with_ref.onnx", "sha256": "<文件 sha256>",
-              "run_dir": "../../<ref_run>", "input_mode": "ref", "input_channels": 7,
-              "metrics": {"best_epoch": "<int>", "val_count": "<int>",
-                          "val_rms_error_deg": "<float / 度>",
-                          "val_expected_abs_error_deg": "<float / 度>"}}
-  },
-  "fixtures": ["polar_basic", "..."],
-  "tolerances": {"strips_uint8": 1, "pmf_float32": 1e-4, "gap_fraction": 0.01}
-}
-```
-
-- `graphs` 列出的图必须存在，缺一即 error；它也是缺省 `--require` 集。
-- `outputs` 把输出角色映射到图内输出名（缺省按图输出顺序：第一 = observed，第二 = reference）。
-- `sha256` 是图文件哈希；`input_mode` / `input_channels` 与分类器图 metadata 互证——bundle 内三图必须同源（同一次导出、同一 git commit / definition hash），换图后忘更新 manifest 会在结构自检/conformance 里报错。
-- `run_dir` 相对 **bundle 目录**（仅供仓库内 conformance 重放定位 checkpoint，拷入 MaaEnd 不需要）：bundle 在 `runs/<name>/bundle`、run 在 `runs/<polar_run>` 时写作 `../../<polar_run>`。
-- `definition_hash` 与当前定义源码不一致 = bundle 与定义不同源，error（需重导出）。
-- `metrics` 是模型级指标（数字：best epoch、val 数量、RMS / 期望绝对误差，度），与分类器图 metadata 的 `val_*_deg` 一致。
-- `fixtures` 缺省为内置 8 个场景；`tolerances` 覆盖默认剖面。
-
-### 拷入 MaaEnd（模型子模块）
-
-bundle 三图对应 MaaEnd 交付布局 `assets/resource/model/map/cameraorientation/`；模型子模块 `assets/resource/model` 是独立仓库（分支 `feat/camera-orientation`），拷入与提交都在子模块内完成，与 MapLocator 代码替换（#31）同一批提交：
+bundle 三图对应 MaaEnd 交付布局 `assets/resource/model/map/cameraorientation/`，`manifest.json` 留在本仓作为交付凭据。拷入与提交在 MaaEnd 的模型子模块内完成：
 
 ```bash
-MAAEND=<MaaEnd 工作副本>          # 先与 origin 同步、切到 feat/camera-orientation
+MAAEND=<MaaEnd 工作副本>        # 切到 feat/camera-orientation
 BUNDLE=runs/<name>/bundle
-
 mkdir -p "$MAAEND/assets/resource/model/map/cameraorientation"
-cp "$BUNDLE/preprocess.onnx" "$BUNDLE/polar.onnx" "$BUNDLE/polar_with_ref.onnx" \
+cp "$BUNDLE"/{preprocess,polar,polar_with_ref}.onnx \
    "$MAAEND/assets/resource/model/map/cameraorientation/"
-
-cd "$MAAEND/assets/resource/model"        # 模型子模块（独立仓库）
-git add map/cameraorientation
-git commit -m "model: cameraorientation 三图工件"
-git push origin feat/camera-orientation   # 父仓库随后更新子模块指针（#31）
+cd "$MAAEND/assets/resource/model"
+git add map/cameraorientation && git commit -m "model: cameraorientation 三图工件" && git push
 ```
 
-- 文件名固定 `preprocess.onnx` / `polar.onnx` / `polar_with_ref.onnx`，MapLocator 接线（#31）按这三个名字解析；
-- `manifest.json` 是训练侧交付凭据（git commit、定义哈希、指标、fixtures、容差），不进 MaaEnd 资源树，留在本仓库 bundle；
-- 旧图 `cameraorientation.onnx` / `cao_ref.onnx` 在 #31 的替换提交里一并删除。
+## 文档
 
-### fixtures
-
-fixture 是「输入场景」，期望输出在比对时由参考实现实时计算，不落 golden。两种来源：内置场景（`endfield/conformance.py`）与 `--fixture-dir` 目录下的 `*.npz`（`--dump-fixtures` 的产物或本地真实样本，字段同名）。
-
-| 字段 | 含义 |
-| --- | --- |
-| `name` / `description` / `tags` | 标识与覆盖类别 |
-| `minimap` | 118x120 BGR uint8 观测 ROI |
-| `asset` | HxWx3/4 uint8 底图；3 通道视为完全不透明 |
-| `x` / `y` / `scale` | MapLocator 定位坐标与 `ZoneTemplateScale` |
-
-内置 8 个场景覆盖：极坐标（`polar_basic`）、参考配对（`ref_pair_basic`）、裁剪越界（`crop_out_of_bounds`）、非 1:1 zone（`zone_non_1to1`，scale=15/16）、参考缺失（`ref_missing_alpha0`）、资产 3 通道（`asset_rgb_3ch`）、空裁剪窗（`window_empty_oob`，全部越界 → ref.A 全 0、ref.BGR 等于观测）、负坐标裁剪（`crop_negative_corner`，窗口裁到资产边界）。
-
-### 结构与数值断言
-
-- `preprocess.onnx`：存在 `GridSample`，且 opset 18 下 `mode="bilinear"` / `align_corners=0`；`padding_mode` 按采样角色区分（观测/minimap 为 `border`、资产为 `zeros`，按节点 X 输入的来源图输入归属）；`X`/`grid` 为 float32（uint8 需图内 Cast）；`asset` 的 H/W 为动态维；输出条带 uint8、形状 42x360x3/4；无 contrib 域节点。
-- `polar.onnx` / `polar_with_ref.onnx`：输入 uint8 42x360x3/7，输出 float32 [1,360]，无 contrib 域节点。
-- 数值：每个输出报 `max_abs` / `mean_abs` / `p99_abs` / `diff_fraction`，**通过条件 = `max_abs <= limits[profile]`**（形状或 dtype 不符直接失败）。缺口占比（`ref.A < 255`）另报绝对误差；分类器与 checkpoint 另报 `angle_error_deg`（argmax 环差，仅供证据，不作门限）。
-
-默认容差剖面：
-
-| 剖面 | 适用 | 缺省上限 | 依据 |
-| --- | --- | --- | --- |
-| `strips_uint8` | 条带输出 | 1 | ±1 LSB 口径（#22 研究） |
-| `pmf_float32` | 分类器 pmf | 1e-4 | float32 导出等价 |
-| `gap_fraction` | 缺口占比 | 0.01 | 1 个百分点 |
-
-阈值只在 manifest 的 `tolerances` 覆盖；覆盖要有证据（#23 对拍分布），失败先回票定位（图/定义/环境），不得为通过而放宽。
-
-### 定义模块与 preprocess.onnx
-
-定义模块已落地：`endfield/preprocess.py` 是整帧到观测 ROI、极坐标展开、参考采样与条带域合成的唯一实现（#25，clean_ideal 语义）。`#36` 起资产采样为**窗口优先**：先按 `(x,y,scale)` 裁采样窗，再只把窗口转 float32 NCHW 并采样，消除与底图像素数成正比的整图搬运（#35 分解：Wuling 每帧 ~9.55 ms）；训练/数据生成与导出图共用同一实现，processed 缓存随 `definition_hash` 失效重生成（不重训）。`verify_artifact.py` 的参考侧（`expected_strip_pair()`）与 `definition_hash()` 都指向它；旧的 cv2 前处理（`polar.unwrap` / `ref.reference_crop` 等）已删除，`polar.py`/`ref.py` 只保留 I/O 与适配。
-
-`export_preprocess.py --out <path>` 导出交付图，契约如下（同时写入图 metadata）：
-
-| 项 | 契约 |
-| --- | --- |
-| 输入 | `minimap` uint8 `[1,120,118,3]` NHWC BGR；`asset` uint8 `[1,H,W,4]` NHWC BGRA（H/W 动态）；`x`/`y`/`scale` float32 标量（`scale` = 定位记录的 `ZoneTemplateScale`） |
-| 输出 | `observed` uint8 `[1,42,360,3]`（obs.BGR）；`reference` uint8 `[1,42,360,4]`（ref.BGR + ref.A）；7 通道拼装与缺口分派在消费方 |
-| 几何 | 极点 `(59.0,60.0)` ROI 像素中心，内径 12、外径 54，42 行 x 360 列（1 度/列，正北 = 列 0，顺时针为正） |
-| 采样 | 观测：在条带网格上对 minimap 一次双线性采样（padding `border`）；参考：窗口优先（#36）——由 `(x,y,scale)` 与条带几何裁出覆盖全部采样点及双线性支撑的窗口（裁到资产边界、空窗退化为 1 像素即参考全缺失），坐标减窗口原点、按窗口宽高归一化后一次采样（padding `zeros`，越界 = 参考缺失）；与整图采样数值等价（observed 逐字节、reference ≤1 LSB） |
-| 合成 | 条带域一次完成 `ref.BGR = rgb*(a/255) + obs*(1-a/255)`；每个输出一次 Round（半偶）+ Cast uint8 |
-| 图结构 | opset 18，`mode="bilinear"`、`align_corners=0`，无 contrib 域节点；asset 先经数据相关 `Slice` 裁采样窗（窗口优先），整图 Transpose/Cast 不在图内（#35/#36） |
-
-资产的 3 通道入口在消费侧归一化（补 255 alpha 成全不透明 BGRA，`normalize_asset`），图内严格 4 通道；3 通道 fixture 由 conformance 侧归一化后喂图。
-
-## 数据定位（MapLocator 批量）
-
-`locate_dataset.py` 对 `data/train_raw` 与 `data/val_raw` 的并集逐张运行 MapLocator，产出 ref 前处理所需的定位产物与汇总：
-
-```bash
-uv run locate_dataset.py                 # 默认 4 个并行进程；已成功样本跳过，可断点续跑
-```
-
-- `data/locator/locate.jsonl`：每行一条定位记录（schema 见下表）。
-- `data/locator/summary.json`：成败计数、失败分类、调用次数分布、locConf 分布、按命名族成功率。
-
-定位 CLI 与资源放在 gitignored 的本地工作台 `local/maplocator/`（布局、来源与重建见 [docs/maplocator-workspace.md](docs/maplocator-workspace.md)）；仓库内脚本只引用该目录，不引用仓库外路径。
-
-`locate.jsonl` 的字段是工作台 CLI 的输出契约（含 `scale` 语义），见上述工作台文档。解析后由脚本写入入选门标注：`status==0` 且 `!isHeld` 且 `locConf >= 0.55` 才入选，否则为 `held` / `below_loc_threshold` / 失败类别。
-
-重复运行幂等：已成功样本跳过，失败项重跑覆盖；held 与低分记录保留在产物中但 `accepted=false`。
-
-### 参考配对前处理（ref）
-
-`uv run prepare_data.py --mode ref` 消费上节的定位产物，把观测与参考各自展开后落盘为两路：
-
-- **姿态来源**：`locate.jsonl` 中 `accepted=true` 的记录；参考裁剪的 `(zone, x, y, scale)` 一律取自 MapLocator 输出。文件名的 `(map, x, y)` **不参与裁剪**，只用于坐标一致性核对（见下）。
-- **坐标一致性过滤（#33）**：文件名标注与定位记录是两批独立采集（MapLocator 命名族、MapTracker 命名族）；`endfield/coord_filter.py` 把标标注换算到定位记录所在资产帧（region↔前缀表、ZmdMap level 矩形、`SCALE_MAP_FACTOR=0.1625`、`Base.png` 尺寸，均取自上游既有约定），`max(|Δx|, |Δy|) > 5`、zone/区域对不上、以及命名不在支持范围内的样本**不进入数据集**（计入 skipped 原因 `coord_delta` / `coord_zone` / `coord_unsupported`）。换算需要工作台里的 `local/maplocator/data/ZmdMap/`（MaaEnd `assets/data/ZmdMap/*_layout.json` 的镜像）；只有出现 MapTracker 命名样本时才读（来源与刷新见工作台文档）。
-- **样本范围与划分**：定位失败 / held / 低分（`accepted=false`）、zone 资产缺失、坐标一致性过滤拒绝的样本跳过并计数，不算错误；划分 = 样本所在目录一侧的可用子集（任一侧为空硬报错），train/val 视图只链接各自一侧的可用样本。
-- **参考底图**：按 `zone` 反解资产路径（`{P}_Base → {P}/Base.png`、`{P}_L{n}_{m} → {P}/Lv{int(n):03d}Tier{m}.png`、其它 → 任意子目录下 stem 同名文件）；tier zone 的 `(x,y)` 就是切片自身像素空间（实测与观测小地图 1:1，直接裁切片，无需仿射）。
-- **参考裁剪**：由定义模块一次采样完成：资产坐标 = `(x, y) + (q_roi - 极点) * scale`（精确亚像素中心与精确 `scale`），尺度取定位记录的 `scale` 字段（即 MapLocator 的 `ZoneTemplateScale`）：绝大多数 zone 是 1:1；`ValleyIV_Base` 的底图相对观测缩放过 6.7%（15/16）。越界处读 0 = 参考缺失，不失败。
-- **观测流**：原始截图按 720p 基准裁出 118x120 ROI，由定义模块在条带网格上双线性采样一次，输出 42x360x3 BGR，与 polar 模式的 `data/processed` 同源同几何。
-- **参考流**：`ref.A` 为资产原始连续 alpha 的同一网格采样（不二值化、不设阈值），裁剪越界与资产 `alpha<255` 统一为「参考缺失」，`ref.A = 0`。`ref.BGR` 在条带域一次合成 `rgb*(a/255) + obs*(1 - a/255)`（每输出一次 Round）：alpha==0 处逐像素等于观测（缺失处 copy 观测）、alpha==255 处等于资产像素。
-- **产物布局**（两路分别落盘）：`data/processed_ref/<name>.png` 为观测流（42x360x3 BGR），`data/processed_ref/ref/<name>.png` 为参考流（42x360x4 BGRA，B/G/R = 参考 BGR，A = 原始 alpha）；`data/train_ref`、`data/val_ref` 是同一布局的符号链接视图，`ref/` 子树一并链接。
-- **模型输入**：两路按通道拼接为 42x360x7；训练侧由 `train.toml` 的 `input_mode = "ref"` 选择数据根；`record.json` 记 `ref_reference_assets_root`（取自数据缓存戳）；`live.py` 的 ref 推理路径与 `prepare_data.py` 共用定义模块 `endfield/preprocess.py`，产物同源。
-- **确定性**：重复运行产物逐字节一致。
-- **缓存**：`data/processed_ref/.preprocess.json` 挂定义哈希 + 图版本 + 输入指纹（可用样本名与 `zone`/`x`/`y`/`scale`，其他定位字段不入指纹）；命中且两路产物齐全即跳过重写，定义 / 定位记录 / 输入样本变更或 `--force` 触发重生成。
-- **训练样本过滤（可选；与上条数据层过滤不同层，两层同时生效）**：`train.toml` 的 `max_ref_missing`（0~1）在读取训练集时排除环内 `ref.A<255` 占比**严格大于**阈值的样本（等于阈值保留），只影响训练集，val 不变；`prepare_data.py` 始终按数据层过滤后的集合落盘，`max_ref_missing` 不改磁盘数据。
-
-## 数据目录
-
-只有 `data/train_raw` 与 `data/val_raw` 是人工维护的输入目录，脚本只读；其余内容均为脚本输出。划分由样本所在目录表达：polar 两目录各自全量，ref 取各自一侧的可用子集。processed 目录带缓存戳（命中则跳过重写），train/val 是 processed 的符号链接视图、每次运行重建：
-
-- `data/train_raw`：训练侧原始截图（`_r<角度>.png`）；任何脚本都不会修改它。
-- `data/val_raw`：验证侧原始截图，语义同上；跨侧同名样本硬报错。
-- `data/processed`：polar 处理输出（两侧并集的极坐标展开）。
-- `data/train` / `data/val`：polar 划分视图（符号链接到 `data/processed`；磁盘上不做增强）。
-- `data/processed_ref`：ref 处理输出（可用样本的观测流与 `ref/` 参考流）。
-- `data/train_ref` / `data/val_ref`：ref 划分视图（符号链接到 `data/processed_ref`，含 `ref/` 子树）。
-- `data/processed/.preprocess.json` / `data/processed_ref/.preprocess.json`：缓存戳（定义哈希、图版本、commit、输入指纹）；删除它或用 `--force` 即强制重生成。
-- `runs/`：checkpoint 与 JSON 实验结果。
-- `data/locator/`：MapLocator 定位产物（`locate.jsonl`、`summary.json`），由 `locate_dataset.py` 增量维护（不随 `prepare_data.py` 清空）。
+- [CONTEXT.md](./CONTEXT.md)：领域术语与核心约束
+- [docs/adr/](docs/adr/)：架构决策记录
+- [docs/maplocator-workspace.md](docs/maplocator-workspace.md)：本地工作台布局与重建
+- [docs/agents/engineering.md](docs/agents/engineering.md)：工程契约、不变量与模块归属（改代码前读）
