@@ -590,7 +590,9 @@ def main() -> None:
                 strip = preprocess.observed_strip(observed_roi(to_base_frame(frame)))
                 angle, confidence, probs = predict_probs(model, strip)
                 disc = render_disc(frame, cx, cy, r_out)
-                display = draw_overlay(disc, angle, confidence, probs, strip, input_label)
+                display = draw_overlay(
+                    disc, angle, confidence, probs, _model_input_panel(mode, strip, input_label)
+                )
                 ready = True
 
             cv2.imshow("minimap angle", display)
