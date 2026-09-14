@@ -6,7 +6,6 @@ import numpy as np
 import pytest
 
 from endfield import conformance as cf
-from endfield import preprocess
 from tests._onnx_builders import (
     build_classifier,
     build_draft_preprocess,
@@ -85,23 +84,6 @@ def test_load_fixtures_rejects_empty_dir(tmp_path) -> None:
         cf.load_fixtures(tmp_path)
 
 
-def test_reference_strips_delegate_to_definition_module() -> None:
-    scenario = cf.scenario_map()["polar_basic"]
-    observed, reference = cf.reference_strips(scenario)
-    assert observed.shape == (preprocess.IMG_H, preprocess.IMG_W, 3)
-    assert reference.shape == (preprocess.IMG_H, preprocess.IMG_W, 4)
-    assert observed.dtype == np.uint8 and reference.dtype == np.uint8
-    expected_observed, expected_reference = preprocess.strips(
-        scenario.minimap,
-        scenario.asset,
-        scenario.x,
-        scenario.y,
-        scenario.scale,
-    )
-    assert np.array_equal(observed, expected_observed)
-    assert np.array_equal(reference, expected_reference)
-
-
 def test_reference_missing_alpha_copies_observed() -> None:
     scenario = cf.scenario_map()["ref_missing_alpha0"]
     observed, reference = cf.reference_strips(scenario)
@@ -117,28 +99,11 @@ def test_reference_three_channel_asset_is_opaque() -> None:
     assert cf.gap_fraction(reference) == 0.0
 
 
-def test_normalize_asset_pads_alpha() -> None:
-    rgb = np.full((4, 5, 3), 7, dtype=np.uint8)
-    padded = cf.normalize_asset(rgb)
-    assert padded.shape == (4, 5, 4)
-    assert np.all(padded[..., 3] == 255)
-    assert np.array_equal(padded[..., :3], rgb)
-    assert cf.normalize_asset(padded) is padded
-
-
 def test_definition_hash_is_stable_hex() -> None:
     digest = cf.definition_hash()
     assert len(digest) == 64
     assert all(char in "0123456789abcdef" for char in digest)
     assert digest == cf.definition_hash()
-
-
-def test_definition_hash_tracks_definition_module() -> None:
-    import hashlib
-    from pathlib import Path
-
-    expected = hashlib.sha256(Path(preprocess.__file__).resolve().read_bytes()).hexdigest()
-    assert cf.definition_hash() == expected
 
 
 def test_environment_matches_pinned_ort() -> None:

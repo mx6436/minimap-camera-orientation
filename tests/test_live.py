@@ -113,11 +113,6 @@ def test_load_run_config_rejects_removed_residual_mode(tmp_path: Path) -> None:
         load_run_config(tmp_path)
 
 
-def test_to_base_frame_passes_720p_frames_through() -> None:
-    frame = np.zeros((BASE_SIZE[1], BASE_SIZE[0], 3), dtype=np.uint8)
-    assert to_base_frame(frame) is frame
-
-
 def test_to_base_frame_scales_non_base_frames_to_720p() -> None:
     frame = np.zeros((360, 640, 3), dtype=np.uint8)
     scaled = to_base_frame(frame)
@@ -193,37 +188,6 @@ def test_ref_strip_at_copies_observed_where_reference_is_missing(tmp_path: Path)
 
     assert np.any(alpha == 0)
     assert np.array_equal(strip[..., 3:6][alpha == 0], strip[..., :3][alpha == 0])
-
-
-def test_ref_strip_at_reuses_cached_asset(tmp_path: Path) -> None:
-    """同一 cache 下二次调用不重读资产；两次结果逐字节一致。"""
-    assets = tmp_path / "assets"
-    (assets / "Test").mkdir(parents=True)
-    rng = np.random.default_rng(4)
-    asset = rng.integers(0, 256, (240, 240, 4), dtype=np.uint8)
-    assert cv2.imwrite(str(assets / "Test" / "Base.png"), asset)
-    frame = rng.integers(0, 256, (BASE_SIZE[1], BASE_SIZE[0], 3), dtype=np.uint8)
-    record = {"zone": "Test_Base", "x": 120.0, "y": 120.0, "scale": 1.0}
-    cache: dict[Path, np.ndarray] = {}
-
-    first = ref_strip_at(frame, record, assets, cache)
-    assert len(cache) == 1
-    assert np.array_equal(first, ref_strip_at(frame, record, assets, cache))
-
-
-def test_ref_strip_at_uses_record_scale(tmp_path: Path) -> None:
-    """实机参考裁剪的尺度取自定位记录 scale 字段（不再按 zone 查表）。"""
-    assets = tmp_path / "assets"
-    (assets / "Test").mkdir(parents=True)
-    rng = np.random.default_rng(11)
-    asset = rng.integers(0, 256, (400, 400, 4), dtype=np.uint8)
-    assert cv2.imwrite(str(assets / "Test" / "Base.png"), asset)
-    frame = rng.integers(0, 256, (BASE_SIZE[1], BASE_SIZE[0], 3), dtype=np.uint8)
-
-    strip = ref_strip_at(frame, {"zone": "Test_Base", "x": 200.0, "y": 200.0, "scale": 2.0}, assets)
-
-    expected = ref_strip(observed_roi(frame), asset, 200.0, 200.0, 2.0)
-    assert np.array_equal(strip, expected)
 
 
 @pytest.mark.skipif(

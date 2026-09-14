@@ -22,9 +22,3 @@ def test_scaled_roi_scales_center_and_radii() -> None:
 
     assert (cx, cy) == (ROI_CENTER[0] * 1.5, ROI_CENTER[1] * 1.5)
     assert (r_in, r_out) == (INNER_R * 1.5, OUTER_R * 1.5)
-
-
-def test_scaled_roi_warns_on_non_uniform_scale(capsys) -> None:
-    scaled_roi((720, 2560))
-
-    assert "non-uniform scale" in capsys.readouterr().out

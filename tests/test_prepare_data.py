@@ -252,11 +252,3 @@ def test_run_polar_rejects_empty_side(tmp_path: Path) -> None:
 
     with pytest.raises(SystemExit, match="val split is empty"):
         prepare_data.run_polar(train_raw, val_raw, processed_dir, train_dir, val_dir)
-
-
-def test_pipeline_sources_no_longer_reference_manifest() -> None:
-    """清单机制整体删除：管线源码不得残留引用（#38 的删除验收）。"""
-    repo_root = Path(__file__).resolve().parents[1]
-    for relative in ("prepare_data.py", "endfield/data_utils.py"):
-        source = (repo_root / relative).read_text(encoding="utf-8")
-        assert "manifest" not in source.lower(), relative

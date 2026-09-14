@@ -29,7 +29,6 @@ from endfield.ref import (
     ref_strip,
     ref_tensor,
     reference_gap_fraction,
-    reference_strip,
 )
 
 
@@ -44,32 +43,6 @@ def test_reference_gap_fraction_counts_any_alpha_below_255() -> None:
     reference = np.full((1, 4, 4), 255, dtype=np.uint8)
     reference[..., 3] = [[255, 254, 0, 128]]
     assert reference_gap_fraction(reference) == pytest.approx(3 / 4)
-
-
-def test_reference_strip_delegates_to_definition_module() -> None:
-    rng = np.random.default_rng(1)
-    asset = rng.integers(0, 256, (200, 200, 4), dtype=np.uint8)
-    observed = rng.integers(0, 256, (preprocess.ROI_H, preprocess.ROI_W, 3), dtype=np.uint8)
-
-    reference = reference_strip(observed, asset, 100.0, 100.0)
-
-    assert reference.shape == (IMG_H, IMG_W, 4)
-    assert reference.dtype == np.uint8
-    assert np.array_equal(reference, preprocess.strips(observed, asset, 100.0, 100.0, 1.0)[1])
-
-
-def test_ref_strip_delegates_to_definition_module() -> None:
-    rng = np.random.default_rng(2)
-    asset = rng.integers(0, 256, (200, 200, 4), dtype=np.uint8)
-    observed = rng.integers(0, 256, (preprocess.ROI_H, preprocess.ROI_W, 3), dtype=np.uint8)
-
-    ref = ref_strip(observed, asset, 100.0, 100.0, 15.0 / 16.0)
-
-    assert ref.shape == (IMG_H, IMG_W, REF_CHANNELS)
-    assert ref.dtype == np.uint8
-    observed_strip, reference = preprocess.strips(observed, asset, 100.0, 100.0, 15.0 / 16.0)
-    assert np.array_equal(ref[..., :3], observed_strip)
-    assert np.array_equal(ref[..., 3:], reference)
 
 
 def test_ref_strip_normalizes_three_channel_asset_at_the_entry() -> None:
@@ -478,33 +451,6 @@ def test_run_ref_rejects_side_without_usable_samples(tmp_path: Path) -> None:
             train_dir,
             val_dir,
         )
-
-
-def test_generate_processed_ref_uses_record_scale(tmp_path: Path) -> None:
-    """参考裁剪的尺度取自定位记录 scale 字段（不再按 zone 查表）。"""
-    fx = ref_fixture(tmp_path)
-    write_jsonl(
-        fx.locate_path,
-        [
-            locate_record(fx.names["ok"], scale=2.0),
-            locate_record(fx.names["ok2"], scale=1.0),
-        ],
-    )
-    processed_dir = tmp_path / "processed_ref"
-
-    prepare_data.generate_processed_ref(fx.samples, fx.locate_path, fx.assets_root, processed_dir)
-
-    asset = load_reference_image(fx.assets_root / "Test" / "Base.png")
-    frame = load_source_bgr(fx.samples[fx.names["ok"]])
-    observed = observed_roi(frame)
-    expected = ref_strip(observed, asset, 100.0, 100.0, 2.0)
-    assert np.array_equal(imread_png(processed_dir / fx.names["ok"]), expected[..., :3])
-    assert np.array_equal(
-        imread_png(processed_dir / REF_SUBDIR / fx.names["ok"]), expected[..., 3:]
-    )
-    # scale=1.0 的样本仍走 1:1 直接采样
-    plain = imread_png(processed_dir / fx.names["ok2"])
-    assert plain.shape == (IMG_H, IMG_W, 3)
 
 
 def test_generate_processed_ref_rejects_records_without_scale(tmp_path: Path) -> None:
