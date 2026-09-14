@@ -25,9 +25,9 @@ from endfield.ref import (
     MAP_ASSETS_ROOT,
     REF_CHANNELS,
     REF_SUBDIR,
+    assemble_ref_pair,
     load_reference_image,
-    ref_strip,
-    ref_tensor,
+    ref_pair,
     reference_gap_fraction,
 )
 
@@ -45,23 +45,23 @@ def test_reference_gap_fraction_counts_any_alpha_below_255() -> None:
     assert reference_gap_fraction(reference) == pytest.approx(3 / 4)
 
 
-def test_ref_strip_normalizes_three_channel_asset_at_the_entry() -> None:
+def test_ref_pair_normalizes_three_channel_asset_at_the_entry() -> None:
     observed = np.zeros((preprocess.ROI_H, preprocess.ROI_W, 3), dtype=np.uint8)
     asset = np.full((200, 200, 3), 9, dtype=np.uint8)
 
-    ref = ref_strip(observed, asset, 100.0, 100.0)
+    ref = ref_pair(observed, asset, 100.0, 100.0)
 
     assert ref.shape == (IMG_H, IMG_W, REF_CHANNELS)
     assert np.all(ref[..., 6] == 255)  # 3 通道资产按完全不透明处理
 
 
-def test_ref_strip_copies_observed_channel_where_reference_is_missing() -> None:
+def test_ref_pair_copies_observed_channel_where_reference_is_missing() -> None:
     rng = np.random.default_rng(8)
     asset = rng.integers(0, 256, (200, 200, 4), dtype=np.uint8)
     asset[:, 90:110, 3] = 0
     observed = rng.integers(0, 256, (preprocess.ROI_H, preprocess.ROI_W, 3), dtype=np.uint8)
 
-    ref = ref_strip(observed, asset, 100.0, 100.0)
+    ref = ref_pair(observed, asset, 100.0, 100.0)
     alpha = ref[..., 6]
 
     assert np.any(alpha == 0)
@@ -69,25 +69,25 @@ def test_ref_strip_copies_observed_channel_where_reference_is_missing() -> None:
     assert np.array_equal(ref[..., 3:6][alpha == 0], ref[..., :3][alpha == 0])
 
 
-def test_ref_tensor_concatenates_channels_in_spec_order() -> None:
+def test_assemble_ref_pair_concatenates_channels_in_spec_order() -> None:
     observed = np.zeros((IMG_H, IMG_W, 3), dtype=np.uint8)
     reference = np.zeros((IMG_H, IMG_W, 4), dtype=np.uint8)
     observed[...] = (1, 2, 3)
     reference[...] = (4, 5, 6, 7)
-    ref = ref_tensor(observed, reference)
+    ref = assemble_ref_pair(observed, reference)
     assert ref.shape == (IMG_H, IMG_W, REF_CHANNELS)
     assert ref.dtype == np.uint8
     for channel, value in enumerate((1, 2, 3, 4, 5, 6, 7)):
         assert np.all(ref[..., channel] == value)
 
 
-def test_ref_tensor_rejects_wrong_stream_shapes() -> None:
+def test_assemble_ref_pair_rejects_wrong_stream_shapes() -> None:
     observed = np.zeros((IMG_H, IMG_W, 3), dtype=np.uint8)
     reference = np.zeros((IMG_H, IMG_W, 4), dtype=np.uint8)
     with pytest.raises(ValueError, match="observed"):
-        ref_tensor(np.zeros((IMG_H, IMG_W, 4), dtype=np.uint8), reference)
+        assemble_ref_pair(np.zeros((IMG_H, IMG_W, 4), dtype=np.uint8), reference)
     with pytest.raises(ValueError, match="reference"):
-        ref_tensor(observed, np.zeros((IMG_H, IMG_W, 3), dtype=np.uint8))
+        assemble_ref_pair(observed, np.zeros((IMG_H, IMG_W, 3), dtype=np.uint8))
 
 
 def write_frame(path: Path, value: int = 200) -> None:
@@ -519,7 +519,7 @@ def real_raw_path(name: str) -> Path | None:
     not REAL_LOCATE_PATH.exists() or not MAP_ASSETS_ROOT.is_dir(),
     reason="real MapLocator locate.jsonl / assets not available",
 )
-def test_real_accepted_sample_builds_ref_strip() -> None:
+def test_real_accepted_sample_builds_ref_pair() -> None:
     records = load_records(REAL_LOCATE_PATH)
     for name, record in sorted(records.items()):
         raw_path = real_raw_path(name)
@@ -533,7 +533,7 @@ def test_real_accepted_sample_builds_ref_strip() -> None:
     x, y = float(record["x"]), float(record["y"])
     observed = observed_roi(load_source_frame(raw_path))
 
-    ref = ref_strip(observed, load_reference_image(asset_path), x, y, record_scale(record))
+    ref = ref_pair(observed, load_reference_image(asset_path), x, y, record_scale(record))
     alpha = ref[..., 6]
 
     assert ref.shape == (IMG_H, IMG_W, REF_CHANNELS)

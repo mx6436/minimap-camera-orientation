@@ -40,7 +40,7 @@ from endfield import preprocess
 from endfield.live import (
     MissingZoneAsset,
     load_run_config,
-    ref_strip_at,
+    ref_pair_at,
     to_base_frame,
 )
 from endfield.locate import LocalizerStream, accept
@@ -555,7 +555,7 @@ def main() -> None:
                             status += f" (locConf={value:.3f})"
                     elif localization is not ready_result:
                         try:
-                            strip = ref_strip_at(
+                            strip = ref_pair_at(
                                 localization.frame,
                                 localization.record,
                                 run_config.assets_root,

@@ -265,7 +265,7 @@ def generate_processed_ref(
 ) -> tuple[list[str], dict[str, str]]:
     """对样本并集中 accepted 定位记录生成 ref 两路展开条带（观测 3ch / 参考 BGRA）。
 
-    每条记录由定义模块 `preprocess.strips` 一次算出两路条带，再按
+    每条记录由定义模块 `preprocess.strip_pair` 一次算出两路条带，再按
     `[obs.BGR, ref.BGR, ref.A]` 切成两路落盘：观测 `<name>.png`、参考 `ref/<name>.png`。
     返回 (产物名, name -> 跳过原因)；跳过原因含 no_locate_record、accept 门原因与
     asset_missing。
@@ -312,7 +312,7 @@ def generate_processed_ref(
             asset_float = prepared_assets[asset_path] = preprocess.prepare_asset(
                 load_reference_image(asset_path)
             )
-        observed_strip, reference = preprocess.strips_prepared(
+        observed_strip, reference = preprocess.strip_pair_prepared(
             observed,
             asset_float,
             float(record["x"]),

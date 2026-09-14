@@ -33,7 +33,7 @@ def test_export_preprocess_matches_definition_module(tmp_path: Path) -> None:
 
     for name in cf.scenario_map():
         scenario = cf.scenario_map()[name]
-        expected_observed, expected_reference = cf.reference_strips(scenario)
+        expected_observed, expected_reference = cf.expected_strip_pair(scenario)
         outputs = cf.run_model(path, _feeds(scenario))
         assert (
             np.abs(
@@ -148,7 +148,7 @@ def test_export_preprocess_handles_other_asset_sizes(tmp_path: Path) -> None:
     observed = rng.integers(0, 256, (preprocess.ROI_H, preprocess.ROI_W, 3), dtype=np.uint8)
     asset = rng.integers(0, 256, (90, 110, 4), dtype=np.uint8)
 
-    expected_observed, expected_reference = preprocess.strips(observed, asset, 40.0, 40.0, 1.0)
+    expected_observed, expected_reference = preprocess.strip_pair(observed, asset, 40.0, 40.0, 1.0)
     outputs = cf.run_model(
         path,
         {

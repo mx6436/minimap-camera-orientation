@@ -10,11 +10,11 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from endfield.preprocess import IMG_H, IMG_W, INNER_R, OUTER_R, ROI_CENTER
+from endfield.preprocess import IMG_H, IMG_W, INNER_R, OUTER_R
+from endfield.preprocess import ROI_CENTER as _ROI_CENTER
 
 __all__ = [
     "BASE_SIZE",
-    "ROI_CENTER",
     "IMG_H",
     "IMG_W",
     "INNER_R",
@@ -60,5 +60,5 @@ def scaled_roi(frame_shape: tuple[int, int]) -> tuple[float, float, float, float
     # 非等比缩放会破坏环形状
     if abs(sx - sy) / max(sx, sy) > 0.01:
         print(f"WARNING: non-uniform scale sx={sx:.4f} sy={sy:.4f}; ring will be distorted")
-    cx, cy = ROI_CENTER[0] * sx, ROI_CENTER[1] * sy
+    cx, cy = _ROI_CENTER[0] * sx, _ROI_CENTER[1] * sy
     return cx, cy, INNER_R * sx, OUTER_R * sx

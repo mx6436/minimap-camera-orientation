@@ -26,7 +26,7 @@ uv run export_artifact.py --out runs/<name>/bundle --polar-run runs/<polar_run> 
 
 `prepare_data.py` 是唯一的前处理脚本，一条命令完成 raw → 模型输入 → 划分（polar 或 ref）。原始输入是 `data/train_raw`（训练侧）与 `data/val_raw`（验证侧）两个目录，**由人维护、脚本只读**；划分由样本所在目录表达，没有清单机制，跨侧同名样本硬报错（划分不得泄漏）。polar 的 train/val 就是两目录各自全量；ref 的 train/val 是各自一侧经定位、资产、坐标一致性过滤后的子集，任一侧为空硬报错。角度标签支持一位小数（如 `_r210.9.png`），训练目标保留浮点精度。
 
-每种模式各自清空并重写自己的 processed / train / val 目录（processed 是否重写由缓存戳决定，见下）；只有 `data/train_raw` 与 `data/val_raw` 永不被脚本改动。ref 模式的定位产物单独维护在 `data/locator/`（不随 `prepare_data.py` 清空）。processed 目录挂 `.preprocess.json` 缓存戳（定义哈希 + 图版本 + 输入指纹）：与当前定义一致且产物文件齐全时跳过重写，定义变更 / 输入增删 / `--force` 时重生成；polar 的指纹是两侧样本名并集，ref 另含所消费的 `zone`/`x`/`y`/`scale`，样本在两目录间移动不改变并集、不触发重算。train/val 是 processed 的符号链接视图，每次运行重建并校验悬空链接。原始图解码用线程池并行（`--workers`，默认 `min(16, CPU 数)`；`--workers 1` 串行），前处理与落盘仍在主线程串行，产物与串行路径逐字节一致。
+每种模式各自清空并重写自己的 processed / train / val 目录（processed 是否重写由缓存戳决定，见下）；只有 `data/train_raw` 与 `data/val_raw` 永不被脚本改动。ref 模式的定位产物单独维护在 `data/locator/`（不随 `prepare_data.py` 清空）。processed 目录挂 `.preprocess.json` 缓存戳（定义哈希 + 图版本 + 输入指纹，定义哈希覆盖整帧到观测 ROI 的几何）：与当前定义一致且产物文件齐全时跳过重写，定义变更 / 输入增删 / `--force` 时重生成；polar 的指纹是两侧样本名并集，ref 另含所消费的 `zone`/`x`/`y`/`scale`，样本在两目录间移动不改变并集、不触发重算。train/val 是 processed 的符号链接视图，每次运行重建并校验悬空链接。原始图解码用线程池并行（`--workers`，默认 `min(16, CPU 数)`；`--workers 1` 串行），前处理与落盘仍在主线程串行，产物与串行路径逐字节一致。
 
 训练入口是控制台命令 `uv run train`，只负责训练：读取训练/验证目录，从不复制、移动或划分图像。全部训练参数集中在根目录 [`train.toml`](./train.toml)：每个键都有代码内默认值，文件明示当前基线，未知键硬报错。CLI 只保留调用管道：`--config`（默认 `train.toml`）、`--run-dir`（必填，run 产物目录）、`--device`（auto/cpu/cuda）、`--threads`（CPU 线程，默认 8）与 `--smoke`（正常路径只跑一个 epoch，用于验证流程，不能替代完整训练）。
 
@@ -161,7 +161,7 @@ fixture 是「输入场景」，期望输出在比对时由参考实现实时计
 
 ### 定义模块与 preprocess.onnx
 
-定义模块已落地：`endfield/preprocess.py` 是极坐标展开、参考采样与条带域合成的唯一实现（#25，clean_ideal 语义）。`#36` 起资产采样为**窗口优先**：先按 `(x,y,scale)` 裁采样窗，再只把窗口转 float32 NCHW 并采样，消除与底图像素数成正比的整图搬运（#35 分解：Wuling 每帧 ~9.55 ms）；训练/数据生成与导出图共用同一实现，processed 缓存随 `definition_hash` 失效重生成（不重训）。`verify_artifact.py` 的参考侧（`reference_strips()`）与 `definition_hash()` 都指向它；旧的 cv2 前处理（`polar.unwrap` / `ref.reference_crop` 等）已删除，`polar.py`/`ref.py` 只保留 I/O、ROI 提取与适配。
+定义模块已落地：`endfield/preprocess.py` 是整帧到观测 ROI、极坐标展开、参考采样与条带域合成的唯一实现（#25，clean_ideal 语义）。`#36` 起资产采样为**窗口优先**：先按 `(x,y,scale)` 裁采样窗，再只把窗口转 float32 NCHW 并采样，消除与底图像素数成正比的整图搬运（#35 分解：Wuling 每帧 ~9.55 ms）；训练/数据生成与导出图共用同一实现，processed 缓存随 `definition_hash` 失效重生成（不重训）。`verify_artifact.py` 的参考侧（`expected_strip_pair()`）与 `definition_hash()` 都指向它；旧的 cv2 前处理（`polar.unwrap` / `ref.reference_crop` 等）已删除，`polar.py`/`ref.py` 只保留 I/O 与适配。
 
 `export_preprocess.py --out <path>` 导出交付图，契约如下（同时写入图 metadata）：
 

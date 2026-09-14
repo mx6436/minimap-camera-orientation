@@ -16,13 +16,13 @@ import pytest
 from endfield.live import (
     MissingZoneAsset,
     load_run_config,
-    ref_strip_at,
+    ref_pair_at,
     to_base_frame,
 )
 from endfield.locate import accept, load_records, write_jsonl, zone_asset_path
 from endfield.polar import BASE_SIZE, IMG_H, IMG_W, imread_png, load_source_frame
 from endfield.preprocess import observed_roi
-from endfield.ref import REF_CHANNELS, ref_strip
+from endfield.ref import REF_CHANNELS, ref_pair
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 REAL_RAW_DIRS = (REPO_ROOT / "data" / "train_raw", REPO_ROOT / "data" / "val_raw")
@@ -120,14 +120,14 @@ def test_to_base_frame_scales_non_base_frames_to_720p() -> None:
     assert scaled.dtype == np.uint8
 
 
-def test_ref_strip_at_rejects_missing_zone_asset(tmp_path: Path) -> None:
+def test_ref_pair_at_rejects_missing_zone_asset(tmp_path: Path) -> None:
     frame = np.zeros((BASE_SIZE[1], BASE_SIZE[0], 3), dtype=np.uint8)
     record = {"zone": "Nowhere_Base", "x": 1.0, "y": 2.0, "scale": 1.0}
     with pytest.raises(MissingZoneAsset, match="Nowhere_Base"):
-        ref_strip_at(frame, record, tmp_path)
+        ref_pair_at(frame, record, tmp_path)
 
 
-def test_ref_strip_at_rejects_record_without_xy(tmp_path: Path) -> None:
+def test_ref_pair_at_rejects_record_without_xy(tmp_path: Path) -> None:
     assets = tmp_path / "assets"
     (assets / "Test").mkdir(parents=True)
     asset = np.zeros((120, 120, 4), dtype=np.uint8)
@@ -135,10 +135,10 @@ def test_ref_strip_at_rejects_record_without_xy(tmp_path: Path) -> None:
     assert cv2.imwrite(str(assets / "Test" / "Base.png"), asset)
     frame = np.zeros((BASE_SIZE[1], BASE_SIZE[0], 3), dtype=np.uint8)
     with pytest.raises(ValueError, match="lacks x/y"):
-        ref_strip_at(frame, {"zone": "Test_Base", "scale": 1.0}, assets)
+        ref_pair_at(frame, {"zone": "Test_Base", "scale": 1.0}, assets)
 
 
-def test_ref_strip_at_rejects_record_without_scale(tmp_path: Path) -> None:
+def test_ref_pair_at_rejects_record_without_scale(tmp_path: Path) -> None:
     """旧 CLI 产物（无 scale）时直接报错。"""
     assets = tmp_path / "assets"
     (assets / "Test").mkdir(parents=True)
@@ -147,10 +147,10 @@ def test_ref_strip_at_rejects_record_without_scale(tmp_path: Path) -> None:
     assert cv2.imwrite(str(assets / "Test" / "Base.png"), asset)
     frame = np.zeros((BASE_SIZE[1], BASE_SIZE[0], 3), dtype=np.uint8)
     with pytest.raises(KeyError, match="scale"):
-        ref_strip_at(frame, {"zone": "Test_Base", "x": 1.0, "y": 2.0}, assets)
+        ref_pair_at(frame, {"zone": "Test_Base", "x": 1.0, "y": 2.0}, assets)
 
 
-def test_ref_strip_at_reads_raw_bgra_asset_alpha(tmp_path: Path) -> None:
+def test_ref_pair_at_reads_raw_bgra_asset_alpha(tmp_path: Path) -> None:
     """ref.A 保留原始 alpha，而非黑底合成后的 255。"""
     assets = tmp_path / "assets"
     (assets / "Test").mkdir(parents=True)
@@ -161,7 +161,7 @@ def test_ref_strip_at_reads_raw_bgra_asset_alpha(tmp_path: Path) -> None:
     frame = rng.integers(0, 256, (BASE_SIZE[1], BASE_SIZE[0], 3), dtype=np.uint8)
     record = {"zone": "Test_Base", "x": 120.0, "y": 120.0, "scale": 1.0}
 
-    strip = ref_strip_at(frame, record, assets)
+    strip = ref_pair_at(frame, record, assets)
 
     assert strip.shape == (IMG_H, IMG_W, REF_CHANNELS)
     assert strip.dtype == np.uint8
@@ -169,11 +169,11 @@ def test_ref_strip_at_reads_raw_bgra_asset_alpha(tmp_path: Path) -> None:
     # 观测流 = 训练基准帧的 ROI 展开
     assert np.array_equal(
         strip[..., :3],
-        ref_strip(observed_roi(frame), asset, 120.0, 120.0)[..., :3],
+        ref_pair(observed_roi(frame), asset, 120.0, 120.0)[..., :3],
     )
 
 
-def test_ref_strip_at_copies_observed_where_reference_is_missing(tmp_path: Path) -> None:
+def test_ref_pair_at_copies_observed_where_reference_is_missing(tmp_path: Path) -> None:
     assets = tmp_path / "assets"
     (assets / "Test").mkdir(parents=True)
     rng = np.random.default_rng(10)
@@ -183,7 +183,7 @@ def test_ref_strip_at_copies_observed_where_reference_is_missing(tmp_path: Path)
     frame = rng.integers(0, 256, (BASE_SIZE[1], BASE_SIZE[0], 3), dtype=np.uint8)
     record = {"zone": "Test_Base", "x": 120.0, "y": 120.0, "scale": 1.0}
 
-    strip = ref_strip_at(frame, record, assets)
+    strip = ref_pair_at(frame, record, assets)
     alpha = strip[..., 6]
 
     assert np.any(alpha == 0)
@@ -194,7 +194,7 @@ def test_ref_strip_at_copies_observed_where_reference_is_missing(tmp_path: Path)
     not REAL_LOCATE_PATH.exists() or not REAL_ASSETS_ROOT.is_dir(),
     reason="real locate.jsonl / assets not available",
 )
-def test_live_ref_strip_matches_regenerated_training_artifacts(tmp_path: Path) -> None:
+def test_live_ref_pair_matches_regenerated_training_artifacts(tmp_path: Path) -> None:
     """同帧同坐标：live 路径与 prepare_data --mode ref 的两路产物逐字节一致（含尺度）。
 
     用同一批真实样本现场重跑数据管线（不读 data/processed_ref，避免拿旧定义产物对拍）。
@@ -228,7 +228,7 @@ def test_live_ref_strip_matches_regenerated_training_artifacts(tmp_path: Path) -
     for name, record, path in chosen:
         assert path is not None
         frame = load_source_frame(path)
-        strip = ref_strip_at(frame, record, REAL_ASSETS_ROOT)
+        strip = ref_pair_at(frame, record, REAL_ASSETS_ROOT)
         observed = imread_png(processed / name)
         reference = imread_png(processed / "ref" / name)
         assert strip.shape == (IMG_H, IMG_W, REF_CHANNELS)

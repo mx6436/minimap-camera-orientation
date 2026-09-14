@@ -5,7 +5,8 @@
 
 from __future__ import annotations
 
-from endfield.polar import BASE_SIZE, INNER_R, OUTER_R, ROI_CENTER, scaled_roi
+from endfield.polar import BASE_SIZE, INNER_R, OUTER_R, scaled_roi
+from endfield.preprocess import ROI_CENTER
 
 
 def test_scaled_roi_passes_baseline_through() -> None:

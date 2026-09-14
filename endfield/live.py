@@ -1,11 +1,11 @@
-"""live.py 的实机输入侧：run record 解析、帧基准缩放与 ref 条带构造。
+"""live.py 的实机输入侧：run record 解析、帧基准缩放与 ref 参考配对构造。
 
 - `load_run_config` 从 run 的 record.json 读 `input_mode`（旧 record 无 input_mode 时按
   polar 兼容）与 ref 模式需要的 MapLocator 资产根；
 - `to_base_frame` 把任意分辨率帧缩回训练基准 720p（观测 ROI 因此回到 118x120，
   gamescope 当前 1280x720 为 1:1 直通）；
-- `ref_strip_at` 与 `prepare_data.py --mode ref` 走同一条前处理路径
-  （定义模块 `endfield/preprocess.py` 的 `strips()`）。
+- `ref_pair_at` 与 `prepare_data.py --mode ref` 走同一条前处理路径
+  （定义模块 `endfield/preprocess.py` 的 `strip_pair()`）。
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ import numpy as np
 from endfield.locate import record_scale, zone_asset_path
 from endfield.polar import BASE_SIZE
 from endfield.preprocess import observed_roi
-from endfield.ref import load_reference_image, ref_strip
+from endfield.ref import load_reference_image, ref_pair
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 INPUT_MODES = ("polar", "ref")
@@ -100,13 +100,13 @@ def _reference_asset(
     return zone, asset
 
 
-def ref_strip_at(
+def ref_pair_at(
     frame: np.ndarray,
     record: dict,
     assets_root: Path,
     cache: dict[Path, np.ndarray] | None = None,
 ) -> np.ndarray:
-    """720p 基准帧 + MapLocator 定位记录 -> 42x360x7 ref 张量 `[obs.BGR, ref.BGR, ref.A]`。
+    """720p 基准帧 + MapLocator 定位记录 -> 42x360x7 参考配对 `[obs.BGR, ref.BGR, ref.A]`。
 
     参考裁剪的尺度取定位记录的 `scale` 字段；同一 (zone, x, y, scale) 下与
     prepare_data.py --mode ref 的两路产物同源（同一定义模块）。
@@ -114,7 +114,7 @@ def ref_strip_at(
     zone, asset = _reference_asset(record, assets_root, cache)
     if "x" not in record or "y" not in record:
         raise ValueError(f"locate record lacks x/y: {record!r}")
-    return ref_strip(
+    return ref_pair(
         observed_roi(frame),
         asset,
         float(record["x"]),

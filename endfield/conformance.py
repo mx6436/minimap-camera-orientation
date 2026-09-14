@@ -235,9 +235,9 @@ def normalize_asset(asset: np.ndarray) -> np.ndarray:
     return preprocess.normalize_asset(asset)
 
 
-def reference_strips(scenario: Scenario) -> tuple[np.ndarray, np.ndarray]:
+def expected_strip_pair(scenario: Scenario) -> tuple[np.ndarray, np.ndarray]:
     """参考期望：`(observed 42x360x3, reference 42x360x4)`，由定义模块实时计算。"""
-    return preprocess.strips(
+    return preprocess.strip_pair(
         scenario.minimap,
         normalize_asset(scenario.asset),
         scenario.x,
@@ -831,7 +831,7 @@ def _verify_preprocess(
                 if name == "asset":
                     value = normalize_asset(value)
                 feeds[name] = value
-        expected_observed, expected_reference = reference_strips(scenario)
+        expected_observed, expected_reference = expected_strip_pair(scenario)
         try:
             outputs = run_model(path, feeds)
         except Exception as exc:  # noqa: BLE001 - 运行失败记为比对失败
@@ -970,7 +970,7 @@ def _verify_classifier(
     wrapper = ExportWrapper(net).eval()
     declared_input = model.graph.input[0].name
     for scenario in scenarios:
-        observed, reference = reference_strips(scenario)
+        observed, reference = expected_strip_pair(scenario)
         strip = observed if channels == 3 else np.concatenate([observed, reference], axis=2)
         with torch.no_grad():
             expected_pmf = wrapper(torch.from_numpy(strip[None])).numpy()

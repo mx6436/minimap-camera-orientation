@@ -1,6 +1,6 @@
 """前处理定义模块（#25）的行为规格：整帧到 ROI、几何、采样、参考合成与越界。
 
-断言通过公开入口（`observed_roi` / `observed_strip` / `strips`）观察行为，期望值是手算的规格
+断言通过公开入口（`observed_roi` / `observed_strip` / `strip_pair`）观察行为，期望值是手算的规格
 （方位零点是正北、顺时针为正；半径自上而下由内向外），不复用实现内部公式。
 """
 
@@ -106,7 +106,7 @@ def test_reference_opaque_constant_asset_passes_through(scale: float) -> None:
     observed = np.full((preprocess.ROI_H, preprocess.ROI_W, 3), 200, dtype=np.uint8)
     asset = _bgra(160, 140, (10, 20, 30), 255)
 
-    obs, ref = preprocess.strips(observed, asset, 80.0, 70.0, scale)
+    obs, ref = preprocess.strip_pair(observed, asset, 80.0, 70.0, scale)
 
     assert obs.shape == (42, 360, 3) and ref.shape == (42, 360, 4)
     assert obs.dtype == np.uint8 and ref.dtype == np.uint8
@@ -120,7 +120,7 @@ def test_reference_fully_transparent_asset_copies_observed() -> None:
     observed = rng.integers(0, 256, (preprocess.ROI_H, preprocess.ROI_W, 3), dtype=np.uint8)
     asset = _bgra(160, 140, (10, 20, 30), 0)
 
-    obs, ref = preprocess.strips(observed, asset, 80.0, 70.0, 1.0)
+    obs, ref = preprocess.strip_pair(observed, asset, 80.0, 70.0, 1.0)
 
     assert np.array_equal(ref[..., :3], obs)
     assert np.all(ref[..., 3] == 0)
@@ -130,7 +130,7 @@ def test_reference_composition_uses_exact_alpha_weight() -> None:
     observed = np.full((preprocess.ROI_H, preprocess.ROI_W, 3), 200, dtype=np.uint8)
     asset = _bgra(160, 140, (100, 100, 100), 128)
 
-    _, ref = preprocess.strips(observed, asset, 80.0, 70.0, 1.0)
+    _, ref = preprocess.strip_pair(observed, asset, 80.0, 70.0, 1.0)
 
     # 100*(128/255) + 200*(1 - 128/255) = 149.8039... -> 150
     assert np.all(ref[..., :3] == 150)
@@ -155,8 +155,8 @@ def test_prepared_asset_matches_strips_on_the_same_input() -> None:
     asset = rng.integers(0, 256, (140, 160, 4), dtype=np.uint8)
 
     prepared = preprocess.prepare_asset(asset)
-    obs_a, ref_a = preprocess.strips(observed, asset, 80.0, 70.0, 15.0 / 16.0)
-    obs_b, ref_b = preprocess.strips_prepared(observed, prepared, 80.0, 70.0, 15.0 / 16.0)
+    obs_a, ref_a = preprocess.strip_pair(observed, asset, 80.0, 70.0, 15.0 / 16.0)
+    obs_b, ref_b = preprocess.strip_pair_prepared(observed, prepared, 80.0, 70.0, 15.0 / 16.0)
 
     assert prepared.dtype == torch.float32
     assert prepared.shape == (1, 4, 140, 160)
@@ -174,15 +174,15 @@ def test_prepare_asset_normalizes_three_channel_entry() -> None:
     assert torch.all(prepared[:, 3] == 255.0)
 
 
-def test_strips_prepared_rejects_non_prepared_asset() -> None:
+def test_strip_pair_prepared_rejects_non_prepared_asset() -> None:
     with pytest.raises(ValueError, match="prepared asset"):
-        preprocess.strips_prepared(_roi(), torch.zeros(1, 3, 4, 4), 0.0, 0.0, 1.0)
+        preprocess.strip_pair_prepared(_roi(), torch.zeros(1, 3, 4, 4), 0.0, 0.0, 1.0)
 
 
 def test_strips_rejects_non_bgra_asset() -> None:
     roi = _roi()
     with pytest.raises(ValueError, match="BGRA"):
-        preprocess.strips(roi, np.zeros((10, 10, 3), dtype=np.uint8), 5.0, 5.0, 1.0)
+        preprocess.strip_pair(roi, np.zeros((10, 10, 3), dtype=np.uint8), 5.0, 5.0, 1.0)
 
 
 def _ramp_asset(width: int = 200, height: int = 140) -> np.ndarray:
@@ -197,8 +197,8 @@ def test_reference_uses_exact_subpixel_center() -> None:
     observed = np.zeros((preprocess.ROI_H, preprocess.ROI_W, 3), dtype=np.uint8)
     asset = _ramp_asset()
     # 列 0（正北）的 u 恰为极点 u=59；资产坐标 au = x，线性 ramp 的采样值 = au
-    _, low = preprocess.strips(observed, asset, 80.3, 70.0, 1.0)
-    _, high = preprocess.strips(observed, asset, 80.7, 70.0, 1.0)
+    _, low = preprocess.strip_pair(observed, asset, 80.3, 70.0, 1.0)
+    _, high = preprocess.strip_pair(observed, asset, 80.7, 70.0, 1.0)
 
     assert low[0, 0, 0] == 80
     assert high[0, 0, 0] == 81
@@ -208,8 +208,8 @@ def test_reference_scale_shrinks_asset_coordinates_exactly() -> None:
     observed = np.zeros((preprocess.ROI_H, preprocess.ROI_W, 3), dtype=np.uint8)
     asset = _ramp_asset()
     # 行 28（r = 40.5）的列 90（正东）：u = 99.5；au = 80 + 40.5 * scale
-    _, one_to_one = preprocess.strips(observed, asset, 80.0, 70.0, 1.0)
-    _, scaled = preprocess.strips(observed, asset, 80.0, 70.0, 15.0 / 16.0)
+    _, one_to_one = preprocess.strip_pair(observed, asset, 80.0, 70.0, 1.0)
+    _, scaled = preprocess.strip_pair(observed, asset, 80.0, 70.0, 15.0 / 16.0)
 
     assert one_to_one[28, 90, 0] == 120  # 120.5 半偶舍入
     assert scaled[28, 90, 0] == 118  # 117.96875
@@ -220,7 +220,7 @@ def test_reference_out_of_bounds_reads_as_missing() -> None:
     observed = rng.integers(0, 256, (preprocess.ROI_H, preprocess.ROI_W, 3), dtype=np.uint8)
     asset = _bgra(40, 40, (10, 20, 30), 255)
 
-    obs, ref = preprocess.strips(observed, asset, 20.0, 20.0, 1.0)
+    obs, ref = preprocess.strip_pair(observed, asset, 20.0, 20.0, 1.0)
 
     alpha = ref[..., 3]
     assert alpha.min() == 0 and np.any(alpha == 255)
@@ -234,7 +234,7 @@ def test_empty_sampling_window_degrades_to_observed() -> None:
     observed = rng.integers(0, 256, (preprocess.ROI_H, preprocess.ROI_W, 3), dtype=np.uint8)
     asset = _bgra(64, 64, (10, 20, 30), 255)
 
-    obs, ref = preprocess.strips(observed, asset, 500.0, 500.0, 1.0)
+    obs, ref = preprocess.strip_pair(observed, asset, 500.0, 500.0, 1.0)
 
     assert np.all(ref[..., 3] == 0)
     assert np.array_equal(ref[..., :3], obs)
@@ -246,7 +246,7 @@ def test_negative_corner_clips_window_to_asset() -> None:
     observed = rng.integers(0, 256, (preprocess.ROI_H, preprocess.ROI_W, 3), dtype=np.uint8)
     asset = _bgra(140, 160, (10, 20, 30), 255)
 
-    obs, ref = preprocess.strips(observed, asset, -6.5, -4.25, 1.0)
+    obs, ref = preprocess.strip_pair(observed, asset, -6.5, -4.25, 1.0)
 
     alpha = ref[..., 3]
     assert 0 < int((alpha == 255).sum()) < alpha.size

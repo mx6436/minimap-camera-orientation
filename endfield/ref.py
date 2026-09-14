@@ -1,10 +1,9 @@
-"""参考输入（ref）前处理：MapLocator 底图资产与观测 ROI 的读取、7 通道编码。
+"""参考输入（ref）前处理：MapLocator 底图资产读取与 7 通道编码。
 
 本模块的机械动作：
 
 - 资产 I/O（`load_reference_image`）；
-- 3 通道资产的入口归一化（`normalize_asset`，转发定义模块）；
-- 7 通道拼接 `[obs.BGR, ref.BGR, ref.A]`（`ref_tensor` / `ref_strip`）与缺口占比。
+- 参考配对拼接 `[obs.BGR, ref.BGR, ref.A]`（`assemble_ref_pair` / `ref_pair`）与缺口占比。
 
 几何约定（定义模块持有）：资产坐标 = `(x, y) + (q_roi - ROI_POLE) * scale`，`scale` 取
 定位记录的 `ZoneTemplateScale` 字段；越界读 0 = 参考缺失；条带域一次合成
@@ -29,10 +28,8 @@ __all__ = [
     "ROI_H",
     "ROI_POLE",
     "load_reference_image",
-    "normalize_asset",
-    "ref_tensor",
-    "reference_strip",
-    "ref_strip",
+    "assemble_ref_pair",
+    "ref_pair",
     "reference_gap_fraction",
 ]
 
@@ -54,13 +51,8 @@ def load_reference_image(path: Path) -> np.ndarray:
     return image
 
 
-def normalize_asset(asset: np.ndarray) -> np.ndarray:
-    """3 通道资产补 255 alpha 成全不透明 BGRA；4 通道原样（入口归一化）。"""
-    return preprocess.normalize_asset(asset)
-
-
-def ref_tensor(observed: np.ndarray, reference: np.ndarray) -> np.ndarray:
-    """观测 BGR 条带与参考 BGRA 条带 -> 7 通道 ref 张量 `[obs.BGR, ref.BGR, ref.A]`。"""
+def assemble_ref_pair(observed: np.ndarray, reference: np.ndarray) -> np.ndarray:
+    """观测条带与参考条带 -> 参考配对张量 `[obs.BGR, ref.BGR, ref.A]`。"""
     if observed.shape != (preprocess.IMG_H, preprocess.IMG_W, 3):
         raise ValueError(
             f"observed strip must be {preprocess.IMG_H}x{preprocess.IMG_W}x3, got {observed.shape}"
@@ -73,20 +65,14 @@ def ref_tensor(observed: np.ndarray, reference: np.ndarray) -> np.ndarray:
     return np.concatenate([observed, reference], axis=2)
 
 
-def reference_strip(
+def ref_pair(
     observed: np.ndarray, asset: np.ndarray, x: float, y: float, scale: float = 1.0
 ) -> np.ndarray:
-    """118x120 观测 ROI + 原始底图资产 -> 42x360x4 参考条带（定义模块唯一实现）。"""
-    _, reference = preprocess.strips(observed, normalize_asset(asset), x, y, scale)
-    return reference
-
-
-def ref_strip(
-    observed: np.ndarray, asset: np.ndarray, x: float, y: float, scale: float = 1.0
-) -> np.ndarray:
-    """118x120 观测 ROI + 原始底图资产 -> 42x360x7 ref 张量（训练与 live 共用编码）。"""
-    observed_strip, reference = preprocess.strips(observed, normalize_asset(asset), x, y, scale)
-    return ref_tensor(observed_strip, reference)
+    """118x120 观测 ROI + 原始底图资产 -> 42x360x7 参考配对（训练与 live 共用编码）。"""
+    observed_strip, reference = preprocess.strip_pair(
+        observed, preprocess.normalize_asset(asset), x, y, scale
+    )
+    return assemble_ref_pair(observed_strip, reference)
 
 
 def reference_gap_fraction(reference: np.ndarray) -> float:

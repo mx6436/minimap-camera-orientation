@@ -139,7 +139,7 @@ def prepare_asset(asset: np.ndarray) -> torch.Tensor:
     """3/4 通道资产（3 通道补 255 alpha）-> float32 NCHW `[1,4,H,W]`。
 
     图内 GridSample 只接受 float32；同一底图要反复采样时先 `prepare_asset` 一次，
-    再逐样本调 `strips_prepared` 复用，避免逐样本重复转换窗口。
+    再逐样本调 `strip_pair_prepared` 复用，避免逐样本重复转换窗口。
     """
     array = normalize_asset(asset)
     return torch.from_numpy(array)[None].permute(0, 3, 1, 2).float()
@@ -273,23 +273,23 @@ def _batch_strips(
     return _compose_strips(obs_float, sampled)
 
 
-def strips(
+def strip_pair(
     roi: np.ndarray, asset: np.ndarray, x: float, y: float, scale: float
 ) -> tuple[np.ndarray, np.ndarray]:
-    """观测 ROI + BGRA 资产 -> `(obs 42x360x3, ref 42x360x4)` uint8 条带。
+    """观测 ROI + BGRA 资产 -> 条带对 `(obs 42x360x3, ref 42x360x4)` uint8。
 
     资产须为 BGRA（3 通道入口先过 `normalize_asset`）。同一底图复用先 `prepare_asset`，
-    再走 `strips_prepared` 避免逐样本窗口转换（两入口逐字节等价）。
+    再走 `strip_pair_prepared` 避免逐样本窗口转换（两入口逐字节等价）。
     """
-    return strips_prepared(roi, prepare_asset(_require_bgra(asset)), x, y, scale)
+    return strip_pair_prepared(roi, prepare_asset(_require_bgra(asset)), x, y, scale)
 
 
-def strips_prepared(
+def strip_pair_prepared(
     roi: np.ndarray, asset_float: torch.Tensor, x: float, y: float, scale: float
 ) -> tuple[np.ndarray, np.ndarray]:
-    """观测 ROI + `prepare_asset()` 产物 -> `(obs 42x360x3, ref 42x360x4)` uint8 条带。
+    """观测 ROI + `prepare_asset()` 产物 -> 条带对 `(obs 42x360x3, ref 42x360x4)` uint8。
 
-    与 `strips()` 逐字节等价；底图 float32 转换只做一次，供同一 zone 的批量数据生成逐样本复用。
+    与 `strip_pair()` 逐字节等价；底图 float32 转换只做一次，供同一 zone 的批量数据生成逐样本复用。
     """
     roi = _require_roi(roi)
     asset_float = _require_prepared(asset_float)

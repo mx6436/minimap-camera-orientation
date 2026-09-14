@@ -11,7 +11,7 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 
 from endfield.data_utils import load_bgr, load_bgra, parse_angle
-from endfield.ref import REF_CHANNELS, REF_SUBDIR, ref_tensor, reference_gap_fraction
+from endfield.ref import REF_CHANNELS, REF_SUBDIR, assemble_ref_pair, reference_gap_fraction
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TRAIN_DIR = REPO_ROOT / "data" / "train"
@@ -81,7 +81,7 @@ class AngleDataset(Dataset):
         if self.input_mode == "ref":
             observed = load_bgr(self.directory / name)
             reference = load_bgra(self.directory / REF_SUBDIR / name)
-            return ref_tensor(observed, reference)
+            return assemble_ref_pair(observed, reference)
         return load_bgr(self.directory / name)
 
     def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
