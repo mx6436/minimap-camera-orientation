@@ -72,7 +72,7 @@ def test_record_scale_reads_cli_scale_field() -> None:
 
 
 def test_record_scale_rejects_missing_or_invalid_scale() -> None:
-    """scale 是定位记录契约的一部分：旧产物缺字段必须暴露，而不是静默按 1.0 处理。"""
+    """旧 CLI 产物缺 scale 或字段非数值时直接报错。"""
     without_scale = {key: value for key, value in OK.items() if key != "scale"}
     with pytest.raises(KeyError, match="scale"):
         record_scale(without_scale)

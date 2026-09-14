@@ -1,9 +1,4 @@
-"""根目录 live.py 主循环的回归测试：polar 分支能完整组装 overlay。
-
-起因：`live.py` 的 polar 分支在 draw_overlay 改为接收预组装的 panel（ref 模式需要
-三行输入栏）后，调用点仍多传 `strip, input_label`，第一帧即 TypeError；ref 分支正常，
-故只在实机运行才暴露。本测试用假 MaaFw 控制器跑通一帧 polar 主循环并落 snapshot。
-"""
+"""根目录 live.py 主循环的回归测试：用假 MaaFw 控制器跑通一帧 polar 主循环并落 snapshot。"""
 
 from __future__ import annotations
 

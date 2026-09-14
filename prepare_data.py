@@ -1,36 +1,4 @@
-"""数据前处理：从 data/train_raw 与 data/val_raw 生成模型输入样本。
-
-原始输入契约：`data/train_raw` 与 `data/val_raw` 由人维护、脚本只读；划分由目录
-本身表达（polar 两目录各自全量，ref 为各自一侧过滤后的子集），没有清单机制。
-
-polar（默认）：极坐标展开。train = train_raw 全量，val = val_raw 全量。train/val 是
-processed 的符号链接视图，内容始终反映 processed 当前状态，悬空链接在生成时校验。
-产物写完后在 processed 目录落 `.preprocess.json` 缓存戳（定义哈希 + 图版本 +
-两侧样本并集，见 `endfield/preprocess_cache.py`）：戳与当前定义一致且产物文件齐全时
-跳过重写，定义变更 / 样本增删 / `--force` 触发重生成；样本在两目录间移动不改变
-并集，不触发重算。
-
-ref：以 MapLocator 批量定位产物（data/locator/locate.jsonl）为姿态来源；观测与参考
-条带由定义模块 `endfield/preprocess.py` 一次生成：资产坐标 =
-`(x, y) + (q_roi - 极点) * scale`（scale 取定位记录的 ZoneTemplateScale），参考缺失
-（裁剪越界 / 资产 alpha）以 ref.A 表达，条带域一次合成
-`ref.BGR = rgb*(a/255) + obs*(1-a/255)`（alpha==0 处逐像素等于观测）。两路拼接为
-7 通道 `[obs.BGR, ref.BGR, ref.A]`（不预先相减）。样本范围 = 定位产物中
-accepted=true 且存在于两原始目录的记录；定位不可用（失败/held/低分）、资产缺失、
-目录内无定位记录的样本跳过并计数。划分按样本所在目录分组：各自一侧 accept / 资产 /
-坐标过滤后子集，任一侧为空硬报错。
-
-坐标一致性过滤（#33，`endfield/coord_filter.py`）：文件名标注的 (map, x, y) 与定位记录的
-(zone, x, y) 换算到同一资产帧后相差超过 5 个单位、或 zone/区域对不上的样本，在数据管线
-层直接跳过（不进 processed / train / val，计入 skipped 原因）；训练层的
-`max_ref_missing` 缺口过滤在其后独立生效。
-
-每种模式各自清空并重写自己的 processed/train/val 目录；`data/train_raw` 与
-`data/val_raw` 永不被脚本改动。ref 模式的定位产物单独维护在 data/locator/
-（不随脚本清空）。两种模式的 processed 目录都挂 `.preprocess.json` 缓存戳
-（定义哈希 + 图版本 + 输入指纹，见 `endfield/preprocess_cache.py`）：与当前定义
-一致且产物文件齐全时跳过重写，定义变更 / 输入变更 / `--force` 触发重生成。
-"""
+"""数据前处理：从 data/train_raw 与 data/val_raw 生成模型输入样本（polar / ref 两种模式）。"""
 
 from __future__ import annotations
 
@@ -102,14 +70,14 @@ def clear_pngs(directory: Path) -> None:
 
 
 def raw_samples(train_raw_dir: Path = TRAIN_RAW, val_raw_dir: Path = VAL_RAW) -> dict[str, Path]:
-    """两侧原始目录并集 -> {样本名: 源文件}；跨侧同名硬报错（划分不得泄漏）。"""
+    """两侧原始目录并集 -> {样本名: 源文件}。"""
     return union_png_samples((train_raw_dir, val_raw_dir))
 
 
 def directory_split(
     train_names: Sequence[str], val_names: Sequence[str]
 ) -> tuple[list[str], list[str]]:
-    """目录即划分：两侧名单排序返回；任一侧为空硬报错。"""
+    """目录即划分：两侧名单排序返回。"""
     train, val = sorted(train_names), sorted(val_names)
     if not train:
         raise SystemExit("train split is empty: no usable samples on the train side")
@@ -124,7 +92,7 @@ def generate_processed(
     force: bool = False,
     workers: int = IO_WORKERS,
 ) -> list[str]:
-    """样本并集 -> polar 条带落盘；缓存戳命中且产物齐全时跳过重写。"""
+    """样本并集 -> polar 条带落盘。"""
     input_names = sorted(samples)
     if not input_names:
         raise SystemExit("no raw png samples in data/train_raw and data/val_raw")
@@ -174,11 +142,7 @@ def link_split(
     processed_dir: Path = PROCESSED,
     subdirs: tuple[str, ...] = (),
 ) -> None:
-    """把划分后的样本链接到 train/val 目录；subdirs 是并行子树（ref 的 ref/）。
-
-    train/val 是 processed 的符号链接视图，内容始终反映 processed 当前状态，
-    悬空链接在生成时校验。
-    """
+    """把划分后的样本链接到 train/val 目录；subdirs 是并行子树（ref 的 ref/）。"""
     for subdir in ("", *subdirs):
         for directory, names in ((train_dir, train_names), (val_dir, val_names)):
             target_dir = directory / subdir
@@ -196,7 +160,7 @@ def link_split(
 
 
 def accepted_records(locate_path: Path) -> tuple[dict[str, dict], dict[str, str]]:
-    """定位产物 -> (accepted 记录表, name -> 跳过原因)；无产物 / 无 accepted 硬报错。"""
+    """定位产物 -> (accepted 记录表, name -> 跳过原因)。"""
     records = load_records(locate_path)
     if not records:
         raise SystemExit(f"no MapLocator records: {locate_path} (run locate_dataset.py first)")
@@ -271,10 +235,9 @@ def _print_side_skips(
 def filter_coord_consistent(
     resolved: list[tuple[str, dict, Path]], zmdmap_root: Path, assets_root: Path
 ) -> tuple[list[tuple[str, dict, Path]], dict[str, str]]:
-    """标注坐标一致性过滤（#33）：返回 (保留样本, name -> 拒绝原因)。
+    """标注坐标一致性过滤：返回 (保留样本, name -> 拒绝原因)。
 
-    只在出现 MapTracker 命名样本时才读 ZmdMap/Base 换算数据（纯 zone 命名的数据
-    集不需要镜像数据）。
+    只在出现 MapTracker 命名样本时才读 ZmdMap/Base 换算数据（纯 zone 命名的数据集不需要镜像数据）。
     """
     kept: list[tuple[str, dict, Path]] = []
     rejected: dict[str, str] = {}
@@ -306,7 +269,7 @@ def generate_processed_ref(
     每条记录由定义模块 `preprocess.strips` 一次算出两路条带，再按
     `[obs.BGR, ref.BGR, ref.A]` 切成两路落盘：观测 `<name>.png`、参考 `ref/<name>.png`。
     返回 (产物名, name -> 跳过原因)；跳过原因含 no_locate_record、accept 门原因与
-    asset_missing。缓存戳命中且两路产物齐全时跳过重写。
+    asset_missing。
     """
     if not samples:
         raise SystemExit("no raw png samples in data/train_raw and data/val_raw")

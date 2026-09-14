@@ -29,7 +29,7 @@ def write_raw(directory: Path, names: tuple[str, ...], value: int = FRAME_VALUE)
 
 
 def write_sentinel(path: Path) -> None:
-    """把一个产物改成合法但值不同的 PNG：缓存命中时它必须原样留下。"""
+    """把一个产物改成合法但值不同的 PNG。"""
     sentinel = np.full((preprocess.IMG_H, preprocess.IMG_W, 3), SENTINEL, dtype=np.uint8)
     assert cv2.imwrite(str(path), sentinel)
 
@@ -49,7 +49,6 @@ def test_raw_samples_merges_both_directories(tmp_path: Path) -> None:
 
 
 def test_raw_samples_rejects_name_present_in_both_directories(tmp_path: Path) -> None:
-    """跨侧同名会在 train/val 之间泄漏，必须硬报错而不是静默合并。"""
     train_raw, val_raw = tmp_path / "train_raw", tmp_path / "val_raw"
     write_raw(train_raw, ("a_r0.png",))
     write_raw(val_raw, ("a_r0.png",))
@@ -175,7 +174,6 @@ def test_generate_processed_force_ignores_cache_hit(tmp_path: Path) -> None:
 
 
 def test_generate_processed_failure_does_not_leave_cache_stamp(tmp_path: Path) -> None:
-    """强制重生成中途失败时旧戳必须清掉：半成品目录不得被下次运行命中。"""
     train_raw, val_raw = tmp_path / "train_raw", tmp_path / "val_raw"
     processed_dir = tmp_path / "processed"
     write_raw(train_raw, TRAIN_RAWS)
@@ -194,7 +192,7 @@ def test_generate_processed_failure_does_not_leave_cache_stamp(tmp_path: Path) -
 
 
 def test_generate_processed_matches_across_worker_counts(tmp_path: Path) -> None:
-    """并行解码只加速 I/O：workers=4 与 workers=1 的产物须逐字节一致。"""
+    """workers=4 与 workers=1 的产物逐字节一致。"""
     train_raw, val_raw = tmp_path / "train_raw", tmp_path / "val_raw"
     write_raw(train_raw, TRAIN_RAWS)
     write_raw(val_raw, VAL_RAWS)
@@ -215,7 +213,7 @@ def test_generate_processed_matches_across_worker_counts(tmp_path: Path) -> None
 
 
 def test_run_polar_links_each_directory_to_its_side(tmp_path: Path) -> None:
-    """目录即划分：train_raw 全量进 train 视图，val_raw 全量进 val 视图。"""
+    """train_raw 全量进 train 视图，val_raw 全量进 val 视图。"""
     train_raw, val_raw = tmp_path / "train_raw", tmp_path / "val_raw"
     processed_dir, train_dir, val_dir = tmp_path / "processed", tmp_path / "train", tmp_path / "val"
     write_raw(train_raw, TRAIN_RAWS)
@@ -229,7 +227,7 @@ def test_run_polar_links_each_directory_to_its_side(tmp_path: Path) -> None:
 
 
 def test_run_polar_keeps_cache_when_sample_moves_between_directories(tmp_path: Path) -> None:
-    """输入指纹取两侧并集：样本换侧只换视图，不重算 processed。"""
+    """样本换侧只换视图，不重算 processed。"""
     train_raw, val_raw = tmp_path / "train_raw", tmp_path / "val_raw"
     processed_dir, train_dir, val_dir = tmp_path / "processed", tmp_path / "train", tmp_path / "val"
     write_raw(train_raw, TRAIN_RAWS)

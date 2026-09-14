@@ -8,7 +8,7 @@
 记录字段见 local/maplocator/README.local.md：name/status/message/zone/x/y/rot/scale/
 locConf/isHeld/latencyMs/attempts/elapsedMs。其中 `scale` 是 zone 的
 `ZoneTemplateScale`（底图与观测的像素尺度比，无缩放 zone 为 1.0），由定位侧携带，
-训练/实机侧据此裁剪参考底图，不在消费方镜像 zone -> scale 表。
+训练/实机侧据此裁剪参考底图。
 """
 
 from __future__ import annotations
@@ -110,8 +110,7 @@ def merge_records(existing: Iterable[Record], new: Iterable[Record]) -> list[Rec
 def record_scale(record: Record) -> float:
     """定位记录的 `scale`（zone 的 ZoneTemplateScale）：参考底图裁剪的尺度真源。
 
-    缺失或非数值即产物与消费端契约不符（旧 CLI 产物），直接报错而非静默按 1.0
-    处理，否则尺度错误的样本会混进训练数据。
+    缺失或非数值即产物与消费端契约不符（旧 CLI 产物）。
     """
     try:
         value = record["scale"]

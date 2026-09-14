@@ -1,12 +1,11 @@
 """live.py 的实机输入侧：run record 解析、帧基准缩放与 ref 条带构造。
 
 - `load_run_config` 从 run 的 record.json 读 `input_mode`（旧 record 无 input_mode 时按
-  polar 兼容）与 ref 模式需要的 MapLocator 资产根，实机推理不新增用户必须传的模式
-  参数；
+  polar 兼容）与 ref 模式需要的 MapLocator 资产根；
 - `to_base_frame` 把任意分辨率帧缩回训练基准 720p（观测 ROI 因此回到 118x120，
   gamescope 当前 1280x720 为 1:1 直通）；
 - `ref_strip_at` 与 `prepare_data.py --mode ref` 走同一条前处理路径
-  （定义模块 `endfield/preprocess.py` 的 `strips()`），保证实机输入与训练产物同源。
+  （定义模块 `endfield/preprocess.py` 的 `strips()`）。
 """
 
 from __future__ import annotations

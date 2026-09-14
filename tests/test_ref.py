@@ -432,7 +432,6 @@ def test_run_ref_links_each_directory_to_its_side_and_drops_unusable(tmp_path: P
 
 
 def test_run_ref_rejects_side_without_usable_samples(tmp_path: Path) -> None:
-    """val 侧样本全部被过滤：不得落一个只有一半的划分视图。"""
     fx = ref_fixture(tmp_path)
     (fx.val_raw / fx.names["ok"]).rename(fx.train_raw / fx.names["ok"])
     processed_dir, train_dir, val_dir = (
@@ -454,7 +453,7 @@ def test_run_ref_rejects_side_without_usable_samples(tmp_path: Path) -> None:
 
 
 def test_generate_processed_ref_rejects_records_without_scale(tmp_path: Path) -> None:
-    """旧 CLI 产物（无 scale）不得静默按 1.0 处理，否则出错样本无法察觉。"""
+    """旧 CLI 产物（无 scale）直接报错。"""
     fx = ref_fixture(tmp_path)
     record = locate_record(fx.names["ok"])
     record.pop("scale")

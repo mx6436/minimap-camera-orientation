@@ -1,18 +1,14 @@
 """参考输入（ref）前处理：MapLocator 底图资产与观测 ROI 的读取、7 通道编码。
 
-参考 BGR 的采样与观测背底合成、alpha 的采样与条带几何全部由定义模块
-`endfield/preprocess.py` 实现（#25，clean_ideal）；本模块只保留机械动作：
+本模块的机械动作：
 
 - 资产 I/O（`load_reference_image`）与 720p 观测 ROI 提取（`observed_roi`）；
 - 3 通道资产的入口归一化（`normalize_asset`，转发定义模块）；
 - 7 通道拼接 `[obs.BGR, ref.BGR, ref.A]`（`ref_tensor` / `ref_strip`）与缺口占比。
 
-几何约定（定义模块持有）：参考与观测同视野，资产坐标 =
-`(x, y) + (q_roi - ROI_POLE) * scale`，`scale` 取定位记录的 `ZoneTemplateScale`
-字段（#24）；越界读 0 = 参考缺失；条带域一次合成
+几何约定（定义模块持有）：资产坐标 = `(x, y) + (q_roi - ROI_POLE) * scale`，`scale` 取
+定位记录的 `ZoneTemplateScale` 字段；越界读 0 = 参考缺失；条带域一次合成
 `ref.BGR = rgb * (a/255) + obs * (1 - a/255)`（alpha==0 处逐像素等于观测）。
-
-`PIL`/cv2 的第二份展开或合成路径已删除；口径以 `endfield/preprocess.py` 为准。
 """
 
 from __future__ import annotations

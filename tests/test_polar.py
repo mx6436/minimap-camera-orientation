@@ -1,8 +1,6 @@
-"""采集/显示几何的回归测试（条带几何与采样见 `tests/test_preprocess.py`）。
+"""采集/显示几何的回归测试：`scaled_roi` 的等比缩放与非等比告警。
 
-极坐标展开的几何与采样（列 = 方位角、行 = 半径）已由 #25 收拢到定义模块
-`endfield/preprocess.py`；本文件只测本模块仍持有的采集几何：`scaled_roi` 的
-等比缩放与非等比告警。
+条带几何与采样见 `tests/test_preprocess.py`。
 """
 
 from __future__ import annotations

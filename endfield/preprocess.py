@@ -1,19 +1,17 @@
-"""前处理定义模块（#25）：训练、数据生成、live 与交付共用的唯一实现。
+"""前处理定义模块：条带几何、双线性采样与参考合成。
 
-语义 = #23 决议的 clean_ideal，资产采样 = #36 的窗口优先：
+观测：在 118x120 观测 ROI 上按条带网格一次双线性采样（`padding_mode="border"`）。
+参考：先由 `(x, y, scale)` 与条带几何裁出覆盖全部采样点及双线性支撑的采样窗（裁到
+资产边界），把资产坐标减去窗口原点、按窗口宽高归一化后采样（`padding_mode="zeros"`，
+越界 = 参考缺失）；窗口优先与整图采样数值等价（observed 逐字节、reference ≤1 LSB），
+但图内只搬运窗口像素。
+合成在条带域一次完成：`ref.BGR = rgb * (a/255) + obs * (1 - a/255)`；每个输出一次
+Round（半偶）+ Cast 回 uint8。
 
-- 观测：在 118x120 观测 ROI 上按条带网格一次双线性采样（`padding_mode="border"`）；
-- 参考：先由 `(x, y, scale)` 与条带几何裁出覆盖全部采样点及双线性支撑的采样窗
-  （裁到资产边界），把资产坐标减去窗口原点、按窗口宽高归一化后再采样
-  （`padding_mode="zeros"`，越界 = 参考缺失）；窗口优先与整图采样数值等价
-  （observed 逐字节、reference ≤1 LSB），但图内只搬运窗口像素（#35/#36）；
-- 合成在条带域一次完成：`ref.BGR = rgb * (a/255) + obs * (1 - a/255)`；
-- 每个输出一次 Round（半偶）+ Cast 回 uint8。
-
-几何约定（与 CONTEXT.md「极坐标展开」一致）：极点 = ROI 内 (59.0, 60.0) 像素中心；
-角度 -> x 轴，第 j 列的像素中心对应方位角 j 度（正北 = 列 0，顺时针为正）；
-半径 -> y 轴，第 i 行对应 `r_in + (i + 0.5) * step`（内径在上），基准下
-`r_in = 12`、`r_out = 54`、`step = 1`，条带 42x360。
+几何约定：极点 = ROI 内 (59.0, 60.0) 像素中心；角度 -> x 轴，第 j 列的像素中心对应
+方位角 j 度（正北 = 列 0，顺时针为正）；半径 -> y 轴，第 i 行对应
+`r_in + (i + 0.5) * step`（内径在上），基准下 `r_in = 12`、`r_out = 54`、`step = 1`，
+条带 42x360。
 """
 
 from __future__ import annotations
@@ -136,7 +134,7 @@ def _require_prepared(asset_float: torch.Tensor) -> torch.Tensor:
     return asset_float
 
 
-# 采样窗在 (x,y) 四周的额外安全边距（像素）：覆盖双线性支撑与浮点舍入（#35 原型口径）。
+# 采样窗在 (x,y) 四周的额外安全边距（像素）：覆盖双线性支撑与浮点舍入。
 WINDOW_PAD = 2.0
 
 
@@ -216,8 +214,7 @@ def sample_asset(
 ) -> torch.Tensor:
     """NHWC uint8 BGRA 资产 -> float32 NCHW 4 通道采样值（与观测同一条带网格）。
 
-    窗口优先（#36）：先按 `(x, y, scale)` 裁采样窗，再只把窗口转 float32 NCHW；
-    资产坐标 = `(x, y) + (q_roi - ROI_POLE) * scale`，与整图采样数值等价。越界读 0（参考缺失）。
+    资产坐标 = `(x, y) + (q_roi - ROI_POLE) * scale`；越界读 0（参考缺失）。
     """
     w0, w1, h0, h1 = _asset_window(x, y, scale, asset.shape[1], asset.shape[2])
     crop = asset[:, h0:h1, w0:w1, :].permute(0, 3, 1, 2).float()
@@ -254,8 +251,7 @@ def strips(
 ) -> tuple[np.ndarray, np.ndarray]:
     """观测 ROI + BGRA 资产 -> `(obs 42x360x3, ref 42x360x4)` uint8 条带。
 
-    数据生成、live 与 conformance 参考侧共用的唯一入口；资产须为 BGRA
-    （3 通道入口先过 `normalize_asset`）。同一底图复用先 `prepare_asset`，
+    资产须为 BGRA（3 通道入口先过 `normalize_asset`）。同一底图复用先 `prepare_asset`，
     再走 `strips_prepared` 避免逐样本窗口转换（两入口逐字节等价）。
     """
     return strips_prepared(roi, prepare_asset(_require_bgra(asset)), x, y, scale)
@@ -266,8 +262,7 @@ def strips_prepared(
 ) -> tuple[np.ndarray, np.ndarray]:
     """观测 ROI + `prepare_asset()` 产物 -> `(obs 42x360x3, ref 42x360x4)` uint8 条带。
 
-    与 `strips()` 逐字节等价；底图 float32 转换只做一次，供同一 zone 的批量数据生成
-    逐样本复用（资产采样现在只读采样窗，转换复用避免逐样本重复窗口转换）。
+    与 `strips()` 逐字节等价；底图 float32 转换只做一次，供同一 zone 的批量数据生成逐样本复用。
     """
     roi = _require_roi(roi)
     asset_float = _require_prepared(asset_float)
@@ -283,11 +278,7 @@ def strips_prepared(
 
 
 class PreprocessGraph(nn.Module):
-    """clean_ideal 前处理的导出图：NHWC uint8 -> `(observed, reference)` uint8。
-
-    资产路径窗口优先（#36）：先按 `(x, y, scale)` 裁采样窗，再只把窗口转 float32 NCHW；
-    整图 Transpose/Cast 的每帧搬运已消除（#35 量化）。
-    """
+    """前处理导出图：NHWC uint8 -> `(observed, reference)` uint8。"""
 
     def forward(
         self,

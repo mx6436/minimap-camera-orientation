@@ -1,4 +1,4 @@
-"""标注坐标一致性过滤（#33）：文件名 (map, x, y) 与定位记录 (zone, x, y) 必须一致。
+"""标注坐标一致性过滤：把文件名标注与定位记录换算到同一资产帧后比对。
 
 数据集由两批标注合并：中文区域文件夹批次用 MapLocator zone 命名（`ValleyIV_Base`、
 `Wuling_L9_395` …），`maptracker/` 批次用 MapTracker 地图名命名（`map01_lv006`、

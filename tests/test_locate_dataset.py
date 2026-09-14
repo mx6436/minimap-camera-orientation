@@ -84,7 +84,6 @@ def test_main_locates_union_of_both_raw_dirs(
 def test_main_rejects_name_present_in_both_raw_dirs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """跨侧同名会在 train/val 之间泄漏；定位入口与数据管线共用同一并集契约，不得静默合并。"""
     train_raw, val_raw = tmp_path / "train_raw", tmp_path / "val_raw"
     write_png(train_raw / "a_r0.png")
     write_png(val_raw / "a_r0.png")

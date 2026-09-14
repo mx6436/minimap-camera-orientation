@@ -1,15 +1,4 @@
-"""processed* 产物缓存戳（#26）：定义哈希 + 图版本 + 输入指纹。
-
-processed 目录是前处理产物的落盘缓存：整批写完后在目录内落下 `.preprocess.json`，
-记录本次产物由哪一版定义生成。命中条件（`cache_hit`）：戳的 schema / 模式 /
-`definition_hash`（`endfield/preprocess.py` 的 sha256）/ `graph_version`
-（`preprocess.OPSET_VERSION`）与当前一致，且输入指纹（polar 为样本名，ref 另含
-zone/x/y/scale）未变；任一不符 = 失效，调用方重生成后覆盖戳。
-
-`git_commit` 只作溯源自证，不参与命中——文档提交不该触发数据重算。戳仅在整批
-产物写完后落盘（原子替换）：中途失败留下的半成品目录不会命中。产物文件是否齐全
-由调用方按期望名单校验（戳只保证「当时写全了」）。
-"""
+"""processed* 产物缓存戳：定义哈希 + 图版本 + 输入指纹。"""
 
 from __future__ import annotations
 
@@ -52,7 +41,7 @@ def read_stamp(directory: Path) -> dict | None:
 
 
 def remove_stamp(directory: Path) -> None:
-    """重生成前清掉旧戳：中断留下的半成品目录不得被下次运行命中。"""
+    """重生成前清掉旧戳。"""
     (directory / STAMP_NAME).unlink(missing_ok=True)
 
 

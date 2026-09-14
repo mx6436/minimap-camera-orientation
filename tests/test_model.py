@@ -108,7 +108,7 @@ def test_load_model_rejects_invalid_checkpoint(tmp_path) -> None:
 
 
 def test_load_model_accepts_legacy_three_channel_checkpoint(tmp_path) -> None:
-    """arch 3（ref 之前的唯一架构）的 3 通道 checkpoint 必须继续可加载。"""
+    """arch 3（ref 之前的唯一架构）的 3 通道 checkpoint 可加载。"""
     path = tmp_path / "legacy3.pt"
     torch.save({"model": AzimuthNet().state_dict(), "arch": 3}, path)
     model = load_model(path)

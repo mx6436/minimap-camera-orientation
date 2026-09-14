@@ -84,7 +84,7 @@ def png_names(directory: Path) -> list[str]:
 
 
 def union_png_samples(directories: Iterable[Path]) -> dict[str, Path]:
-    """原始目录并集 -> {样本名: 源文件}；跨目录同名硬报错（划分不得泄漏）。"""
+    """原始目录并集 -> {样本名: 源文件}。"""
     samples: dict[str, Path] = {}
     for directory in directories:
         for path in sorted(directory.glob("*.png")):

@@ -1,18 +1,10 @@
-"""工件一致性（conformance）：fixtures、参考实现适配、图结构断言与容差比对。
+"""conformance 口径：fixtures、参考实现适配、图结构断言与容差比对。
 
-本模块是训练侧交付物与 MaaEnd 运行时的验收口径实现，见 README「工件校验
-（conformance）」一节。三件事：
+fixtures 为确定性合成场景（只提供输入，期望输出在比对时由参考实现实时计算）；
+参考实现即 `endfield/preprocess.py`；比对在 ORT 1.19.2 上逐输出进行，报告
+通过/失败与差异明细。
 
-- **fixtures**：8 个确定性合成场景，覆盖 polar / ref 配对 / 裁剪越界 / 非 1:1 zone /
-  参考缺失 / 资产 3 通道 / 空裁剪窗 / 负坐标裁剪。场景只提供输入（minimap、asset、
-  x、y、scale），期望输出在比对时由参考实现实时计算。
-- **参考实现**：即定义模块唯一实现（`endfield/preprocess.py`）；本模块不再适配
-  旧的 cv2 路径，比对期望由它实时计算。
-- **比对**：ORT 1.19.2 跑图，逐输出比对参考结果并按容差阈值判定，输出
-  通过/失败与差异明细（max/mean/p99/差异像素占比、缺口占比误差）。
-
-数值口径（#22）：图输出与参考期望不承诺逐位一致，uint8 条带按 ±1 LSB 预期；
-差分语义与阈值见 README。
+数值口径：图输出与参考期望不承诺逐位一致，uint8 条带按 ±1 LSB 预期。
 """
 
 from __future__ import annotations
@@ -114,7 +106,7 @@ def _rgba(rgb: np.ndarray, alpha: np.ndarray | int) -> np.ndarray:
 
 
 def builtin_scenarios() -> list[Scenario]:
-    """8 个内置合成场景，覆盖票面要求的全部 fixture 类别。"""
+    """8 个内置合成场景。"""
     minimap = _texture(ROI_H, ROI_W, seed=11, channels=3)
 
     pair_asset = _rgba(

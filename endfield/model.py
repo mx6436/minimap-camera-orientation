@@ -34,8 +34,6 @@ class CircularConv1d(nn.Module):
 
 
 # 架构版本：checkpoint 的键集与参数量随架构变化；旧版本在 load_model 中兼容。
-# 跨度等不影响参数量与键集的变更必须递增此值，否则旧权重会被静默加载后输出
-# 无效结果。
 ARCH_VERSION = 4
 # arch 3 = 3 通道首层（polar）；arch 4 起首层通道数由 checkpoint 权重形状决定
 SUPPORTED_ARCH_VERSIONS = (3, ARCH_VERSION)

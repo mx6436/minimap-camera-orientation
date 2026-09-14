@@ -81,11 +81,7 @@ def _tensor_origins(model: object) -> object:
 
 
 def test_export_preprocess_crops_asset_before_float_cast(tmp_path: Path) -> None:
-    """窗口优先（#36）：asset 到资产 GridSample 的路径必须先经数据相关 Slice 裁剪。
-
-    整图 Transpose/Cast 是 #35 量级的搬运成本源（Wuling ~9.55 ms）；结构上
-    “asset 的直接消费者只有动态 Slice 与 Shape”才说明裁剪发生在转换之前。
-    """
+    """asset 的直接消费者只有动态 Slice 与 Shape，才说明裁剪发生在 float 转换之前。"""
     path = preprocess.export_onnx(tmp_path / "preprocess.onnx")
     model = onnx.load(str(path))
     origins = _tensor_origins(model)

@@ -1,8 +1,4 @@
-"""export_artifact：三图 bundle 与 manifest 契约、conformance 可消费性与确定性。
-
-小 run（随机权重 AzimuthNet）只承担导出/结构/数值等价路径；「最终 run」的指标与
-实机口径由票面证据承担，不在测试里复制。
-"""
+"""export_artifact：三图 bundle 与 manifest 契约、conformance 可消费性与确定性。"""
 
 from __future__ import annotations
 
@@ -172,7 +168,6 @@ def test_check_bundle_detects_swapped_classifier_run(tmp_path: Path, runs: dict[
 
 
 def test_cli_requires_both_runs(tmp_path: Path) -> None:
-    """polar 与 polar_with_ref 分属不同 run：两个来源必须在调用处显式给出。"""
     out = os.fspath(tmp_path / "bundle")
     with pytest.raises(SystemExit) as excinfo:
         main(["--out", out, "--polar-run", os.fspath(tmp_path / "polar")])

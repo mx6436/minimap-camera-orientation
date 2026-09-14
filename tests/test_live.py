@@ -85,7 +85,6 @@ def test_load_run_config_rejects_ref_without_assets_root(tmp_path: Path) -> None
 
 
 def test_load_run_config_rejects_removed_pair_mode(tmp_path: Path) -> None:
-    """pair 兼容映射随 #26 删除：旧 pair record 不再被静默映射为 ref。"""
     write_record(
         tmp_path,
         {
@@ -139,7 +138,7 @@ def test_ref_strip_at_rejects_record_without_xy(tmp_path: Path) -> None:
 
 
 def test_ref_strip_at_rejects_record_without_scale(tmp_path: Path) -> None:
-    """scale 是定位记录契约的一部分：旧产物缺字段必须暴露，而不是静默按 1.0 处理。"""
+    """旧 CLI 产物（无 scale）时直接报错。"""
     assets = tmp_path / "assets"
     (assets / "Test").mkdir(parents=True)
     asset = np.zeros((120, 120, 4), dtype=np.uint8)
@@ -151,7 +150,7 @@ def test_ref_strip_at_rejects_record_without_scale(tmp_path: Path) -> None:
 
 
 def test_ref_strip_at_reads_raw_bgra_asset_alpha(tmp_path: Path) -> None:
-    """ref 实机路径必须用原始 BGRA 资产：ref.A 保留原始 alpha，而非黑底合成后的 255。"""
+    """ref.A 保留原始 alpha，而非黑底合成后的 255。"""
     assets = tmp_path / "assets"
     (assets / "Test").mkdir(parents=True)
     rng = np.random.default_rng(3)
@@ -197,8 +196,7 @@ def test_ref_strip_at_copies_observed_where_reference_is_missing(tmp_path: Path)
 def test_live_ref_strip_matches_regenerated_training_artifacts(tmp_path: Path) -> None:
     """同帧同坐标：live 路径与 prepare_data --mode ref 的两路产物逐字节一致（含尺度）。
 
-    用同一批真实样本现场重跑数据管线（不读 data/processed_ref，避免拿旧定义产物
-    对拍）；data/processed_ref 的重生成与缓存哈希是 #26 的范围。
+    用同一批真实样本现场重跑数据管线（不读 data/processed_ref，避免拿旧定义产物对拍）。
     """
     import prepare_data
 
