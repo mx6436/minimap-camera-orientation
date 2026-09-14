@@ -1,4 +1,8 @@
-"""export_artifact：三图 bundle 与 manifest 契约、conformance 可消费性与确定性。"""
+"""export_artifact：三图 bundle 与 manifest 契约、conformance 可消费性与确定性。
+
+manifest 字段 schema 与结构自检的接口级用例在 `tests/test_bundle.py`；本文件只走端到端：
+导出三图、manifest 通过自检、conformance 能消费。
+"""
 
 from __future__ import annotations
 
@@ -12,10 +16,12 @@ import onnx
 import pytest
 import torch
 
-from cli.export_artifact import GRAPH_FILES, SCHEMA_VERSION, check_bundle, export_bundle, main
+from cli.export_artifact import export_bundle, main
+from endfield import bundle, preprocess
 from endfield import conformance as cf
-from endfield import preprocess
 from endfield.model import ARCH_VERSION, AzimuthNet
+
+ROLE_FILES = {role.value: bundle.graph_file(role) for role in bundle.roles()}
 
 
 def write_run(root: Path, name: str, input_mode: str, channels: int) -> Path:
@@ -53,14 +59,8 @@ def graph_metadata(path: Path) -> dict[str, str]:
     return {prop.key: prop.value for prop in model.metadata_props}
 
 
-def read_manifest(bundle: Path) -> dict:
-    return json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
-
-
-def write_manifest(bundle: Path, manifest: dict) -> None:
-    (bundle / "manifest.json").write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
+def read_manifest(bundle_dir: Path) -> dict:
+    return json.loads((bundle_dir / bundle.MANIFEST_NAME).read_text(encoding="utf-8"))
 
 
 @pytest.fixture(scope="module")
@@ -73,27 +73,29 @@ def runs(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
 
 
 @pytest.fixture(scope="module")
-def bundle(tmp_path_factory: pytest.TempPathFactory, runs: dict[str, Path]) -> Path:
+def bundle_dir(tmp_path_factory: pytest.TempPathFactory, runs: dict[str, Path]) -> Path:
     out = tmp_path_factory.mktemp("artifact") / "bundle"
     export_bundle(out, runs["polar"], runs["ref"])
     return out
 
 
-def test_bundle_has_three_graphs_and_complete_manifest(bundle: Path, runs: dict[str, Path]) -> None:
-    manifest = read_manifest(bundle)
+def test_bundle_has_three_graphs_and_complete_manifest(
+    bundle_dir: Path, runs: dict[str, Path]
+) -> None:
+    manifest = read_manifest(bundle_dir)
 
-    assert manifest["schema_version"] == SCHEMA_VERSION
+    assert manifest["schema_version"] == bundle.SCHEMA_VERSION
     assert manifest["definition_hash"] == preprocess.definition_hash()
     assert manifest["ort_version"] == cf.ORT_VERSION
     assert manifest["git_commit"]
-    assert set(manifest["graphs"]) == set(GRAPH_FILES)
+    assert set(manifest["graphs"]) == set(ROLE_FILES)
     assert manifest["fixtures"] == [scenario.name for scenario in cf.builtin_scenarios()]
     assert manifest["tolerances"] == cf.DEFAULT_TOLERANCES
 
-    for role, file_name in GRAPH_FILES.items():
+    for role, file_name in ROLE_FILES.items():
         spec = manifest["graphs"][role]
         assert spec["file"] == file_name
-        path = bundle / file_name
+        path = bundle_dir / file_name
         assert path.is_file()
         assert spec["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -101,7 +103,7 @@ def test_bundle_has_three_graphs_and_complete_manifest(bundle: Path, runs: dict[
         "observed": "observed",
         "reference": "reference",
     }
-    assert graph_metadata(bundle / "preprocess.onnx")["definition_hash"] == (
+    assert graph_metadata(bundle_dir / "preprocess.onnx")["definition_hash"] == (
         preprocess.definition_hash()
     )
 
@@ -116,18 +118,18 @@ def test_bundle_has_three_graphs_and_complete_manifest(bundle: Path, runs: dict[
             "val_rms_error_deg": 2.0,
             "val_expected_abs_error_deg": 1.0,
         }
-        run_dir = (bundle / spec["run_dir"]).resolve()
+        run_dir = (bundle_dir / spec["run_dir"]).resolve()
         assert run_dir == runs["polar" if role == "polar" else "ref"].resolve()
         assert (run_dir / "best.pt").is_file()
-        metadata = graph_metadata(bundle / f"{role}.onnx")
+        metadata = graph_metadata(bundle_dir / f"{role}.onnx")
         assert metadata["input_mode"] == mode
         assert metadata["val_rms_error_deg"] == "2.000000"
 
-    assert check_bundle(bundle) == []
+    assert bundle.check_structure(bundle_dir, cf.profile())[1] == []
 
 
-def test_manifest_is_consumable_by_conformance(bundle: Path) -> None:
-    report = cf.verify_bundle(bundle)
+def test_manifest_is_consumable_by_conformance(bundle_dir: Path) -> None:
+    report = cf.verify_bundle(bundle_dir)
 
     assert report.passed, report.failures()
     assert report.fixtures == [scenario.name for scenario in cf.builtin_scenarios()]
@@ -141,32 +143,6 @@ def test_manifest_is_consumable_by_conformance(bundle: Path) -> None:
     } <= labels
 
 
-def test_check_bundle_detects_tampered_manifest_and_missing_graph(
-    tmp_path: Path, bundle: Path
-) -> None:
-    copy = tmp_path / "bundle"
-    shutil.copytree(bundle, copy)
-
-    manifest = read_manifest(copy)
-    manifest["graphs"]["polar"]["sha256"] = "0" * 64
-    write_manifest(copy, manifest)
-    errors = check_bundle(copy)
-    assert any("polar.onnx" in error and "sha256" in error for error in errors)
-
-    (copy / "preprocess.onnx").unlink()
-    errors = check_bundle(copy)
-    assert any("preprocess.onnx" in error for error in errors)
-
-
-def test_check_bundle_detects_swapped_classifier_run(tmp_path: Path, runs: dict[str, Path]) -> None:
-    bundle = tmp_path / "bundle"
-    # polar 角色塞 ref run：manifest 声明应与图 metadata 对不上
-    export_bundle(bundle, runs["ref"], runs["ref"])
-
-    errors = check_bundle(bundle)
-    assert any("polar.onnx" in error for error in errors)
-
-
 def test_cli_requires_both_runs(tmp_path: Path) -> None:
     out = os.fspath(tmp_path / "bundle")
     with pytest.raises(SystemExit) as excinfo:
@@ -177,10 +153,10 @@ def test_cli_requires_both_runs(tmp_path: Path) -> None:
 
 
 def test_repeated_export_is_deterministic(
-    tmp_path: Path, bundle: Path, runs: dict[str, Path]
+    tmp_path: Path, bundle_dir: Path, runs: dict[str, Path]
 ) -> None:
     copy = tmp_path / "bundle"
-    shutil.copytree(bundle, copy)
+    shutil.copytree(bundle_dir, copy)
     before = {path.name: path.read_bytes() for path in copy.iterdir()}
 
     rc = main(

@@ -24,7 +24,7 @@ from pathlib import Path
 
 import torch
 
-from endfield import run_record
+from endfield import bundle, run_record
 from endfield.model import ExportWrapper, fold_input_conventions, load_model
 from endfield.preprocess import IMG_H as POLAR_H
 from endfield.preprocess import IMG_W as POLAR_W
@@ -42,8 +42,7 @@ DESCRIPTIONS = {
     ),
 }
 
-# 交付文件名：与 MaaEnd 布局（map/cameraorientation/）的约定一致
-OUTPUT_NAMES = {InputMode.POLAR: "polar.onnx", InputMode.REF: "polar_with_ref.onnx"}
+# 交付文件名由 `endfield/bundle.py` 按交付角色单点持有（MaaEnd 交付布局）
 
 POLAR_GEOMETRY = (
     "polar unwrap of the world-anchored minimap ring: angle->x (1 deg/column, clockwise, "
@@ -135,7 +134,7 @@ def export(checkpoint: Path, output: Path | None = None) -> Path:
         summary = json.load(f)
 
     if output is None:
-        output = run_dir / OUTPUT_NAMES[record.input_mode]
+        output = run_dir / bundle.graph_file(bundle.role_for_mode(record.input_mode))
     output = Path(output)
     dummy = torch.zeros(1, POLAR_H, POLAR_W, channels, dtype=torch.uint8)
     torch.onnx.export(

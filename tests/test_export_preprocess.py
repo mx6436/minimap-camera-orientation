@@ -185,7 +185,7 @@ def test_export_preprocess_cli(tmp_path: Path) -> None:
     output = tmp_path / "cli" / "preprocess.onnx"
     assert main(["--out", str(output)]) == 0
     assert output.is_file()
-    assert cf.check_environment(None) == []
+    assert cf.check_environment() == []
 
 
 @pytest.mark.parametrize("bad", [(4, 4, 2), (4, 4, 5)])

@@ -70,6 +70,14 @@ _Avoid_: 推理模式、输入格式、双路模式
 一次训练运行落盘的复现档案（`record.json`）：记录该次运行的输入模式、参考底图资产根、训练参数与复现元数据，是训练、实机推理与工件导出共用的运行契约。
 _Avoid_: run 配置、训练配置、元数据文件
 
+**交付 bundle (Delivery Bundle)**:
+一次交付的三张图（`preprocess.onnx`、`polar.onnx`、`polar_with_ref.onnx`）与 `manifest.json`：图进入 MaaEnd 的交付布局，图文件名是跨仓契约；manifest 留在本仓，其字段 schema 属本仓。
+_Avoid_: 导出产物、模型包、工件（`endfield/train/artifacts.py` 的「工件」指 run 产物，不是交付）
+
+**交付角色 (Delivery Role)**:
+交付 bundle 中一张图的角色名（`preprocess`、`polar`、`polar_with_ref`）：角色决定文件名，分类器角色另决定输入模式与输入通道数。角色不是输入模式——`polar` 角色对应 `polar` 模式，`polar_with_ref` 角色对应 `ref` 模式。
+_Avoid_: 图名、模型类型、模式名
+
 **环形区域 (Ring)**:
 小地图上由内径与外径界定的环形有效区域，包含地形、图标与视野扇形；箭头因位于中心圆内而被排除在外。
 

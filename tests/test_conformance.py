@@ -107,12 +107,7 @@ def test_definition_hash_is_stable_hex() -> None:
 
 
 def test_environment_matches_pinned_ort() -> None:
-    assert cf.check_environment(None) == []
-
-
-def test_check_environment_rejects_manifest_ort_mismatch() -> None:
-    findings = cf.check_environment({"ort_version": "1.30.0"})
-    assert any(finding.code == "manifest_ort_version" for finding in findings)
+    assert cf.check_environment() == []
 
 
 def test_compare_identical_arrays_passes() -> None:

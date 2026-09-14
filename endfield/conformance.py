@@ -4,12 +4,15 @@ fixtures 为确定性合成场景（只提供输入，期望输出在比对时�
 参考实现即 `endfield/preprocess.py`；比对在 ORT 1.19.2 上逐输出进行，报告
 通过/失败与差异明细。
 
+本模块持有验收剖面的取值（`profile()`：定义哈希、ORT pin、容差剖面、fixture 清单）
+并注入给 `endfield/bundle.py` 的结构自检；交付角色词汇与 manifest schema 不在这里
+（ADR 0005）。`verify_bundle` 分三段：bundle 一致性 → 算子级图断言 → 逐 fixture 数值比对。
+
 数值口径：图输出与参考期望不承诺逐位一致，uint8 条带按 ±1 LSB 预期。
 """
 
 from __future__ import annotations
 
-import json
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -17,7 +20,8 @@ from typing import Any
 
 import numpy as np
 
-from endfield import preprocess, run_record
+from endfield import bundle, preprocess, run_record
+from endfield.findings import Finding
 
 # 与 MaaEnd 运行时一致的 ORT 版本（pyproject dev 依赖固定）；版本不同证据作废。
 ORT_VERSION = "1.19.2"
@@ -29,8 +33,6 @@ ROI_H, ROI_W = preprocess.ROI_H, preprocess.ROI_W
 INPUT_NAMES = ("minimap", "asset", "x", "y", "scale")
 # 图输出角色：polar 模式只消费 observed；ref 模式另有 reference。
 OUTPUT_ROLES = ("observed", "reference")
-# 交付角色 -> 输入模式（本模块内的映射；bundle 侧同名映射待交付 module 收口）
-ROLE_MODES = {"polar": run_record.InputMode.POLAR, "polar_with_ref": run_record.InputMode.REF}
 
 # 默认容差剖面：uint8 条带按 ±1 LSB；pmf 按 float32 导出等价；缺口占比按 1 个百分点。
 DEFAULT_TOLERANCES: dict[str, float] = {
@@ -359,16 +361,6 @@ def gap_fraction(reference_strip: np.ndarray) -> float:
 # --------------------------------------------------------------------------- #
 
 
-@dataclass(frozen=True)
-class Finding:
-    level: str  # error / warning / info
-    code: str
-    message: str
-
-    def to_dict(self) -> dict[str, str]:
-        return {"level": self.level, "code": self.code, "message": self.message}
-
-
 def _is_dynamic(dim: Any) -> bool:
     """维度是否可变化：无 dim_value（含 dim_param 或未标注）或 0 视为动态。"""
     return not dim.HasField("dim_value") or dim.dim_value == 0
@@ -684,22 +676,19 @@ def run_model(path: Path, feeds: Mapping[str, np.ndarray]) -> dict[str, np.ndarr
 
 
 def _graph_spec(
-    manifest: Mapping[str, Any] | None, role: str
+    manifest: Mapping[str, Any] | None, role: bundle.DeliveryRole
 ) -> tuple[str, Mapping[str, str] | None]:
-    default_files = {
-        "preprocess": "preprocess.onnx",
-        "polar": "polar.onnx",
-        "polar_with_ref": "polar_with_ref.onnx",
-    }
+    """图文件名与声明的输出角色映射；manifest 未声明时取交付布局的默认文件名。"""
+    file_name = bundle.graph_file(role)
     if not manifest or "graphs" not in manifest:
-        return default_files[role], None
-    spec = (manifest.get("graphs") or {}).get(role)
+        return file_name, None
+    spec = (manifest.get("graphs") or {}).get(role.value)
     if spec is None:
-        return default_files[role], None
+        return file_name, None
     if isinstance(spec, str):
         return spec, None
     outputs = spec.get("outputs")
-    return spec.get("file", default_files[role]), outputs
+    return spec.get("file", file_name), outputs
 
 
 def _resolve_output_roles(model: Any, declared: Mapping[str, str] | None) -> dict[str, str]:
@@ -712,27 +701,29 @@ def _resolve_output_roles(model: Any, declared: Mapping[str, str] | None) -> dic
     return roles
 
 
-def check_environment(manifest: Mapping[str, Any] | None) -> list[Finding]:
+def check_environment() -> list[Finding]:
+    """运行时 ORT 版本必须等于契约版本，否则证据作废（manifest 侧由 bundle 自检核对）。"""
     import onnxruntime as ort
 
-    findings: list[Finding] = []
     if ort.__version__ != ORT_VERSION:
-        findings.append(
+        return [
             Finding(
                 "error",
                 "ort_version",
                 f"运行时 onnxruntime {ort.__version__} != 契约 {ORT_VERSION}：证据作废",
             )
-        )
-    if manifest and manifest.get("ort_version") not in (None, ORT_VERSION):
-        findings.append(
-            Finding(
-                "error",
-                "manifest_ort_version",
-                f"manifest ort_version={manifest['ort_version']} != {ORT_VERSION}",
-            )
-        )
-    return findings
+        ]
+    return []
+
+
+def profile() -> bundle.ManifestProfile:
+    """本仓的验收剖面：manifest 记录的、验证方据此复验的取值。"""
+    return bundle.ManifestProfile(
+        definition_hash=definition_hash(),
+        ort_version=ORT_VERSION,
+        tolerances=DEFAULT_TOLERANCES,
+        fixtures=tuple(scenario.name for scenario in builtin_scenarios()),
+    )
 
 
 @dataclass
@@ -773,20 +764,6 @@ class BundleReport:
         }
 
 
-def _load_manifest(bundle_dir: Path, report: BundleReport) -> dict[str, Any] | None:
-    path = bundle_dir / "manifest.json"
-    if not path.exists():
-        report.findings.append(
-            Finding("warning", "manifest_missing", "无 manifest.json：按草稿 bundle 校验")
-        )
-        return None
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        report.findings.append(Finding("error", "manifest_invalid", f"manifest 读取失败：{exc}"))
-        return None
-
-
 def _verify_preprocess(
     bundle_dir: Path,
     manifest: Mapping[str, Any] | None,
@@ -796,7 +773,7 @@ def _verify_preprocess(
 ) -> None:
     import onnx
 
-    file_name, declared_outputs = _graph_spec(manifest, "preprocess")
+    file_name, declared_outputs = _graph_spec(manifest, bundle.DeliveryRole.PREPROCESS)
     path = bundle_dir / file_name
     if not path.exists():
         report.findings.append(Finding("error", "graph_missing", f"缺少图：{path.name}"))
@@ -877,10 +854,13 @@ def _verify_preprocess(
 
 
 def _resolve_run_dir(
-    bundle_dir: Path, manifest: Mapping[str, Any] | None, role: str, run_dir: Path | None
+    bundle_dir: Path,
+    manifest: Mapping[str, Any] | None,
+    role: bundle.DeliveryRole,
+    run_dir: Path | None,
 ) -> Path | None:
     """按 manifest 的 per-graph run_dir 优先解析；相对路径按 bundle 目录解析。"""
-    spec = ((manifest or {}).get("graphs") or {}).get(role)
+    spec = ((manifest or {}).get("graphs") or {}).get(role.value)
     candidate = spec.get("run_dir") if isinstance(spec, Mapping) else None
     if candidate:
         path = Path(candidate)
@@ -896,7 +876,7 @@ def _circular_angle_error(bin_a: int, bin_b: int) -> float:
 def _verify_classifier(
     bundle_dir: Path,
     manifest: Mapping[str, Any] | None,
-    role: str,
+    role: bundle.DeliveryRole,
     channels: int,
     scenarios: Sequence[Scenario],
     tolerances: Mapping[str, float],
@@ -920,7 +900,9 @@ def _verify_classifier(
     if declared_outputs:
         report.findings.append(
             Finding(
-                "info", "outputs_declared", f"{role} 的 outputs 声明暂不消费：{declared_outputs}"
+                "info",
+                "outputs_declared",
+                f"{role.value} 的 outputs 声明暂不消费：{declared_outputs}",
             )
         )
 
@@ -946,13 +928,13 @@ def _verify_classifier(
     from endfield.model import ExportWrapper, fold_input_conventions, load_model
 
     record = run_record.read(Path(resolved_run))
-    expected_mode = ROLE_MODES[role]
+    expected_mode = bundle.input_mode(role)
     if record.input_mode is not expected_mode:
         report.findings.append(
             Finding(
                 "warning",
                 "classifier_mode_mismatch",
-                f"{role}: run input_mode={record.input_mode.value!r}，跳过数值比对",
+                f"{role.value}: run input_mode={record.input_mode.value!r}，跳过数值比对",
             )
         )
         return
@@ -1004,21 +986,11 @@ def verify_bundle(
     """
     bundle_dir = Path(bundle_dir)
     report = BundleReport(bundle=str(bundle_dir))
-    manifest = _load_manifest(bundle_dir, report)
-    report.findings.extend(check_environment(manifest))
-
-    if manifest and manifest.get("definition_hash"):
-        current = definition_hash()
-        if manifest["definition_hash"] != current:
-            report.findings.append(
-                Finding(
-                    "error",
-                    "definition_hash",
-                    "manifest 定义哈希与当前定义模块不一致：bundle 与源码不同源，需重导出",
-                )
-            )
-    elif manifest:
-        report.findings.append(Finding("warning", "definition_hash_missing", "manifest 无定义哈希"))
+    manifest, structure_findings = bundle.check_structure(
+        bundle_dir, profile(), require_manifest=False
+    )
+    report.findings.extend(structure_findings)
+    report.findings.extend(check_environment())
 
     if fixture_dir is not None:
         try:
@@ -1041,12 +1013,11 @@ def verify_bundle(
         scenarios = builtin_scenarios()
 
     if require is None:
-        required = tuple((manifest.get("graphs") or {}).keys()) if manifest else ("preprocess",)
-        if not required:
-            required = ("preprocess",)
+        declared = (manifest.get("graphs") or {}).keys() if manifest else ()
+        required = tuple(str(role) for role in declared) or (bundle.DeliveryRole.PREPROCESS.value,)
     else:
-        required = tuple(require)
-    known = {"preprocess", "polar", "polar_with_ref"}
+        required = tuple(str(role) for role in require)
+    known = {role.value for role in bundle.roles()}
     unknown_roles = sorted(set(required) - known)
     if unknown_roles:
         report.findings.append(Finding("error", "require_unknown", f"未知图角色：{unknown_roles}"))
@@ -1057,13 +1028,23 @@ def verify_bundle(
     except ValueError as exc:
         report.findings.append(Finding("error", "tolerances_invalid", str(exc)))
         tolerances = dict(DEFAULT_TOLERANCES)
-    if "preprocess" in required:
+    if bundle.DeliveryRole.PREPROCESS.value in required:
         _verify_preprocess(bundle_dir, manifest, scenarios, tolerances, report)
 
-    channels = {role: run_record.input_channels(mode) for role, mode in ROLE_MODES.items()}
+    channels = {
+        role.value: run_record.input_channels(bundle.input_mode(role))
+        for role in bundle.classifier_roles()
+    }
     for role in required:
         if role in channels:
             _verify_classifier(
-                bundle_dir, manifest, role, channels[role], scenarios, tolerances, run_dir, report
+                bundle_dir,
+                manifest,
+                bundle.DeliveryRole(role),
+                channels[role],
+                scenarios,
+                tolerances,
+                run_dir,
+                report,
             )
     return report

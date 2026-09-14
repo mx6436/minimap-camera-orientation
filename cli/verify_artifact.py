@@ -15,13 +15,14 @@ import argparse
 import json
 from pathlib import Path
 
+from endfield import bundle
 from endfield.conformance import (
     BundleReport,
     dump_builtin_fixtures,
     verify_bundle,
 )
 
-ROLE_CHOICES = ("preprocess", "polar", "polar_with_ref")
+ROLE_CHOICES = tuple(role.value for role in bundle.roles())
 
 
 def format_report(report: BundleReport) -> str:

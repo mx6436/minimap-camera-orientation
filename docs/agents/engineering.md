@@ -43,9 +43,11 @@ data/{train_raw,val_raw} ──locate-dataset(ref)──> data/locator
 
 ## 交付与 conformance
 
+- `endfield/bundle.py` 持有交付 bundle 词汇与契约（ADR 0005）：交付角色（`preprocess` / `polar` / `polar_with_ref`）→ 图文件名与输入模式、`manifest.json` 字段 schema、`build_manifest`（run 产物布局经 `load_run` 回调注入）与 `check_structure`（manifest ↔ 文件哈希 ↔ 图 metadata ↔ ORT 可加载）。通道数仍由 `endfield/run_record.py` 单点定义；图文件名是跨仓契约，manifest 字段 schema 属本仓。
+- `endfield/conformance.py` 持有验收剖面的取值（`profile()`：定义哈希、ORT pin、容差剖面、fixture 清单）并注入 `check_structure`；它另做算子级图断言与数值比对。导出侧与校验侧不再各持一份 manifest 一致性实现。
 - bundle = `preprocess.onnx` + `polar.onnx` + `polar_with_ref.onnx` + `manifest.json`；polar 与 ref 分类器来自不同 run，调用处必填。重复导出（同 run + 同定义 + 同工具链）图与 manifest 逐字节一致。
-- `manifest.json` 记 git commit / definition hash / 每图 sha256 / 指标 / fixture 清单 / 容差剖面；导出后结构自检（manifest ↔ 图 metadata ↔ 文件哈希互证、ORT 1.19.2 可加载），失败退出码 1。
-- conformance 判定：ORT 1.19.2 跑图（`pyproject.toml` 固定，与 MaaEnd 运行时同版本；版本不符直接判 error、证据作废），条带 uint8 容差 ±1 LSB、pmf 1e-4。放宽阈值需证据，失败先回票定位（图 / 定义 / 环境）。
+- `verify_bundle` 分三段：bundle 一致性 → 算子级图断言 → 逐 fixture 数值比对；无 manifest 的草稿 bundle 只报 warning 且只要求 `preprocess`（`check_structure(require_manifest=False)`）。
+- 导出侧结构自检失败退出码 1（图与 manifest 仍落盘）。conformance 判定：ORT 1.19.2 跑图（`pyproject.toml` 固定，与 MaaEnd 运行时同版本；版本不符直接判 error、证据作废），条带 uint8 容差 ±1 LSB、pmf 1e-4。放宽阈值需证据，失败先回票定位（图 / 定义 / 环境）。
 - 交付布局 `assets/resource/model/map/cameraorientation/`（三图；`manifest.json` 是训练侧交付凭据，不进 MaaEnd）。人工拷入步骤见 README「拷入 MaaEnd」。
 
 ## 实机
@@ -66,7 +68,9 @@ data/{train_raw,val_raw} ──locate-dataset(ref)──> data/locator
 | `endfield/train/` | 训练循环与配置 |
 | `endfield/model.py` | 网络与导出 wrapper |
 | `endfield/run_record.py` | 运行档案与输入模式词汇 |
-| `endfield/conformance.py` | 结构断言、定义哈希、参考实现 |
+| `endfield/bundle.py` | 交付 bundle：角色词汇、manifest schema 与结构自检 |
+| `endfield/findings.py` | 校验结论（`Finding`）：bundle 自检与 conformance 共用 |
+| `endfield/conformance.py` | 结构断言、验收剖面、定义哈希、参考实现与数值比对 |
 | `placement/records.py` | `locate.jsonl` 读写与集合操作 |
 | `placement/placement.py` | 底图定位（`Placement`）、入选门与失败分类 |
 | `placement/sample.py` | `ReferenceSampler`：底图定位 → 条带对（底图复用） |
