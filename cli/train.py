@@ -33,7 +33,7 @@ from endfield.train.engine import eval_loss, train_epoch
 from endfield.train.record import build_record
 from placement import workspace
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG_PATH = REPO_ROOT / "train.toml"
 # 8 物理核：SMT 线程对 conv 负载无增益反有争用
 DEFAULT_THREADS = 8
@@ -85,7 +85,7 @@ def main() -> None:
     train_names = png_names(train_dir)
     val_names = png_names(val_dir)
     if not train_names or not val_names:
-        raise SystemExit(f"missing {train_dir} or {val_dir} PNG files; run prepare_data.py first")
+        raise SystemExit(f"missing {train_dir} or {val_dir} PNG files; run prepare-data first")
     assets_root = None
     if config["input_mode"] is run_record.InputMode.REF:
         assets_root = workspace.assets_root_from_provenance(

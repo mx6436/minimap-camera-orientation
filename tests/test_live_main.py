@@ -10,7 +10,7 @@ import cv2
 import numpy as np
 import pytest
 
-import live
+from cli import live
 from endfield.preprocess import IMG_H, IMG_W
 from endfield.run_record import InputMode, RunRecord
 

@@ -20,14 +20,14 @@ local/maplocator/
 
 | 路径 | 消费方 | 使用条件 |
 | --- | --- | --- |
-| `bin/map-locate` | `locate_dataset.py`（批量定位）、`live.py`（ref 实机流式定位） | 后者要求 CLI 支持 `--stream` |
+| `bin/map-locate` | `locate-dataset`（批量定位）、`live`（ref 实机流式定位） | 后者要求 CLI 支持 `--stream` |
 | `lib/` | 上述 CLI 的启动 | 二进制不是自包含的：RUNPATH 首项是 `$ORIGIN/../lib`，缺库起不来 |
 | `resource/` | 上述两者的 CLI 调用（`--resource-dir`） | `image/MapLocator` 与 `model/map` 同时存在才能初始化 |
-| `resource/image/MapLocator/` | `prepare_data.py --mode ref` 裁参考条带 | 路径写进 `processed_ref` 缓存戳 |
-| `data/ZmdMap/` | `prepare_data.py --mode ref` 的坐标一致性过滤 | 只在出现 MapTracker 命名样本时读取 |
+| `resource/image/MapLocator/` | `prepare-data --mode ref` 裁参考条带 | 路径写进 `processed_ref` 缓存戳 |
+| `data/ZmdMap/` | `prepare-data --mode ref` 的坐标一致性过滤 | 只在出现 MapTracker 命名样本时读取 |
 
 路径的具体推导（根目录 → 各叶子）在 `placement/workspace.py`；入口脚本对外只暴露一个
-`--maplocator-root`（`prepare_data.py`、`locate_dataset.py`），探测失败时报错并指向本文。
+`--maplocator-root`（`prepare-data`、`locate-dataset`），探测失败时报错并指向本文。
 
 ## 来源与约束
 
@@ -114,7 +114,7 @@ map-locate --resource-dir <dir> --stream     # 帧路径从 stdin 逐行读，�
 | `isHeld` | 全局搜索没有过线峰、放行裸峰的标记 |
 | `latencyMs` / `elapsedMs` | 单次 locate 内部耗时 / 单图端到端耗时 |
 | `attempts` | 该图实际 locate 调用次数（批量模式 1..N，流式恒 1） |
-| `accepted` / `accept_reason` | 不是 CLI 字段：`locate_dataset.py` 解析后写入的入选门标注 |
+| `accepted` / `accept_reason` | 不是 CLI 字段：`locate-dataset` 解析后写入的入选门标注 |
 
 早于 `b5aa2cd69` 的 CLI 不输出 `scale`，消费端（`placement/placement.py` 的 `Placement.from_record`）直接报错。
 
@@ -134,7 +134,7 @@ map-locate --resource-dir <dir> --stream     # 帧路径从 stdin 逐行读，�
 ## 产物溯源
 
 `locate.jsonl` 的 `(zone, x, y, scale)` 由工作台的 CLI 产生，是 ref 管线的输入指纹之一。
-`prepare_data.py --mode ref` 在 `processed_ref/.preprocess.json` 的 `provenance.assets_root`
+`prepare-data --mode ref` 在 `processed_ref/.preprocess.json` 的 `provenance.assets_root`
 记录本批数据所用的资产根，换根即缓存失效重生成；训练读该戳写进 run 的 `record.json`
-（`ref_reference_assets_root`），`live.py` 按它加载参考底图。资产根因此只有这一个真源：
+（`ref_reference_assets_root`），`live` 按它加载参考底图。资产根因此只有这一个真源：
 数据本身。

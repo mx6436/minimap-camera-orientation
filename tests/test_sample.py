@@ -134,7 +134,7 @@ def test_strips_match_regenerated_training_artifacts(tmp_path: Path) -> None:
 
     用同一批真实样本现场重跑数据管线（不读 data/processed_ref，避免拿旧定义产物对拍）。
     """
-    import prepare_data
+    from cli import prepare_data
 
     records = load_records(REAL_LOCATE_PATH)
     samples = [

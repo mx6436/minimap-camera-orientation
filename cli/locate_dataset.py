@@ -2,7 +2,7 @@
 data/locator/locate.jsonl。
 
 用法:
-    uv run locate_dataset.py [--jobs 4] [--limit N] [--no-retry-failed]
+    uv run locate-dataset [--jobs 4] [--limit N] [--no-retry-failed]
 
 定位 CLI 与资源默认取 gitignored 的本地工作台 local/maplocator/（布局、来源与重建见
 docs/maplocator-workspace.md）；本脚本只引用仓库内路径。

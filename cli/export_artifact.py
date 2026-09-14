@@ -3,17 +3,17 @@
 两个 run 的分类器图与定义模块导出的前处理图一次成型，对应 MaaEnd 交付布局
 `assets/resource/model/map/cameraorientation/`（拷入步骤见 README「拷入 MaaEnd」）：
 
-    uv run export_artifact.py --out runs/<name>/bundle \
+    uv run export-artifact --out runs/<name>/bundle \
         --polar-run runs/<polar_run> --ref-run runs/<ref_run>
 
 - `preprocess.onnx` 由定义模块 `endfield/preprocess.py` 导出；
-- `polar.onnx` / `polar_with_ref.onnx` 由各自 run 的 `best.pt` 导出（`export_onnx.py`）；
+- `polar.onnx` / `polar_with_ref.onnx` 由各自 run 的 `best.pt` 导出（`export-onnx`）；
 - `manifest.json` 记录 git commit、definition hash、模型指标、fixture 清单与容差剖面，
   并给每张图记 sha256，供 conformance 复验与「bundle 内版本一致」判定。
 
 导出后跑结构自检（manifest ↔ 图 metadata ↔ 文件哈希互证、ORT 1.19.2 可加载），
 失败退出码 1（图与 manifest 仍落盘，便于定位）。数值 conformance 证据用
-`uv run verify_artifact.py --bundle <out>` 落报告（#30）。
+`uv run verify-artifact --bundle <out>` 落报告（#30）。
 
 重复导出确定性：同一 run + 同一定义 + 同一工具链 → 图与 manifest 逐字节一致。
 """
@@ -27,12 +27,10 @@ import os
 from collections.abc import Mapping
 from pathlib import Path
 
+from cli.export_onnx import export as export_classifier
+from cli.export_onnx import git_commit
 from endfield import conformance as cf
 from endfield import preprocess, run_record
-from export_onnx import export as export_classifier
-from export_onnx import git_commit
-
-ROOT = Path(__file__).resolve().parent
 
 SCHEMA_VERSION = 1
 GRAPH_FILES = {
@@ -283,7 +281,7 @@ def main(argv: list[str] | None = None) -> int:
     manifest = _read_json(bundle / "manifest.json")
     print(f"bundle: {bundle}")
     print(f"result: PASS（三图 + manifest；definition_hash={manifest['definition_hash'][:12]}）")
-    print(f"conformance 证据：uv run verify_artifact.py --bundle {bundle}")
+    print(f"conformance 证据：uv run verify-artifact --bundle {bundle}")
     return 0
 
 

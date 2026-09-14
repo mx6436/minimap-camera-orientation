@@ -16,7 +16,7 @@ import cv2
 import numpy as np
 import pytest
 
-import prepare_data
+from cli import prepare_data
 from endfield import preprocess, preprocess_cache
 from endfield.dataset import REF_SUBDIR
 from endfield.input_encoding import assemble_ref_pair, reference_gap_fraction

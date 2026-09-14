@@ -53,7 +53,7 @@ def assets_root_from_provenance(stamp: Mapping[str, object] | None) -> str:
         return value
     raise SystemExit(
         f"processed 数据缺少资产根溯源（{PROVENANCE_KEY}）："
-        f"重跑 prepare_data.py --mode ref（见 {DOC_PATH}）"
+        f"重跑 prepare-data --mode ref（见 {DOC_PATH}）"
     )
 
 

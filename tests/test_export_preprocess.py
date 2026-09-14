@@ -180,7 +180,7 @@ def test_export_preprocess_is_deterministic(tmp_path: Path) -> None:
 
 
 def test_export_preprocess_cli(tmp_path: Path) -> None:
-    from export_preprocess import main
+    from cli.export_preprocess import main
 
     output = tmp_path / "cli" / "preprocess.onnx"
     assert main(["--out", str(output)]) == 0

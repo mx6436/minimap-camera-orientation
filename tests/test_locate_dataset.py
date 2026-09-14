@@ -1,4 +1,4 @@
-"""locate_dataset.py 入口行为：两侧原始目录并集、逐样本路径解析、产物与汇总落盘。
+"""locate-dataset 入口行为：两侧原始目录并集、逐样本路径解析、产物与汇总落盘。
 
 用可执行假 CLI（同 tests/test_locate.py 的 run_cli 模式）走完整编排，不依赖
 local/maplocator/；CLI 本身另有集成验证（真实重跑见 data/locator 的核对产物）。
@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-import locate_dataset
+from cli import locate_dataset
 
 FAKE_CLI = (
     "import json, sys\n"
@@ -57,7 +57,7 @@ def run_main(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *argv: str) -> Pat
     monkeypatch.setattr(
         sys,
         "argv",
-        ["locate_dataset.py", "--maplocator-root", str(workspace), *argv],
+        ["locate-dataset", "--maplocator-root", str(workspace), *argv],
     )
     locate_dataset.main()
     return out

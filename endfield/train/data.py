@@ -36,7 +36,7 @@ def filter_reference_gap(names: list[str], directory: Path, max_missing: float) 
     """按参考条带的环内缺失占比过滤训练样本：**严格大于**阈值即排除（等于保留）。
 
     缺失占比 = 42x360 条带中 `ref.A < 255` 的像素比例（读 `ref/` 流，与
-    `prepare_data.py --mode ref` 落盘一致，各半径等权）。只选样本，不改磁盘数据。
+    `prepare-data --mode ref` 落盘一致，各半径等权）。只选样本，不改磁盘数据。
     """
     kept: list[str] = []
     for name in names:

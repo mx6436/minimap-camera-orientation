@@ -16,11 +16,11 @@ import onnx
 import pytest
 import torch
 
+from cli.verify_artifact import main
 from endfield import conformance as cf
 from endfield import preprocess
 from endfield.model import ARCH_VERSION, AzimuthNet
 from tests._onnx_builders import build_classifier, build_draft_preprocess
-from verify_artifact import main
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -201,7 +201,8 @@ def test_cli_exit_codes_and_report_file(tmp_path: Path, real_preprocess: Path) -
     passed = subprocess.run(
         [
             sys.executable,
-            "verify_artifact.py",
+            "-m",
+            "cli.verify_artifact",
             "--bundle",
             str(bundle),
             "--fixture-dir",
@@ -219,7 +220,15 @@ def test_cli_exit_codes_and_report_file(tmp_path: Path, real_preprocess: Path) -
     assert payload["passed"] is True
 
     failing = subprocess.run(
-        [sys.executable, "verify_artifact.py", "--bundle", str(bundle), "--require", "polar"],
+        [
+            sys.executable,
+            "-m",
+            "cli.verify_artifact",
+            "--bundle",
+            str(bundle),
+            "--require",
+            "polar",
+        ],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
@@ -250,7 +259,7 @@ def test_verify_bundle_checks_classifier_structure(
 def test_verify_bundle_compares_classifier_with_checkpoint(
     tmp_path: Path, real_preprocess: Path
 ) -> None:
-    from export_onnx import export
+    from cli.export_onnx import export
 
     run_dir = write_run(tmp_path, "polar", 3)
     bundle = write_bundle(tmp_path, real_preprocess)
@@ -266,7 +275,7 @@ def test_verify_bundle_compares_classifier_with_checkpoint(
 def test_verify_bundle_skips_mode_mismatched_checkpoint(
     tmp_path: Path, real_preprocess: Path
 ) -> None:
-    from export_onnx import export
+    from cli.export_onnx import export
 
     run_dir = write_run(tmp_path, "polar", 3)
     bundle = write_bundle(tmp_path, real_preprocess)

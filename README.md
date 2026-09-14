@@ -32,9 +32,9 @@ uv run pytest
 ### polar
 
 ```bash
-uv run prepare_data.py                  # raw -> data/processed，并建 data/train、data/val 视图
+uv run prepare-data                     # raw -> data/processed，并建 data/train、data/val 视图
 uv run train --run-dir runs/<name>      # 训练参数见 train.toml
-uv run live.py --run-dir runs/<name>    # 实机预览，见下
+uv run live --run-dir runs/<name>       # 实机预览，见下
 ```
 
 ### ref
@@ -42,8 +42,8 @@ uv run live.py --run-dir runs/<name>    # 实机预览，见下
 先批量定位（可断点续跑），再生成观测与参考两路：
 
 ```bash
-uv run locate_dataset.py                # -> data/locator
-uv run prepare_data.py --mode ref       # -> data/processed_ref，并建 data/train_ref、data/val_ref
+uv run locate-dataset                   # -> data/locator
+uv run prepare-data --mode ref          # -> data/processed_ref，并建 data/train_ref、data/val_ref
 uv run train --run-dir runs/<name>      # train.toml 里 input_mode = "ref"
 ```
 
@@ -53,31 +53,31 @@ uv run train --run-dir runs/<name>      # train.toml 里 input_mode = "ref"
 
 - `data/processed`（polar）/ `data/processed_ref`（ref）：前处理产物，挂缓存戳，定义或输入变化时重生成。
 - `data/train`、`data/val`（polar）/ `data/train_ref`、`data/val_ref`（ref）：划分视图，符号链接到 processed。
-- `data/locator/`：ref 的定位产物（`locate_dataset.py` 增量维护）。
-- `runs/<name>/`：一次训练的产物目录（checkpoint、`record.json`、指标与曲线），由 `--run-dir` 指定，`live.py` 与导出从这里读。
+- `data/locator/`：ref 的定位产物（`locate-dataset` 增量维护）。
+- `runs/<name>/`：一次训练的产物目录（checkpoint、`record.json`、指标与曲线），由 `--run-dir` 指定，`live` 与导出从这里读。
 
 ## 实机预览
 
 游戏在 gamescope 会话中运行时，叠加显示圆盘、模型输入与概率曲线：
 
 ```bash
-uv run live.py --run-dir runs/<name>                            # 输入模式由 run 的 record.json 决定
-uv run live.py --run-dir runs/<name> --snapshot <overlay 路径>  # 保存一张 overlay 后退出
+uv run live --run-dir runs/<name>                            # 输入模式由 run 的 record.json 决定
+uv run live --run-dir runs/<name> --snapshot <overlay 路径>    # 保存一张 overlay 后退出
 ```
 
 ## 交付
 
-`export_artifact.py` 一次导出交付 bundle：`preprocess.onnx` + `polar.onnx` + `polar_with_ref.onnx` + `manifest.json`。
+`export-artifact` 一次导出交付 bundle：`preprocess.onnx` + `polar.onnx` + `polar_with_ref.onnx` + `manifest.json`。
 
 ```bash
-uv run export_artifact.py --out runs/<name>/bundle \
+uv run export-artifact --out runs/<name>/bundle \
     --polar-run runs/<polar_run> --ref-run runs/<ref_run>
 ```
 
 ### 工件校验（conformance）
 
 ```bash
-uv run verify_artifact.py --bundle runs/<name>/bundle   # 结构自检 + 内置场景数值比对
+uv run verify-artifact --bundle runs/<name>/bundle   # 结构自检 + 内置场景数值比对
 ```
 
 判定口径与其余用法见 `--help`，契约细节见 [docs/agents/engineering.md](docs/agents/engineering.md)。

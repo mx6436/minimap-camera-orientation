@@ -18,10 +18,17 @@ dependencies = [
 ]
 
 [project.scripts]
-train = "endfield.train.__main__:main"
+train = "cli.train:main"
+prepare-data = "cli.prepare_data:main"
+locate-dataset = "cli.locate_dataset:main"
+live = "cli.live:main"
+export-onnx = "cli.export_onnx:main"
+export-preprocess = "cli.export_preprocess:main"
+export-artifact = "cli.export_artifact:main"
+verify-artifact = "cli.verify_artifact:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["endfield", "placement"]
+packages = ["endfield", "placement", "cli"]
 
 [tool.ruff]
 line-length = 100

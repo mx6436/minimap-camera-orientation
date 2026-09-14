@@ -12,10 +12,10 @@ import onnx
 import pytest
 import torch
 
+from cli.export_artifact import GRAPH_FILES, SCHEMA_VERSION, check_bundle, export_bundle, main
 from endfield import conformance as cf
 from endfield import preprocess
 from endfield.model import ARCH_VERSION, AzimuthNet
-from export_artifact import GRAPH_FILES, SCHEMA_VERSION, check_bundle, export_bundle, main
 
 
 def write_run(root: Path, name: str, input_mode: str, channels: int) -> Path:

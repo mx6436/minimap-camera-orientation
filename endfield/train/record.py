@@ -111,7 +111,7 @@ def build_record(
         if assets_root is None:
             raise SystemExit(
                 "ref record requires the dataset's reference assets root; "
-                "run prepare_data.py --mode ref to write the stamp"
+                "run prepare-data --mode ref to write the stamp"
             )
         metadata["max_ref_missing"] = config["max_ref_missing"]
     return RunRecord(

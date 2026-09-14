@@ -2,7 +2,7 @@
 
 用法：
 
-    uv run export_preprocess.py --out runs/<name>/bundle/preprocess.onnx
+    uv run export-preprocess --out runs/<name>/bundle/preprocess.onnx
 
 图契约（输入名、动态维、输出角色、几何与合成语义）见 `endfield/preprocess.py`
 与导出图的 metadata；`manifest.json`（#28）消费 `definition_hash()`。

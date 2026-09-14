@@ -2,9 +2,9 @@
 
 用法见 README「工件校验（conformance）」。示例：
 
-    uv run verify_artifact.py --bundle runs/<name>/bundle
-    uv run verify_artifact.py --bundle <dir> --require polar,polar_with_ref --report r.json
-    uv run verify_artifact.py --dump-fixtures conformance/fixtures
+    uv run verify-artifact --bundle runs/<name>/bundle
+    uv run verify-artifact --bundle <dir> --require polar,polar_with_ref --report r.json
+    uv run verify-artifact --dump-fixtures conformance/fixtures
 
 退出码 0 = 通过（允许 warning），1 = 存在 error 或超容差比对。
 """

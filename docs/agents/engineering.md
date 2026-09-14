@@ -5,17 +5,17 @@
 ## 管线
 
 ```
-data/{train_raw,val_raw} ──locate_dataset.py(ref)──> data/locator
+data/{train_raw,val_raw} ──locate-dataset(ref)──> data/locator
         │
-        └──prepare_data.py[polar|ref]──> data/processed{,_ref} ──train──> runs/<name>
-                                                                          │
-                                            export_artifact.py ───────────┴──> bundle ──> MaaEnd
+        └──prepare-data[polar|ref]──> data/processed{,_ref} ──train──> runs/<name>
+                                                                       │
+                                                      export-artifact ─┴──> bundle ──> MaaEnd
 ```
 
 - `data/train_raw` / `data/val_raw` 是仅有的两个人工维护目录，脚本只读；划分由样本所在目录表达，跨侧同名硬报错。标签 `_r<角度>.png`，允许一位小数。
-- `prepare_data.py` 一条命令完成 raw → 模型输入 → 划分；`data/train` / `data/val`（及 `_ref`）是 `processed*` 的符号链接视图，每次运行重建并校验悬空链接。
+- `prepare-data` 一条命令完成 raw → 模型输入 → 划分；`data/train` / `data/val`（及 `_ref`）是 `processed*` 的符号链接视图，每次运行重建并校验悬空链接。
 - `processed*` 挂 `.preprocess.json` 缓存戳（定义哈希 + 图版本 + 输入指纹）：定义变更 / 输入增删 / `--force` 触发重生成。polar 的指纹是两侧样本名并集；ref 另含消费的 `zone`/`x`/`y`/`scale`，样本在目录间移动不改变并集、不触发重算。
-- ref 额外依赖定位产物 `data/locator/`（`locate_dataset.py` 增量维护，可断点续跑）与 gitignored 的本地工作台 `local/maplocator/`。入选门：`status==0 && !isHeld && locConf>=0.55`；坐标一致性过滤拒绝的样本计入 skipped。
+- ref 额外依赖定位产物 `data/locator/`（`locate-dataset` 增量维护，可断点续跑）与 gitignored 的本地工作台 `local/maplocator/`。入选门：`status==0 && !isHeld && locConf>=0.55`；坐标一致性过滤拒绝的样本计入 skipped。
 
 ## 前处理定义
 
@@ -50,7 +50,7 @@ data/{train_raw,val_raw} ──locate_dataset.py(ref)──> data/locator
 
 ## 实机
 
-- `live.py` 从 run 的 `record.json` 取输入模式：polar 每帧经定义模块展开；ref 常驻 `map-locate --stream` 子进程（定位在独立线程，显示循环不阻塞），由 `ReferenceSampler.strips` 出条带对、`assemble_ref_pair` 拼 7 通道。定位不可用（失败 / held / 低分 / 资产缺失）时 overlay 显示等待态。`--snapshot` 在首个有效定位后存一张 overlay 并退出。
+- `live` 从 run 的 `record.json` 取输入模式：polar 每帧经定义模块展开；ref 常驻 `map-locate --stream` 子进程（定位在独立线程，显示循环不阻塞），由 `ReferenceSampler.strips` 出条带对、`assemble_ref_pair` 拼 7 通道。定位不可用（失败 / held / 低分 / 资产缺失）时 overlay 显示等待态。`--snapshot` 在首个有效定位后存一张 overlay 并退出。
 - 需要 gamescope 会话；ref 需要本地工作台 CLI 支持 `--stream`。
 
 ## 模块归属
@@ -73,9 +73,7 @@ data/{train_raw,val_raw} ──locate_dataset.py(ref)──> data/locator
 | `placement/locator.py` | `map-locate` 进程驱动（批量一轮 / `--stream`） |
 | `placement/workspace.py` | 本地工作台路径推导与 provenance |
 | `placement/coord_filter.py` | 坐标一致性过滤（上游换算，不拟合参数） |
-| `export_artifact.py` / `export_onnx.py` / `export_preprocess.py` | 交付导出 |
-| `verify_artifact.py` | conformance 校验入口 |
-| `live.py` | 实机推理与 overlay |
+| `cli/` | 编排面：`prepare-data`、`locate-dataset`、`train`、`live`、`export-{onnx,preprocess,artifact}`、`verify-artifact` |
 | `tests/` | pytest，含定义 ownership 守卫 |
 
-CLI 脚本仍在仓库根；收进 `cli/` 包（并断掉 `conformance` ↔ `export_onnx` 的运行时互相 import）是下一步。
+`endfield/` 与 `placement/` 是纯库：import 它们不会带出 argparse 或子进程副作用；跨包的编排一律在 `cli/`。`endfield/model.py` 持有交付图的外层 wrapper 与权重折叠，conformance 因此不再反过来 import 顶层脚本。

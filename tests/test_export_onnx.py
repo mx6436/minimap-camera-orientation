@@ -11,9 +11,15 @@ import pytest
 import torch
 from onnx.reference import ReferenceEvaluator
 
+from cli.export_onnx import export
 from endfield.conformance import check_classifier_model
-from endfield.model import ARCH_VERSION, AzimuthNet, load_model
-from export_onnx import ExportWrapper, export, fold_input_conventions
+from endfield.model import (
+    ARCH_VERSION,
+    AzimuthNet,
+    ExportWrapper,
+    fold_input_conventions,
+    load_model,
+)
 
 
 def write_run(tmp_path: Path, input_mode: str, channels: int) -> Path:

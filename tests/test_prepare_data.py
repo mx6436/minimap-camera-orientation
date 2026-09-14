@@ -10,7 +10,7 @@ import cv2
 import numpy as np
 import pytest
 
-import prepare_data
+from cli import prepare_data
 from endfield import preprocess, preprocess_cache
 from endfield.data_utils import png_names
 from endfield.polar import imread_png

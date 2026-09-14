@@ -943,8 +943,7 @@ def _verify_classifier(
 
     import torch
 
-    from endfield.model import load_model
-    from export_onnx import ExportWrapper, fold_input_conventions
+    from endfield.model import ExportWrapper, fold_input_conventions, load_model
 
     record = run_record.read(Path(resolved_run))
     expected_mode = ROLE_MODES[role]

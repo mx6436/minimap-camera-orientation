@@ -157,7 +157,7 @@ def accepted_records(locate_path: Path) -> tuple[dict[str, dict], dict[str, str]
     """定位产物 -> (accepted 记录表, name -> 跳过原因)。"""
     records = load_records(locate_path)
     if not records:
-        raise SystemExit(f"no MapLocator records: {locate_path} (run locate_dataset.py first)")
+        raise SystemExit(f"no MapLocator records: {locate_path} (run locate-dataset first)")
     accepted: dict[str, dict] = {}
     skipped: dict[str, str] = {}
     for name, record in records.items():
@@ -174,7 +174,7 @@ def accepted_records(locate_path: Path) -> tuple[dict[str, dict], dict[str, str]
 def ref_input_entries(resolved: list[tuple[str, Placement]]) -> list[str]:
     """ref 前处理的输入指纹条目：样本名 + 它消费的底图定位（zone/x/y/scale）。
 
-    其他定位字段（latencyMs 等）不进指纹：重跑 locate_dataset.py 只刷新时间戳时
+    其他定位字段（latencyMs 等）不进指纹：重跑 locate-dataset 只刷新时间戳时
     不该触发数据重算；资产路径由 zone 决定，不另记。
     """
     entries = []
@@ -334,7 +334,7 @@ def parse_args() -> argparse.Namespace:
         default=InputMode.POLAR.value,
         help=(
             "前处理模式：polar 极坐标展开（默认）；ref 参考输入"
-            "（观测/参考各展开后并列，需先跑 locate_dataset.py）"
+            "（观测/参考各展开后并列，需先跑 locate-dataset）"
         ),
     )
     parser.add_argument(

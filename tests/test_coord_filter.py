@@ -9,7 +9,7 @@ import cv2
 import numpy as np
 import pytest
 
-import prepare_data
+from cli import prepare_data
 from placement import coord_filter
 from placement.placement import Placement
 

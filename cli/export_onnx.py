@@ -23,15 +23,14 @@ import subprocess
 from pathlib import Path
 
 import torch
-from torch import nn
 
 from endfield import run_record
-from endfield.model import load_model
+from endfield.model import ExportWrapper, fold_input_conventions, load_model
 from endfield.preprocess import IMG_H as POLAR_H
 from endfield.preprocess import IMG_W as POLAR_W
 from endfield.run_record import InputMode, RunRecord
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
 
 DESCRIPTIONS = {
     InputMode.POLAR: (
@@ -68,28 +67,6 @@ INPUT_SPECS = {
         "folded into the first convolution weights, HWC->CHW is a Transpose inside the graph"
     ),
 }
-
-
-def fold_input_conventions(net: nn.Module) -> None:
-    """把 /255 归一化折入首层卷积权重。
-
-    标量缩放对卷积是线性变换，模型首层卷积无偏置，折叠精确无损。
-    模型内部训练契约是 BGR NCHW [0,1]，交付输入无需通道翻转。
-    """
-    conv0 = next(m for m in net.trunk if isinstance(m, nn.Conv2d))
-    if conv0.bias is not None:
-        raise ValueError("first conv is expected to be bias-free for exact folding")
-    conv0.weight.data = conv0.weight.detach() / 255.0
-
-
-class ExportWrapper(nn.Module):
-    def __init__(self, net: nn.Module) -> None:
-        super().__init__()
-        self.net = net
-
-    def forward(self, strip_bgr: torch.Tensor) -> torch.Tensor:
-        features = strip_bgr.permute(0, 3, 1, 2).float()
-        return torch.softmax(self.net(features), dim=1)
 
 
 def git_commit() -> str:
@@ -176,7 +153,7 @@ def export(checkpoint: Path, output: Path | None = None) -> Path:
     return output
 
 
-if __name__ == "__main__":
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-dir", type=Path, required=True)
     parser.add_argument(
@@ -185,5 +162,10 @@ if __name__ == "__main__":
         default=None,
         help="缺省 <run-dir>/polar.onnx 或 <run-dir>/polar_with_ref.onnx（按 input_mode）",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     export(args.run_dir / "best.pt", args.output)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

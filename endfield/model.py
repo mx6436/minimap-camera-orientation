@@ -105,6 +105,30 @@ class AzimuthNet(nn.Module):
         return self.filter(profile).squeeze(1)
 
 
+def fold_input_conventions(net: nn.Module) -> None:
+    """把 /255 归一化折入首层卷积权重（交付输入的 HWC→CHW 转置在 wrapper 里）。
+
+    标量缩放对卷积是线性变换，模型首层卷积无偏置，折叠精确无损。
+    模型内部训练契约是 BGR NCHW [0,1]，交付输入无需通道翻转。
+    """
+    conv0 = next(m for m in net.trunk if isinstance(m, nn.Conv2d))
+    if conv0.bias is not None:
+        raise ValueError("first conv is expected to be bias-free for exact folding")
+    conv0.weight.data = conv0.weight.detach() / 255.0
+
+
+class ExportWrapper(nn.Module):
+    """交付图的外层：uint8 NHWC 条带 -> 首层卷积 -> softmax 概率质量函数。"""
+
+    def __init__(self, net: nn.Module) -> None:
+        super().__init__()
+        self.net = net
+
+    def forward(self, strip_bgr: torch.Tensor) -> torch.Tensor:
+        features = strip_bgr.permute(0, 3, 1, 2).float()
+        return torch.softmax(self.net(features), dim=1)
+
+
 def smoothed_targets(angles: np.ndarray, sigma: float = TARGET_SIGMA) -> torch.Tensor:
     """角度 -> Z/360Z 上的循环高斯概率质量函数，供交叉熵使用。"""
     bins = np.arange(360, dtype=np.float64)
