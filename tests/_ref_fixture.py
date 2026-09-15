@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -26,51 +25,6 @@ def write_frame(path: Path, value: int = 200) -> None:
 
 def placement(zone: str, x: float, y: float) -> Placement:
     return Placement(zone=zone, x=x, y=y, scale=1.0)
-
-
-def write_filter_data(
-    root: Path,
-    assets: Path,
-    *,
-    canvas: tuple[int, int] = (9600, 9000),
-    rect: tuple[float, float] = (4800.0, 0.0),
-    base_size: tuple[int, int] = (1440, 1350),
-) -> None:
-    """最小 ZmdMap 镜像 + Base.png：map01 的 lv006 矩形 + 两个 Base。"""
-    root.mkdir(parents=True, exist_ok=True)
-    (root / "map01_layout.json").write_text(
-        json.dumps(
-            {
-                "base_map": "map01",
-                "canvas_width": canvas[0],
-                "canvas_height": canvas[1],
-                "levels": {
-                    "map01_lv006": {
-                        "x": rect[0],
-                        "y": rect[1],
-                        "width": 4200,
-                        "height": 4800,
-                    }
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-    (root / "map02_layout.json").write_text(
-        json.dumps(
-            {
-                "base_map": "map02",
-                "canvas_width": 100,
-                "canvas_height": 100,
-                "levels": {"map02_lv005": {"x": 0, "y": 0, "width": 100, "height": 100}},
-            }
-        ),
-        encoding="utf-8",
-    )
-    for region, size in (("ValleyIV", base_size), ("Wuling", (16, 16))):
-        (assets / region).mkdir(parents=True, exist_ok=True)
-        blank = np.zeros((size[1], size[0], 4), dtype=np.uint8)
-        assert cv2.imwrite(str(assets / region / "Base.png"), blank)
 
 
 def locate_record(name: str, **overrides: object) -> dict:
@@ -96,7 +50,6 @@ class RefFixture:
     train_raw: Path
     val_raw: Path
     assets_root: Path
-    zmdmap_root: Path
     locate_path: Path
     names: dict[str, str]
 
@@ -104,12 +57,11 @@ class RefFixture:
     def samples(self) -> dict[str, Path]:
         return dataset.raw_samples(self.train_raw, self.val_raw)
 
-    def resolve(self, zmdmap_root: Path | None = None) -> ref_inputs.RefInputs:
+    def resolve(self) -> ref_inputs.RefInputs:
         return ref_inputs.resolve(
             self.samples,
             locate_path=self.locate_path,
             assets_root=self.assets_root,
-            zmdmap_root=zmdmap_root or self.zmdmap_root,
         )
 
 
@@ -154,7 +106,6 @@ def ref_fixture(tmp_path: Path) -> RefFixture:
         train_raw=train_raw,
         val_raw=val_raw,
         assets_root=assets_root,
-        zmdmap_root=tmp_path / "zmdmap",
         locate_path=locate_path,
         names=names,
     )

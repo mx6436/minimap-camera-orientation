@@ -33,7 +33,6 @@ def test_layout_derives_leaves_from_root(tmp_path: Path) -> None:
     assert workspace.cli_path(root) == root / "bin" / "map-locate"
     assert workspace.resource_dir(root) == root / "resource"
     assert workspace.assets_root(root) == root / "resource" / "image" / "MapLocator"
-    assert workspace.zmdmap_root(root) == root / "data" / "ZmdMap"
 
 
 def test_provenance_round_trips_assets_root(tmp_path: Path) -> None:
@@ -109,14 +108,10 @@ def test_require_locator_rejects_cli_without_stream(tmp_path: Path) -> None:
         workspace.require_locator(root, stream=True)
 
 
-def test_require_assets_and_zmdmap_report_missing_dirs(tmp_path: Path) -> None:
+def test_require_assets_reports_missing_dir(tmp_path: Path) -> None:
     with pytest.raises(SystemExit, match="参考底图"):
         workspace.require_assets(tmp_path / "assets")
-    with pytest.raises(SystemExit, match="ZmdMap"):
-        workspace.require_zmdmap(tmp_path / "ZmdMap")
 
-    assets, zmdmap = tmp_path / "assets", tmp_path / "ZmdMap"
+    assets = tmp_path / "assets"
     assets.mkdir()
-    zmdmap.mkdir()
     assert workspace.require_assets(assets) == assets
-    assert workspace.require_zmdmap(zmdmap) == zmdmap

@@ -79,7 +79,7 @@ data/{train_raw,val_raw} ──locate-dataset(ref)──> data/locator
 | `placement/ref_inputs.py` | ref 输入侧：入选门、资产存在性、坐标过滤与指纹条目 → 输入侧值 |
 | `placement/locator.py` | `map-locate` 进程驱动（批量一轮 / `--stream`） |
 | `placement/workspace.py` | 本地工作台路径推导与 provenance |
-| `placement/coord_filter.py` | 坐标一致性过滤（上游换算，不拟合参数） |
+| `placement/coord_filter.py` | 标注坐标一致性过滤（zone 判据与阈值判据） |
 | `cli/` | 编排面：`prepare-data`、`locate-dataset`、`train`、`live`、`export-{onnx,preprocess,artifact}`、`verify-artifact` |
 | `tests/` | pytest，含定义 ownership 守卫 |
 

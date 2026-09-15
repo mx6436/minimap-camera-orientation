@@ -16,7 +16,6 @@ from endfield.input_encoding import assemble_ref_pair
 from endfield.polar import BASE_SIZE, load_source_frame
 from endfield.preprocess import IMG_H, IMG_W, observed_roi
 from placement import sample as sample_module
-from placement import workspace
 from placement.placement import Placement, accept
 from placement.records import load_records, write_jsonl
 from placement.sample import MissingZoneAsset, ReferenceSampler
@@ -163,7 +162,6 @@ def test_strips_match_regenerated_training_artifacts(tmp_path: Path) -> None:
         {name: raw_dir / name for name, _, _ in chosen},
         locate_path=locate_path,
         assets_root=REAL_ASSETS_ROOT,
-        zmdmap_root=workspace.zmdmap_root(),
     )
     names = [name for name, _ in ref.inputs.sources]
     assert len(names) > 1, "need at least one sample on each side of the split view"

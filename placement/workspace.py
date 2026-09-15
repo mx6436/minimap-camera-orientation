@@ -19,7 +19,6 @@ PROVENANCE_KEY = "assets_root"
 CLI_REL = Path("bin") / "map-locate"
 RESOURCE_REL = Path("resource")
 ASSETS_REL = RESOURCE_REL / "image" / "MapLocator"
-ZMDMAP_REL = Path("data") / "ZmdMap"
 
 _PROBE_TIMEOUT_S = 10
 
@@ -34,10 +33,6 @@ def resource_dir(root: Path = WORKSPACE_ROOT) -> Path:
 
 def assets_root(root: Path = WORKSPACE_ROOT) -> Path:
     return root / ASSETS_REL
-
-
-def zmdmap_root(root: Path = WORKSPACE_ROOT) -> Path:
-    return root / ZMDMAP_REL
 
 
 def provenance(assets: Path) -> dict[str, str]:
@@ -73,12 +68,6 @@ def require_assets(assets: Path) -> Path:
     if not assets.is_dir():
         raise SystemExit(f"参考底图目录不存在: {assets}（见 {DOC_PATH}）")
     return assets
-
-
-def require_zmdmap(zmdmap: Path) -> Path:
-    if not zmdmap.is_dir():
-        raise SystemExit(f"ZmdMap 数据目录不存在: {zmdmap}（见 {DOC_PATH}）")
-    return zmdmap
 
 
 def _require_cli(cli: Path) -> Path:

@@ -15,7 +15,7 @@ from placement import coord_filter, ref_inputs
 from placement.placement import Placement
 from placement.records import write_jsonl
 from placement.sample import ReferenceSampler
-from tests._ref_fixture import locate_record, ref_fixture, write_filter_data, write_frame
+from tests._ref_fixture import locate_record, ref_fixture, write_frame
 
 
 def test_resolve_keeps_accepted_samples_and_records_skip_reasons(tmp_path: Path) -> None:
@@ -91,7 +91,6 @@ def test_resolve_rejects_empty_sample_set(tmp_path: Path) -> None:
             {},
             locate_path=fx.locate_path,
             assets_root=fx.assets_root,
-            zmdmap_root=fx.zmdmap_root,
         )
 
 
@@ -103,7 +102,6 @@ def test_resolve_requires_reference_assets(tmp_path: Path) -> None:
             fx.samples,
             locate_path=fx.locate_path,
             assets_root=tmp_path / "missing_assets",
-            zmdmap_root=fx.zmdmap_root,
         )
 
 
@@ -112,8 +110,10 @@ def test_resolve_applies_coord_filter(tmp_path: Path) -> None:
     from endfield import prepare
 
     raw_dir, assets = tmp_path / "raw", tmp_path / "assets"
-    zmd, processed = tmp_path / "zmd", tmp_path / "processed_ref"
-    write_filter_data(zmd, assets)
+    processed = tmp_path / "processed_ref"
+    (assets / "ValleyIV").mkdir(parents=True)
+    blank = np.zeros((200, 200, 4), dtype=np.uint8)
+    assert cv2.imwrite(str(assets / "ValleyIV" / "Base.png"), blank)
     raw_dir.mkdir(parents=True)
     frame = np.full((200, 200, 3), 7, dtype=np.uint8)
     train_name = "ValleyIV_Base_x100.0_y100.0_r0.0.png"
@@ -141,7 +141,6 @@ def test_resolve_applies_coord_filter(tmp_path: Path) -> None:
         {name: raw_dir / name for name in (train_name, val_name, dropped_name)},
         locate_path=locate_path,
         assets_root=assets,
-        zmdmap_root=zmd,
     )
     layout = dataset.DatasetLayout(
         processed_dir=processed,

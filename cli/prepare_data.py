@@ -87,7 +87,6 @@ def _run_ref(args: argparse.Namespace) -> None:
         dataset.raw_samples(dataset.TRAIN_RAW_DIR, dataset.VAL_RAW_DIR),
         locate_path=dataset.LOCATE_PATH,
         assets_root=workspace.assets_root(args.maplocator_root),
-        zmdmap_root=workspace.zmdmap_root(args.maplocator_root),
     )
     report = prepare.prepare(
         InputMode.REF,
@@ -123,8 +122,7 @@ def parse_args() -> argparse.Namespace:
         default=workspace.WORKSPACE_ROOT,
         help=(
             "本地 MapLocator 工作台根目录（布局、CLI 契约与重建见 "
-            f"{workspace.DOC_PATH}）；ref 模式消费其中的 resource/image/MapLocator "
-            "与 data/ZmdMap"
+            f"{workspace.DOC_PATH}）；ref 模式消费其中的 resource/image/MapLocator"
         ),
     )
     parser.add_argument(

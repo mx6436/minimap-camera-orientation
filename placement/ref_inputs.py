@@ -48,13 +48,11 @@ def resolve(
     *,
     locate_path: Path,
     assets_root: Path,
-    zmdmap_root: Path,
 ) -> RefInputs:
     """样本并集 + 定位产物 -> ref 输入侧值。
 
     `samples` 是两侧原始目录并集；未入选（定位失败 / held / 低分 / 缺资产 / 坐标不一致）
-    的样本进 `skipped`，其余按名单排序进产物。资产根经校验后随值返回；ZmdMap 数据只在
-    出现 MapTracker 命名样本时才读。
+    的样本进 `skipped`，其余按名单排序进产物。资产根经校验后随值返回。
     """
     if not samples:
         raise SystemExit("no raw png samples in data/train_raw and data/val_raw")
@@ -66,7 +64,7 @@ def resolve(
         if name not in accepted:
             skipped.setdefault(name, NO_LOCATE_RECORD)
     resolved = _resolve_placements(accepted, assets, skipped)
-    resolved, rejected = _filter_coord_consistent(resolved, zmdmap_root, assets)
+    resolved, rejected = _filter_coord_consistent(resolved)
     skipped.update(rejected)
     return RefInputs(
         inputs=prepare.PrepareInputs(
@@ -130,23 +128,14 @@ def _resolve_placements(
 
 
 def _filter_coord_consistent(
-    resolved: list[tuple[str, Placement]], zmdmap_root: Path, assets_root: Path
+    resolved: list[tuple[str, Placement]],
 ) -> tuple[list[tuple[str, Placement]], dict[str, str]]:
-    """标注坐标一致性过滤：返回（保留样本, name -> 拒绝原因）。
-
-    只在出现 MapTracker 命名样本时才读 ZmdMap/Base 换算数据（纯 zone 命名的数据集
-    不需要镜像数据）。
-    """
+    """标注坐标一致性过滤：返回（保留样本, name -> 拒绝原因）。"""
     kept: list[tuple[str, Placement]] = []
     rejected: dict[str, str] = {}
-    data: coord_filter.FilterData | None = None
     for item in resolved:
         name, placement = item
-        annotation = coord_filter.parse_annotation(name)
-        if data is None and coord_filter.needs_conversion(annotation.zone):
-            workspace.require_zmdmap(zmdmap_root)
-            data = coord_filter.load_filter_data(zmdmap_root, assets_root)
-        decision = coord_filter.evaluate(annotation, placement, data)
+        decision = coord_filter.evaluate(coord_filter.parse_annotation(name), placement)
         if decision.keep:
             kept.append(item)
         else:
