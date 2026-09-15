@@ -15,6 +15,7 @@ data/{train_raw,val_raw} ──locate-dataset(ref)──> data/locator
 - `data/train_raw` / `data/val_raw` 是仅有的两个人工维护目录，脚本只读；划分由样本所在目录表达，跨侧同名硬报错。标签 `_r<角度>.png`，允许一位小数。
 - `prepare-data` 一条命令完成 raw → 模型输入 → 划分；`data/train` / `data/val`（及 `_ref`）是 `processed*` 的符号链接视图，每次运行重建并校验悬空链接。
 - `processed*` 挂 `.preprocess.json` 缓存戳（定义哈希 + 图版本 + 输入指纹）：定义变更 / 输入增删 / `--force` 触发重生成。polar 的指纹是两侧样本名并集；ref 另含消费的 `zone`/`x`/`y`/`scale`，样本在目录间移动不改变并集、不触发重算。
+- 数据准备的实现（生成 + 有效划分 + 划分视图链接）收在 `endfield/prepare.py`，输入侧的模式差异由调用方注入「输入侧值 + 渲染回调」两个适配器：polar 的在 `endfield/prepare.py`，ref 的输入解析与渲染在 `placement/ref_inputs.py`；`cli/prepare_data.py` 只做接线与打印（ADR 0006）。产物布局（`DatasetLayout`）与两侧名单求交的纯函数在 `endfield/dataset.py`，训练读取共用同一份目录口径。
 - ref 额外依赖定位产物 `data/locator/`（`locate-dataset` 增量维护，可断点续跑）与 gitignored 的本地工作台 `local/maplocator/`。入选门：`status==0 && !isHeld && locConf>=0.55`；坐标一致性过滤拒绝的样本计入 skipped。
 
 ## 前处理定义
@@ -57,14 +58,15 @@ data/{train_raw,val_raw} ──locate-dataset(ref)──> data/locator
 
 ## 模块归属
 
-两个顶层包：`endfield/`（模型与训练侧）与 `placement/`（底图定位，即对 MapLocator 定位记录与本地工作台资产的消费面）。依赖方向单向 `placement → endfield`（ADR 0004）。
+库侧两个顶层包：`endfield/`（模型与训练侧）与 `placement/`（底图定位，即对 MapLocator 定位记录与本地工作台资产的消费面）。依赖方向单向 `placement → endfield`（ADR 0004）；`cli/` 是第三个顶层包，只放命令入口。
 
 | 模块 | 职责 |
 | --- | --- |
 | `endfield/preprocess.py` | 前处理定义（唯一实现） |
 | `endfield/polar.py` | 帧解码、基准缩放与展示几何 |
 | `endfield/input_encoding.py` | 张量编码：7 通道配对与参考缺失占比 |
-| `endfield/dataset.py` | 数据集布局（`data/` 树与参考子目录名） |
+| `endfield/dataset.py` | 数据集布局（`DatasetLayout`、两侧名单求交）与 `data/` 树 |
+| `endfield/prepare.py` | 数据准备：渲染回调缝、产物与缓存戳、有效划分与视图链接 |
 | `endfield/train/` | 训练循环与配置 |
 | `endfield/model.py` | 网络与导出 wrapper |
 | `endfield/run_record.py` | 运行档案与输入模式词汇 |
@@ -74,10 +76,11 @@ data/{train_raw,val_raw} ──locate-dataset(ref)──> data/locator
 | `placement/records.py` | `locate.jsonl` 读写与集合操作 |
 | `placement/placement.py` | 底图定位（`Placement`）、入选门与失败分类 |
 | `placement/sample.py` | `ReferenceSampler`：底图定位 → 条带对（底图复用） |
+| `placement/ref_inputs.py` | ref 输入侧：入选门、资产存在性、坐标过滤与指纹条目 → 输入侧值 |
 | `placement/locator.py` | `map-locate` 进程驱动（批量一轮 / `--stream`） |
 | `placement/workspace.py` | 本地工作台路径推导与 provenance |
 | `placement/coord_filter.py` | 坐标一致性过滤（上游换算，不拟合参数） |
 | `cli/` | 编排面：`prepare-data`、`locate-dataset`、`train`、`live`、`export-{onnx,preprocess,artifact}`、`verify-artifact` |
 | `tests/` | pytest，含定义 ownership 守卫 |
 
-`endfield/` 与 `placement/` 是纯库：import 它们不会带出 argparse 或子进程副作用；跨包的编排一律在 `cli/`。`endfield/model.py` 持有交付图的外层 wrapper 与权重折叠，conformance 因此不再反过来 import 顶层脚本。
+`endfield/` 与 `placement/` 是纯库：import 它们不会带出 argparse 或子进程副作用；跨包的编排一律在 `cli/`。`endfield/model.py` 持有交付图的外层 wrapper 与权重折叠，conformance 因此不再反过来 import 顶层脚本。`endfield/prepare.py` 不 import `placement`：ref 的输入侧解析与渲染经注入的适配器接线，保持 `placement → endfield` 单向（ADR 0006）。

@@ -16,6 +16,7 @@ from endfield.input_encoding import assemble_ref_pair
 from endfield.polar import BASE_SIZE, load_source_frame
 from endfield.preprocess import IMG_H, IMG_W, observed_roi
 from placement import sample as sample_module
+from placement import workspace
 from placement.placement import Placement, accept
 from placement.records import load_records, write_jsonl
 from placement.sample import MissingZoneAsset, ReferenceSampler
@@ -130,11 +131,13 @@ def test_strips_reject_non_roi_observation(tmp_path: Path) -> None:
     reason="real locate.jsonl / assets not available",
 )
 def test_strips_match_regenerated_training_artifacts(tmp_path: Path) -> None:
-    """同帧同定位：采样入口的条带对与 prepare_data --mode ref 的两路产物逐字节一致。
+    """同帧同定位：采样入口的条带对与 prepare-data --mode ref 的两路产物逐字节一致。
 
-    用同一批真实样本现场重跑数据管线（不读 data/processed_ref，避免拿旧定义产物对拍）。
+    用同一批真实样本现场重跑数据准备（不读 data/processed_ref，避免拿旧定义产物对拍）。
     """
-    from cli import prepare_data
+    from endfield import dataset, prepare
+    from endfield.run_record import InputMode
+    from placement import ref_inputs
 
     records = load_records(REAL_LOCATE_PATH)
     samples = [
@@ -156,8 +159,27 @@ def test_strips_match_regenerated_training_artifacts(tmp_path: Path) -> None:
     locate_path = tmp_path / "locate.jsonl"
     write_jsonl(locate_path, [{**record, "name": name} for name, record, _ in chosen])
     processed = tmp_path / "processed_ref"
-    prepare_data.generate_processed_ref(
-        {name: raw_dir / name for name, _, _ in chosen}, locate_path, REAL_ASSETS_ROOT, processed
+    ref = ref_inputs.resolve(
+        {name: raw_dir / name for name, _, _ in chosen},
+        locate_path=locate_path,
+        assets_root=REAL_ASSETS_ROOT,
+        zmdmap_root=workspace.zmdmap_root(),
+    )
+    names = [name for name, _ in ref.inputs.sources]
+    assert len(names) > 1, "need at least one sample on each side of the split view"
+    prepare.prepare(
+        InputMode.REF,
+        ref.inputs,
+        ref.renderer(ReferenceSampler(ref.assets_root)),
+        layout=dataset.DatasetLayout(
+            processed_dir=processed,
+            train_dir=tmp_path / "train_ref",
+            val_dir=tmp_path / "val_ref",
+            subdirs=(dataset.REF_SUBDIR,),
+        ),
+        train_side=names[:-1],
+        val_side=names[-1:],
+        workers=1,
     )
 
     sampler = ReferenceSampler(REAL_ASSETS_ROOT)

@@ -1,66 +1,16 @@
-"""标注坐标一致性过滤（#33）：换算闭式、阈值与 ref 管线接线。"""
+"""标注坐标一致性过滤（#33）：换算闭式与阈值判据。
+
+过滤接线到 ref 输入侧的部分在 `tests/test_ref_inputs.py`。
+"""
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
-import cv2
-import numpy as np
 import pytest
 
-from cli import prepare_data
 from placement import coord_filter
-from placement.placement import Placement
-
-
-def placement(zone: str, x: float, y: float) -> Placement:
-    return Placement(zone=zone, x=x, y=y, scale=1.0)
-
-
-def write_filter_data(
-    root: Path,
-    assets: Path,
-    *,
-    canvas: tuple[int, int] = (9600, 9000),
-    rect: tuple[float, float] = (4800.0, 0.0),
-    base_size: tuple[int, int] = (1440, 1350),
-) -> None:
-    """最小 ZmdMap 镜像 + Base.png：map01 的 lv006 矩形 + 两个 Base。"""
-    root.mkdir(parents=True, exist_ok=True)
-    (root / "map01_layout.json").write_text(
-        json.dumps(
-            {
-                "base_map": "map01",
-                "canvas_width": canvas[0],
-                "canvas_height": canvas[1],
-                "levels": {
-                    "map01_lv006": {
-                        "x": rect[0],
-                        "y": rect[1],
-                        "width": 4200,
-                        "height": 4800,
-                    }
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-    (root / "map02_layout.json").write_text(
-        json.dumps(
-            {
-                "base_map": "map02",
-                "canvas_width": 100,
-                "canvas_height": 100,
-                "levels": {"map02_lv005": {"x": 0, "y": 0, "width": 100, "height": 100}},
-            }
-        ),
-        encoding="utf-8",
-    )
-    for region, size in (("ValleyIV", base_size), ("Wuling", (16, 16))):
-        (assets / region).mkdir(parents=True, exist_ok=True)
-        blank = np.zeros((size[1], size[0], 4), dtype=np.uint8)
-        assert cv2.imwrite(str(assets / region / "Base.png"), blank)
+from tests._ref_fixture import placement, write_filter_data
 
 
 def load_data(tmp_path: Path) -> coord_filter.FilterData:
@@ -135,44 +85,3 @@ def test_missing_layout_raises(tmp_path: Path) -> None:
 
     with pytest.raises(FileNotFoundError, match="map01_layout.json"):
         coord_filter.load_filter_data(tmp_path / "zmd", assets)
-
-
-def test_generate_processed_ref_applies_coord_filter(tmp_path: Path) -> None:
-    raw_dir, assets = tmp_path / "raw", tmp_path / "assets"
-    zmd, processed = tmp_path / "zmd", tmp_path / "processed_ref"
-    write_filter_data(zmd, assets)
-    raw_dir.mkdir(parents=True)
-    frame = np.full((200, 200, 3), 7, dtype=np.uint8)
-    kept_name = "ValleyIV_Base_x100.0_y100.0_r0.0.png"
-    dropped_name = "ValleyIV_Base_x200.0_y200.0_r0.0.png"
-    for name in (kept_name, dropped_name):
-        assert cv2.imwrite(str(raw_dir / name), frame)
-    locate_path = tmp_path / "locate.jsonl"
-    record = {
-        "name": "",
-        "status": 0,
-        "isHeld": False,
-        "locConf": 0.9,
-        "zone": "ValleyIV_Base",
-        "x": 100.0,
-        "y": 100.0,
-        "scale": 1.0,
-    }
-    lines = []
-    for name in (kept_name, dropped_name):
-        lines.append(json.dumps({**record, "name": name}))
-    locate_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-    names, skipped = prepare_data.generate_processed_ref(
-        prepare_data.raw_samples(raw_dir, tmp_path / "empty_raw"),
-        locate_path,
-        assets,
-        processed,
-        workers=1,
-        zmdmap_root=zmd,
-    )
-
-    assert names == [kept_name]
-    assert skipped[dropped_name] == coord_filter.REASON_DELTA
-    assert (processed / kept_name).is_file()
-    assert not (processed / dropped_name).exists()
