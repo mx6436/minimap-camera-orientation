@@ -2,6 +2,10 @@
 加权和与跨半径 soft-min 双路聚合为 2×16 通道方位角剖面，再经循环一维卷积
 匹配滤波输出每个方位角的 logits；交叉熵训练，argmax 解码。方位角轴全程
 不下采样、只做循环卷积，对输入平移精确等变。
+
+角向可达半径 = 主干各层 dilation 之和 + score 头的 ±1：每层 k=3 取 ±d，方位轴又
+不下采样，所以每层贡献的半径就是它的 dilation。这是逐像素阶段能看到的角向跨度，
+须覆盖视锥半宽（≥40°）。
 """
 
 from __future__ import annotations
@@ -19,7 +23,11 @@ from endfield.preprocess import IMG_H, IMG_W
 TARGET_SIGMA = 3.0
 REFINE_RADIUS = 5
 MATCH_DILATIONS = (1, 8, 16)
-TRUNK_AZIMUTH_DILATIONS = (2, 4, 8)
+# 主干各块输出通道数与方位轴 dilation：可达半径 = Σd + score 头的 ±1 ≥ 视锥半宽 40°。
+# 宽度是运算量的二次项、dilation 在 MAC 上免费，所以预算从宽度里出、可达范围不动；
+# d 取 (2,4,8,26) 是为了让可达偏移集合稠密（3 块组合必然有洞，穷举无解）。
+TRUNK_CHANNELS = (32, 32, 48, 48)
+TRUNK_AZIMUTH_DILATIONS = (2, 4, 8, 26)
 COVERAGE_TAU = 0.15
 
 
@@ -34,8 +42,9 @@ class CircularConv1d(nn.Module):
 
 
 # 架构版本：checkpoint 的键集与参数量随架构变化；旧版本在 load_model 中兼容。
-ARCH_VERSION = 4
-# arch 3 = 3 通道首层（polar）；arch 4 起首层通道数由 checkpoint 权重形状决定
+ARCH_VERSION = 5
+# arch 3 = 3 通道首层（polar）；arch 4 起首层通道数由 checkpoint 权重形状决定。
+# arch 5 = 窄主干 32-32-48-48 + 角向可达 ±40；arch 4 的宽主干（32-64-128）不兼容。
 SUPPORTED_ARCH_VERSIONS = (3, ARCH_VERSION)
 
 
@@ -49,12 +58,12 @@ class AzimuthNet(nn.Module):
     def __init__(
         self,
         score_channels: int = 16,
-        trunk_channels: int = 128,
+        trunk_channels: tuple[int, ...] = TRUNK_CHANNELS,
         in_channels: int = 3,
     ) -> None:
         super().__init__()
         self.in_channels = in_channels
-        channels = [in_channels, 32, 64, trunk_channels]
+        channels = [in_channels, *trunk_channels]
         layers: list[nn.Module] = []
         for i, dilation in enumerate(TRUNK_AZIMUTH_DILATIONS):
             layers += [
@@ -77,7 +86,7 @@ class AzimuthNet(nn.Module):
         self.score = nn.Sequential(
             nn.CircularPad2d((1, 1, 0, 0)),
             nn.ZeroPad2d((0, 0, 1, 1)),
-            nn.Conv2d(trunk_channels, score_channels, 3),
+            nn.Conv2d(channels[-1], score_channels, 3),
         )
         with torch.no_grad():
             radial_rows = self.trunk(torch.zeros(1, in_channels, IMG_H, IMG_W)).shape[-2]
@@ -175,8 +184,8 @@ def count_trainable_parameters(model: nn.Module) -> int:
     return sum(parameter.numel() for parameter in model.parameters() if parameter.requires_grad)
 
 
-EXPECTED_PARAMETER_COUNT = 131_169  # in_channels = 3（polar）
-EXPECTED_REF_PARAMETER_COUNT = 132_321  # in_channels = 7（ref）
+EXPECTED_PARAMETER_COUNT = 71_137  # in_channels = 3（polar）
+EXPECTED_REF_PARAMETER_COUNT = 72_289  # in_channels = 7（ref）
 EXPECTED_PARAMETER_COUNTS: dict[int, int] = {
     3: EXPECTED_PARAMETER_COUNT,
     7: EXPECTED_REF_PARAMETER_COUNT,

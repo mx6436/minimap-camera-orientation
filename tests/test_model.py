@@ -10,6 +10,7 @@ from endfield.model import (
     ARCH_VERSION,
     EXPECTED_PARAMETER_COUNT,
     EXPECTED_REF_PARAMETER_COUNT,
+    TRUNK_AZIMUTH_DILATIONS,
     AzimuthNet,
     count_trainable_parameters,
     decode_logits,
@@ -156,3 +157,30 @@ def test_outermost_radius_rows_reach_output() -> None:
     with torch.no_grad():
         difference = (model(perturbed) - model(base)).abs().max().item()
     assert difference > 1e-4
+
+
+def test_per_pixel_azimuthal_reach_covers_cone_half_width() -> None:
+    """逐像素阶段的角向可达半径 ≥ 视锥半宽 40°，且偏移覆盖不能有洞。
+
+    每层 k=3 取 ±d，方位轴不下采样，故可达偏移集合是各层 dilation 的可达和；
+    score 头（k=3, dil 1）再补 ±1。这里用纯整数算术钉住要求，不经过 GroupNorm——
+    后者按整张图统计，任何位置的扰动都会全局耦合，量不出"到不了"。
+    """
+    reach = {0}
+    for dilation in TRUNK_AZIMUTH_DILATIONS:
+        reach = {value + step for value in reach for step in (-dilation, 0, dilation)}
+    assert max(reach) + 1 >= 40
+    assert min(reach) - 1 <= -40
+    # 有洞的可达集合会让中间的方位在主干里根本连不上（如 3 块组合的 8°、14°、20°）。
+    step = min(abs(value) for value in reach if value)
+    assert not {value for value in range(-max(reach), max(reach) + 1, step)} - reach
+
+    # 接线检查：±40 处的扰动确实进得了 azimuth 0 的逐像素分数。
+    model = AzimuthNet().eval()
+    base = torch.zeros(1, 3, IMG_H, IMG_W)
+    perturbed = base.clone()
+    perturbed[:, :, :, max(reach)] = 1.0
+    with torch.no_grad():
+        reference = model.score(model.trunk(base))[0, :, :, 0]
+        reached = model.score(model.trunk(perturbed))[0, :, :, 0]
+    assert (reached - reference).abs().max().item() > 1e-4
