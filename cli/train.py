@@ -10,7 +10,7 @@ from typing import Any
 import torch
 
 from endfield import preprocess_cache, run_dir, run_record
-from endfield.atomic_io import atomic_json_dump
+from endfield.atomic_io import atomic_json_dump, load_json
 from endfield.data_utils import png_names, seed_everything
 from endfield.dataset import PROCESSED_REF_DIR
 from endfield.model import (
@@ -20,6 +20,7 @@ from endfield.model import (
     expected_parameter_count,
     load_model,
 )
+from endfield.train import artifacts as train_artifacts
 from endfield.train.artifacts import plot_loss_curves, save_checkpoint
 from endfield.train.config import load_config
 from endfield.train.data import (
@@ -38,6 +39,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG_PATH = REPO_ROOT / "train.toml"
 # 8 物理核：SMT 线程对 conv 负载无增益反有争用
 DEFAULT_THREADS = 8
+# 会话级、不改变训练前提的字段：续训时放行，其余任一不一致即拒
+_SESSION_KEYS = frozenset({"threads", "device", "max_epochs"})
 
 
 def _tracked_metric(entry: dict[str, Any]) -> float:
@@ -54,6 +57,7 @@ def parse_args() -> argparse.Namespace:
         help="训练配置 TOML（模型/损失/优化/增强）",
     )
     parser.add_argument("--run-dir", type=Path, required=True)
+    parser.add_argument("--resume", action="store_true", help="从 run 目录的 last.pt 接续训练")
     parser.add_argument("--device", default=None, help="auto、cpu 或 cuda")
     parser.add_argument(
         "--threads",
@@ -113,7 +117,7 @@ def main() -> None:
     output_dir = args.run_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     existing = run_dir.occupied(output_dir)
-    if existing:
+    if existing and not args.resume:
         raise FileExistsError(
             f"{output_dir} already contains experiment artifacts ({', '.join(existing)}); "
             "choose an empty --run-dir"
@@ -174,11 +178,27 @@ def main() -> None:
 
     best_val = float("inf")
     bad_epochs = 0
+    start_epoch = 0
     history: list[dict[str, float | int]] = []
-    run_record.write(output_dir, record)
-    atomic_json_dump(run_dir.history_path(output_dir), {"epochs": history})
+    if args.resume:
+        recorded = run_dir.load_record(output_dir)
+        fresh = {k: v for k, v in record.metadata.items() if k not in _SESSION_KEYS}
+        old = {k: recorded.metadata.get(k) for k in fresh}
+        if (old, recorded.input_mode) != (fresh, record.input_mode):
+            raise SystemExit(f"{output_dir}: train.toml 与 record.json 不一致；换配置请换新目录")
+        state = train_artifacts.load_resume_state(run_dir.last_path(output_dir))
+        model.load_state_dict(state["model"])
+        optimizer.load_state_dict(state["optimizer"])
+        scheduler.load_state_dict(state["scheduler"])
+        start_epoch, best_val, bad_epochs = state["epoch"], state["best_val"], state["bad_epochs"]
+        rows = load_json(run_dir.history_path(output_dir))["epochs"]
+        history = [entry for entry in rows if entry["epoch"] <= start_epoch]
+        run_dir.summary_path(output_dir).unlink(missing_ok=True)
+    else:
+        run_record.write(output_dir, record)
+        atomic_json_dump(run_dir.history_path(output_dir), {"epochs": history})
     max_epochs = 1 if args.smoke else config["epochs"]
-    for epoch in range(max_epochs):
+    for epoch in range(start_epoch, max_epochs):
         train_loss = train_epoch(
             runtime_model,
             train_loader,
@@ -213,6 +233,10 @@ def main() -> None:
         else:
             bad_epochs += 1
         atomic_json_dump(run_dir.history_path(output_dir), {"epochs": history})
+        resume = {"epoch": epoch + 1, "best_val": best_val, "bad_epochs": bad_epochs}
+        resume.update(model=model.state_dict(), optimizer=optimizer.state_dict())
+        resume["scheduler"] = scheduler.state_dict()
+        train_artifacts.save_resume_state(run_dir.last_path(output_dir), resume)
         print(
             f"epoch={epoch + 1}/{max_epochs} train_loss={train_loss:.6f} "
             f"val_{Metrics.TRACK_FIELD}={tracked:.3f}°"

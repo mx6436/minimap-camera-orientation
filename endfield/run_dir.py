@@ -1,7 +1,8 @@
 """run 产物契约：run 目录里的文件与训练汇总（`summary.json`）的 schema。
 
-持有 run 目录的形状（`best.pt` / `record.json` / `summary.json` / `history.json` 的路径与占用
-标记）与训练汇总的字段 schema，供训练写侧、实机取 checkpoint、交付导出与 conformance 共用。
+持有 run 目录的形状（`best.pt` / `last.pt` / `record.json` / `summary.json` / `history.json`
+的路径与占用标记）与训练汇总的字段 schema，供训练写侧、实机取 checkpoint、交付导出与
+conformance 共用。
 `record.json` 的 schema 仍由 `endfield/run_record.py` 持有，本模块只是它的调用方。
 
 本模块保持 torch-free：`cli/verify_artifact.py` 的校验路径经 `endfield/bundle.py` 到达这里。
@@ -27,12 +28,14 @@ from endfield.run_record import (
 from endfield.train.metrics import Metrics
 
 CHECKPOINT_NAME = "best.pt"
+LAST_NAME = "last.pt"
 SUMMARY_NAME = "summary.json"
 HISTORY_NAME = "history.json"
 
 # 写侧会写的文件（不含 loss_curve.png）：目录里出现任一即视为已被一次 run 占用
 OCCUPANCY_MARKERS: tuple[str, ...] = (
     CHECKPOINT_NAME,
+    LAST_NAME,
     RECORD_NAME,
     SUMMARY_NAME,
     HISTORY_NAME,
@@ -61,6 +64,11 @@ class TrainingSummary:
 def checkpoint_path(run_dir: Path) -> Path:
     """交付 checkpoint 的路径。"""
     return Path(run_dir) / CHECKPOINT_NAME
+
+
+def last_path(run_dir: Path) -> Path:
+    """续训恢复态（逐 epoch 覆盖写）的路径。"""
+    return Path(run_dir) / LAST_NAME
 
 
 def record_path(run_dir: Path) -> Path:

@@ -21,6 +21,20 @@ def save_checkpoint(path: Path, model: nn.Module) -> None:
         torch.save(checkpoint, temp)
 
 
+def save_resume_state(path: Path, state: dict[str, Any]) -> None:
+    """写续训恢复态：权重、优化状态与早停计数。"""
+    with atomic_path(path) as temp:
+        torch.save({"arch": ARCH_VERSION, **state}, temp)
+
+
+def load_resume_state(path: Path) -> dict[str, Any]:
+    """读回续训恢复态；架构不符即报错。"""
+    state = torch.load(path, map_location="cpu", weights_only=False)
+    if not isinstance(state, dict) or state.get("arch") != ARCH_VERSION:
+        raise ValueError(f"{path}: incompatible resume state")
+    return state
+
+
 def plot_loss_curves(output_dir: Path, history: list[dict[str, Any]]) -> None:
     import matplotlib
 

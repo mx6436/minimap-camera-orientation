@@ -27,15 +27,17 @@ def test_paths_are_relative_to_the_run_dir(tmp_path: Path) -> None:
     assert run_dir.record_path(tmp_path) == tmp_path / "record.json"
     assert run_dir.summary_path(tmp_path) == tmp_path / "summary.json"
     assert run_dir.history_path(tmp_path) == tmp_path / "history.json"
+    assert run_dir.last_path(tmp_path) == tmp_path / "last.pt"
 
 
 def test_occupied_lists_write_side_markers_only(tmp_path: Path) -> None:
     assert run_dir.occupied(tmp_path) == []
     (tmp_path / "best.pt").write_bytes(b"")
+    (tmp_path / "last.pt").write_bytes(b"")
     (tmp_path / "history.json").write_text("{}", encoding="utf-8")
     # 诊断产物不进占用集合
     (tmp_path / "loss_curve.png").write_bytes(b"")
-    assert run_dir.occupied(tmp_path) == ["best.pt", "history.json"]
+    assert run_dir.occupied(tmp_path) == ["best.pt", "last.pt", "history.json"]
 
 
 def test_write_read_round_trip(tmp_path: Path) -> None:
