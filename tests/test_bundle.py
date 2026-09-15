@@ -1,7 +1,7 @@
 """bundle 模块：交付角色词汇、manifest 组装与结构自检。
 
-用最小手工 bundle 直接驱动接口（交付角色表、`build_manifest` 的注入式 `load_run`、
-`check_structure`），因此不导出 onnx、不训练、不碰 run 目录布局。
+用最小手工 bundle 直接驱动接口（交付角色表、`build_manifest`、`check_structure`），
+因此不导出 onnx、不训练；run 目录用最小真实产物构造（`endfield/run_dir.py`）。
 """
 
 from __future__ import annotations
@@ -12,8 +12,9 @@ from pathlib import Path
 import onnx
 import pytest
 
-from endfield import bundle
+from endfield import bundle, run_dir, run_record
 from endfield.run_record import InputMode, RunRecord
+from endfield.train.metrics import Metrics
 from tests._onnx_builders import build_classifier, build_draft_preprocess
 
 PROFILE = bundle.ManifestProfile(
@@ -23,8 +24,24 @@ PROFILE = bundle.ManifestProfile(
     fixtures=("polar_basic",),
 )
 GIT_COMMIT = "b" * 40
-SUMMARY = {"epoch": 3, "val_count": 5, "val_rms_error": 2.0, "val_expected_abs_error": 1.0}
 METRICS = {"val_rms_error_deg": "2.000000", "val_expected_abs_error_deg": "1.000000"}
+
+
+def write_run_dir(path: Path, mode: InputMode) -> None:
+    """最小 run 目录：运行档案 + 训练汇总（真实契约，不再注入假读取）。"""
+    path.mkdir(parents=True, exist_ok=True)
+    assets_root = (
+        Path("local/maplocator/resource/image/MapLocator") if mode is InputMode.REF else None
+    )
+    run_record.write(path, RunRecord(mode, assets_root, 3.0, 0))
+    run_dir.write_summary(
+        path,
+        run_dir.TrainingSummary(
+            epoch=3,
+            val_count=5,
+            metrics=Metrics(expected_abs_error=1.0, rms_error=2.0),
+        ),
+    )
 
 
 def assert_codes(findings: list, *codes: str) -> None:
@@ -46,11 +63,6 @@ def _rename(model: onnx.ModelProto, names: dict[str, str]) -> None:
     for node in model.graph.node:
         for index, output in enumerate(node.output):
             node.output[index] = names.get(output, output)
-
-
-def load_run(run_dir: Path) -> tuple[RunRecord, dict]:
-    """测试用 run 读取：目录名即输入模式（run 布局的知识不进 bundle）。"""
-    return RunRecord(InputMode(run_dir.name), None, 3.0, 0), dict(SUMMARY)
 
 
 def write_graphs(bundle_dir: Path, *, polar_run: str = "polar") -> dict[bundle.DeliveryRole, Path]:
@@ -77,14 +89,14 @@ def write_graphs(bundle_dir: Path, *, polar_run: str = "polar") -> dict[bundle.D
             **METRICS,
         )
         runs[role] = bundle_dir / run_name
-        runs[role].mkdir(exist_ok=True)
+        write_run_dir(runs[role], mode)
     return runs
 
 
 def build_bundle(bundle_dir: Path) -> tuple[Path, dict]:
     """写一次合法 bundle：build_manifest 落盘 manifest，返回 (目录, manifest)。"""
     manifest = bundle.build_manifest(
-        bundle_dir, write_graphs(bundle_dir), load_run, PROFILE, git_commit=GIT_COMMIT
+        bundle_dir, write_graphs(bundle_dir), PROFILE, git_commit=GIT_COMMIT
     )
     (bundle_dir / bundle.MANIFEST_NAME).write_text(json.dumps(manifest), encoding="utf-8")
     return bundle_dir, manifest
@@ -175,7 +187,7 @@ def test_build_manifest_requires_every_classifier_role(tmp_path: Path) -> None:
     del runs[bundle.DeliveryRole.POLAR_WITH_REF]
 
     with pytest.raises(ValueError, match="every classifier role"):
-        bundle.build_manifest(bundle_dir, runs, load_run, PROFILE, git_commit=GIT_COMMIT)
+        bundle.build_manifest(bundle_dir, runs, PROFILE, git_commit=GIT_COMMIT)
 
 
 def test_build_manifest_is_deterministic(tmp_path: Path) -> None:
@@ -208,7 +220,7 @@ def test_check_structure_flags_tampered_manifest_hash(valid_bundle: Path) -> Non
 def test_check_structure_flags_swapped_classifier_run(tmp_path: Path) -> None:
     bundle_dir = tmp_path / "bundle"
     manifest = bundle.build_manifest(
-        bundle_dir, write_graphs(bundle_dir, polar_run="ref"), load_run, PROFILE,
+        bundle_dir, write_graphs(bundle_dir, polar_run="ref"), PROFILE,
         git_commit=GIT_COMMIT,
     )
     (bundle_dir / bundle.MANIFEST_NAME).write_text(json.dumps(manifest), encoding="utf-8")

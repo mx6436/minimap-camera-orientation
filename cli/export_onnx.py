@@ -18,13 +18,12 @@ ORT 1.19.2 加载校验，不合格的图不会当作交付物落盘。
 from __future__ import annotations
 
 import argparse
-import json
 import subprocess
 from pathlib import Path
 
 import torch
 
-from endfield import bundle, run_record
+from endfield import bundle, run_dir, run_record
 from endfield.model import ExportWrapper, fold_input_conventions, load_model
 from endfield.preprocess import IMG_H as POLAR_H
 from endfield.preprocess import IMG_W as POLAR_W
@@ -75,7 +74,9 @@ def git_commit() -> str:
     return result.stdout.strip() if result.returncode == 0 else "unknown"
 
 
-def attach_metadata(path: Path, record: RunRecord, summary: dict, checkpoint: Path) -> None:
+def attach_metadata(
+    path: Path, record: RunRecord, summary: run_dir.TrainingSummary, checkpoint: Path
+) -> None:
     import onnx
 
     model = onnx.load(path)
@@ -90,8 +91,8 @@ def attach_metadata(path: Path, record: RunRecord, summary: dict, checkpoint: Pa
         ),
         "source_checkpoint": str(checkpoint),
         "git_commit": git_commit(),
-        "val_expected_abs_error_deg": f"{summary['val_expected_abs_error']:.6f}",
-        "val_rms_error_deg": f"{summary['val_rms_error']:.6f}",
+        "val_expected_abs_error_deg": f"{summary.metrics.expected_abs_error:.6f}",
+        "val_rms_error_deg": f"{summary.metrics.rms_error:.6f}",
         "target_sigma_deg": str(record.target_sigma),
         "trainable_parameters": str(record.trainable_parameters),
     }
@@ -119,8 +120,8 @@ def _validate_export(path: Path, channels: int) -> None:
 
 
 def export(checkpoint: Path, output: Path | None = None) -> Path:
-    run_dir = checkpoint.parent
-    record = run_record.read(run_dir)
+    run_path = checkpoint.parent
+    record, summary = run_dir.load_run(run_path)
     channels = run_record.input_channels(record.input_mode)
     net = load_model(checkpoint, device="cpu")
     try:
@@ -130,11 +131,8 @@ def export(checkpoint: Path, output: Path | None = None) -> Path:
     fold_input_conventions(net)
     wrapper = ExportWrapper(net).eval()
 
-    with open(run_dir / "summary.json") as f:
-        summary = json.load(f)
-
     if output is None:
-        output = run_dir / bundle.graph_file(bundle.role_for_mode(record.input_mode))
+        output = run_path / bundle.graph_file(bundle.role_for_mode(record.input_mode))
     output = Path(output)
     dummy = torch.zeros(1, POLAR_H, POLAR_W, channels, dtype=torch.uint8)
     torch.onnx.export(
@@ -162,7 +160,7 @@ def main(argv: list[str] | None = None) -> int:
         help="缺省 <run-dir>/polar.onnx 或 <run-dir>/polar_with_ref.onnx（按 input_mode）",
     )
     args = parser.parse_args(argv)
-    export(args.run_dir / "best.pt", args.output)
+    export(run_dir.checkpoint_path(args.run_dir), args.output)
     return 0
 
 

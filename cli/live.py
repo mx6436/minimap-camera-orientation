@@ -36,7 +36,7 @@ import cv2
 import numpy as np
 
 import endfield.polar as polar
-from endfield import preprocess, run_record
+from endfield import preprocess, run_dir, run_record
 from endfield.input_encoding import assemble_ref_pair
 from endfield.model import choose_device, load_model, predict_probs
 from endfield.polar import to_base_frame
@@ -458,11 +458,11 @@ def resolve_gamescope(instances: list, args: argparse.Namespace) -> tuple[int, s
 
 def main() -> None:
     args = parse_args()
-    record = run_record.read(args.run_dir)
+    record = run_dir.load_record(args.run_dir)
     mode = record.input_mode
     localized_mode = mode is InputMode.REF
     device = choose_device(args.device)
-    model = load_model(args.run_dir / "best.pt", device=device)
+    model = load_model(run_dir.checkpoint_path(args.run_dir), device=device)
     run_record.validate_channels(record, model.in_channels)
     input_label = f"model input: {mode.value}"
 

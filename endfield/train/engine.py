@@ -11,7 +11,7 @@ from torch import nn
 from torch.utils.data import DataLoader
 
 from endfield.model import smoothed_targets
-from endfield.train.metrics import distribution_metrics
+from endfield.train.metrics import Metrics, distribution_metrics
 
 
 def autocast_context(device: torch.device, precision: str) -> AbstractContextManager[None]:
@@ -67,7 +67,7 @@ def eval_loss(
     device: torch.device,
     sigma: float,
     precision: str = "fp32",
-) -> tuple[float, dict[str, float]]:
+) -> tuple[float, Metrics]:
     model.eval()
     total = 0.0
     samples = 0

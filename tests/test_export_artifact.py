@@ -20,6 +20,8 @@ from cli.export_artifact import export_bundle, main
 from endfield import bundle, preprocess
 from endfield import conformance as cf
 from endfield.model import ARCH_VERSION, AzimuthNet
+from endfield.run_dir import TrainingSummary, write_summary
+from endfield.train.metrics import Metrics
 
 ROLE_FILES = {role.value: bundle.graph_file(role) for role in bundle.roles()}
 
@@ -40,16 +42,13 @@ def write_run(root: Path, name: str, input_mode: str, channels: int) -> Path:
     if input_mode == "ref":
         record["ref_reference_assets_root"] = "local/maplocator/resource/image/MapLocator"
     (run_dir / "record.json").write_text(json.dumps(record), encoding="utf-8")
-    (run_dir / "summary.json").write_text(
-        json.dumps(
-            {
-                "epoch": 7,
-                "val_count": 11,
-                "val_expected_abs_error": 1.0,
-                "val_rms_error": 2.0,
-            }
+    write_summary(
+        run_dir,
+        TrainingSummary(
+            epoch=7,
+            val_count=11,
+            metrics=Metrics(expected_abs_error=1.0, rms_error=2.0),
         ),
-        encoding="utf-8",
     )
     return run_dir
 

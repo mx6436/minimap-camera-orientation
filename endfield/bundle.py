@@ -4,7 +4,8 @@
 `endfield/run_record.py` 单点定义，本模块不另立一份。manifest 字段 schema 属本仓；
 验收剖面的取值（定义哈希、ORT 版本、容差剖面、fixture 清单）由调用方构造
 `ManifestProfile` 注入——本模块不 import `conformance`，也不 import `preprocess`
-（后者的 torch 依赖不该进入校验路径）。
+（后者的 torch 依赖不该进入校验路径）。run 目录的事实经 torch-free 的 `endfield/run_dir.py`
+取得（ADR 0007）。
 """
 
 from __future__ import annotations
@@ -12,14 +13,15 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from endfield import run_dir
 from endfield.findings import Finding
-from endfield.run_record import InputMode, RunRecord, input_channels
+from endfield.run_record import InputMode, input_channels
 
 MANIFEST_NAME = "manifest.json"
 SCHEMA_VERSION = 1
@@ -130,14 +132,13 @@ def _bundle_relative(path: Path, bundle_dir: Path) -> str:
 def build_manifest(
     out_dir: Path,
     runs: Mapping[DeliveryRole, Path],
-    load_run: Callable[[Path], tuple[RunRecord, Mapping[str, Any]]],
     profile: ManifestProfile,
     *,
     git_commit: str,
 ) -> dict:
     """已导出的图 + 各分类器角色的 run -> manifest。
 
-    run 产物的布局由调用方经 `load_run` 提供：本模块不持有 run 目录的形状。
+    run 目录的事实经 `endfield/run_dir.py` 读取（ADR 0007）；本模块不自行拼 run 目录里的路径。
     """
     out_dir = Path(out_dir)
     missing = sorted(role.value for role in classifier_roles() if role not in runs)
@@ -153,20 +154,20 @@ def build_manifest(
         }
     }
     for role in classifier_roles():
-        run_dir = Path(runs[role])
-        record, summary = load_run(run_dir)
+        run_path = Path(runs[role])
+        record, summary = run_dir.load_run(run_path)
         mode = record.input_mode
         graphs[role.value] = {
             "file": _SPECS[role].file,
             "sha256": sha256_file(out_dir / _SPECS[role].file),
-            "run_dir": _bundle_relative(run_dir, out_dir),
+            "run_dir": _bundle_relative(run_path, out_dir),
             "input_mode": mode,
             "input_channels": input_channels(mode),
             "metrics": {
-                "best_epoch": int(summary["epoch"]),
-                "val_count": int(summary["val_count"]),
-                "val_rms_error_deg": round(float(summary["val_rms_error"]), 6),
-                "val_expected_abs_error_deg": round(float(summary["val_expected_abs_error"]), 6),
+                "best_epoch": summary.epoch,
+                "val_count": summary.val_count,
+                "val_rms_error_deg": round(summary.metrics.rms_error, 6),
+                "val_expected_abs_error_deg": round(summary.metrics.expected_abs_error, 6),
             },
         }
     return {

@@ -70,9 +70,17 @@ _Avoid_: 透明区、空洞、掩码
 模型输入的表示名，取 `polar` 或 `ref`：`polar` 只输入观测条带；`ref` 输入 `[obs.BGR, ref.BGR, ref.A]` 参考配对。训练、数据生成、实机推理与交付共用同一套模式名与模式对应的输入通道数。
 _Avoid_: 推理模式、输入格式、双路模式
 
+**run 产物 (Run Artifacts)**:
+一次训练运行写入 run 目录的文件集合。读取契约由三个文件构成：`best.pt`（交付 checkpoint）、`record.json`（运行档案）、`summary.json`（训练汇总）；`history.json` 与 `loss_curve.png` 是训练侧诊断产物，无读取方、不进契约。路径与占用标记由 `endfield/run_dir.py` 单点持有。
+_Avoid_: 工件、run 输出、产物目录
+
 **运行档案 (Run Record)**:
 一次训练运行落盘的复现档案（`record.json`）：记录该次运行的输入模式、参考底图资产根、训练参数与复现元数据，是训练、实机推理与工件导出共用的运行契约。
 _Avoid_: run 配置、训练配置、元数据文件
+
+**训练汇总 (Training Summary)**:
+一次训练运行结算后的结果（`summary.json`）：最佳 epoch、验证集样本数与验证指标。与运行档案同出一次训练，但语义相反——档案是训练写定的复现前提，汇总是训练结算的结果；交付侧消费的字段是 `epoch`、`val_count` 与验证指标里的 rms 误差、期望绝对误差，其余是训练侧诊断指标。
+_Avoid_: 训练结果、metrics 文件、实验指标
 
 **交付 bundle (Delivery Bundle)**:
 一次交付的三张图（`preprocess.onnx`、`polar.onnx`、`polar_with_ref.onnx`）与 `manifest.json`：图进入 MaaEnd 的交付布局，图文件名是跨仓契约；manifest 留在本仓，其字段 schema 属本仓。

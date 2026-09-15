@@ -1,4 +1,7 @@
-"""run 产物的落盘：checkpoint 与 loss 曲线图，均经原子替换写入。"""
+"""run 产物的落盘：checkpoint 与 loss 曲线图，均经原子替换写入。
+
+路径由 `endfield/run_dir.py` 给出（run 产物契约），本模块只负责写。
+"""
 
 from __future__ import annotations
 
@@ -10,8 +13,6 @@ from torch import nn
 
 from endfield.atomic_io import atomic_path
 from endfield.model import ARCH_VERSION
-
-ARTIFACT_NAMES = ("best.pt", "record.json", "history.json", "summary.json")
 
 
 def save_checkpoint(path: Path, model: nn.Module) -> None:

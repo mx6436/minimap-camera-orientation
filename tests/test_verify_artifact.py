@@ -20,6 +20,8 @@ from cli.verify_artifact import main
 from endfield import conformance as cf
 from endfield import preprocess
 from endfield.model import ARCH_VERSION, AzimuthNet
+from endfield.run_dir import TrainingSummary, write_summary
+from endfield.train.metrics import Metrics
 from tests._onnx_builders import build_classifier, build_draft_preprocess
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -73,8 +75,13 @@ def write_run(tmp_path: Path, input_mode: str, channels: int) -> Path:
         ),
         encoding="utf-8",
     )
-    (run_dir / "summary.json").write_text(
-        json.dumps({"val_expected_abs_error": 1.0, "val_rms_error": 2.0}), encoding="utf-8"
+    write_summary(
+        run_dir,
+        TrainingSummary(
+            epoch=3,
+            val_count=5,
+            metrics=Metrics(expected_abs_error=1.0, rms_error=2.0),
+        ),
     )
     return run_dir
 

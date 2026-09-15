@@ -69,17 +69,19 @@ class RunRecord:
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
-def _required_number(path: Path, raw: Mapping[str, Any], key: str) -> float:
+def require_number(path: Path, raw: Mapping[str, Any], key: str) -> float:
+    """JSON 对象里的数值字段；缺失或类型不符（bool 不算数值）即报错。"""
     value = raw.get(key)
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError(f"{path}: run record field {key!r} must be a number, got {value!r}")
+        raise ValueError(f"{path}: field {key!r} must be a number, got {value!r}")
     return float(value)
 
 
-def _required_int(path: Path, raw: Mapping[str, Any], key: str) -> int:
+def require_int(path: Path, raw: Mapping[str, Any], key: str) -> int:
+    """JSON 对象里的整数字段；缺失或类型不符即报错。"""
     value = raw.get(key)
     if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError(f"{path}: run record field {key!r} must be an integer, got {value!r}")
+        raise ValueError(f"{path}: field {key!r} must be an integer, got {value!r}")
     return value
 
 
@@ -116,8 +118,8 @@ def read(run_dir: Path) -> RunRecord:
     return RunRecord(
         input_mode=mode,
         assets_root=assets_root,
-        target_sigma=_required_number(path, raw, "target_sigma"),
-        trainable_parameters=_required_int(path, raw, "trainable_parameters"),
+        target_sigma=require_number(path, raw, "target_sigma"),
+        trainable_parameters=require_int(path, raw, "trainable_parameters"),
         metadata=metadata,
     )
 

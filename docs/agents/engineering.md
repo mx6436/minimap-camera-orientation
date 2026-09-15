@@ -35,6 +35,7 @@ data/{train_raw,val_raw} ──locate-dataset(ref)──> data/locator
 ## 运行档案与输入模式
 
 - `endfield/run_record.py` 单点持有 `record.json` 的 schema 与输入模式词汇：合法模式、模式 → 通道数（`polar` 3 / `ref` 7）、ref 资产根字段、旧档案默认（缺 `input_mode` 按 polar）。训练写、live / 导出 / conformance 读；不得出现第二份模式表（ADR 0003）。
+- run 目录的形状（`best.pt` / `record.json` / `summary.json` / `history.json` 的路径与占用标记）与 `summary.json` 的字段 schema 收在 torch-free 的 `endfield/run_dir.py`：训练写、交付读、实机取 checkpoint 都经它，`bundle.build_manifest` 直连 `run_dir.load_run`（ADR 0007 修订 ADR 0005 的注入结论）。交付契约字段（`epoch` / `val_count` / rms 误差 / 期望绝对误差）缺即报错，诊断指标缺失容忍，未知键保留；`record.json` 的 schema 仍在 `run_record.py`。
 - ref 资产根来自数据缓存戳（`processed_ref` 的 provenance），训练写入 `record.json`（`ref_reference_assets_root`），实机按它加载底图；换根触发数据重生成（ADR 0002）。
 - `max_ref_missing`（train.toml，0~1）在读取训练集时排除环内 `ref.A<255` 占比严格大于阈值的样本，只影响训练集。
 
@@ -44,7 +45,7 @@ data/{train_raw,val_raw} ──locate-dataset(ref)──> data/locator
 
 ## 交付与 conformance
 
-- `endfield/bundle.py` 持有交付 bundle 词汇与契约（ADR 0005）：交付角色（`preprocess` / `polar` / `polar_with_ref`）→ 图文件名与输入模式、`manifest.json` 字段 schema、`build_manifest`（run 产物布局经 `load_run` 回调注入）与 `check_structure`（manifest ↔ 文件哈希 ↔ 图 metadata ↔ ORT 可加载）。通道数仍由 `endfield/run_record.py` 单点定义；图文件名是跨仓契约，manifest 字段 schema 属本仓。
+- `endfield/bundle.py` 持有交付 bundle 词汇与契约（ADR 0005）：交付角色（`preprocess` / `polar` / `polar_with_ref`）→ 图文件名与输入模式、`manifest.json` 字段 schema、`build_manifest`（run 事实经 `run_dir.load_run`，ADR 0007）与 `check_structure`（manifest ↔ 文件哈希 ↔ 图 metadata ↔ ORT 可加载）。通道数仍由 `endfield/run_record.py` 单点定义；图文件名是跨仓契约，manifest 字段 schema 属本仓。
 - `endfield/conformance.py` 持有验收剖面的取值（`profile()`：定义哈希、ORT pin、容差剖面、fixture 清单）并注入 `check_structure`；它另做算子级图断言与数值比对。导出侧与校验侧不再各持一份 manifest 一致性实现。
 - bundle = `preprocess.onnx` + `polar.onnx` + `polar_with_ref.onnx` + `manifest.json`；polar 与 ref 分类器来自不同 run，调用处必填。重复导出（同 run + 同定义 + 同工具链）图与 manifest 逐字节一致。
 - `verify_bundle` 分三段：bundle 一致性 → 算子级图断言 → 逐 fixture 数值比对；无 manifest 的草稿 bundle 只报 warning 且只要求 `preprocess`（`check_structure(require_manifest=False)`）。
@@ -70,6 +71,7 @@ data/{train_raw,val_raw} ──locate-dataset(ref)──> data/locator
 | `endfield/train/` | 训练循环与配置 |
 | `endfield/model.py` | 网络与导出 wrapper |
 | `endfield/run_record.py` | 运行档案与输入模式词汇 |
+| `endfield/run_dir.py` | run 产物契约：路径、占用标记、训练汇总 schema 与读写 |
 | `endfield/bundle.py` | 交付 bundle：角色词汇、manifest schema 与结构自检 |
 | `endfield/findings.py` | 校验结论（`Finding`）：bundle 自检与 conformance 共用 |
 | `endfield/conformance.py` | 结构断言、验收剖面、定义哈希、参考实现与数值比对 |

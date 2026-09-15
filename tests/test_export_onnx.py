@@ -20,6 +20,8 @@ from endfield.model import (
     fold_input_conventions,
     load_model,
 )
+from endfield.run_dir import TrainingSummary, write_summary
+from endfield.train.metrics import Metrics
 
 
 def write_run(tmp_path: Path, input_mode: str, channels: int) -> Path:
@@ -38,8 +40,13 @@ def write_run(tmp_path: Path, input_mode: str, channels: int) -> Path:
     if input_mode == "ref":
         record["ref_reference_assets_root"] = "local/maplocator/resource/image/MapLocator"
     (run_dir / "record.json").write_text(json.dumps(record), encoding="utf-8")
-    (run_dir / "summary.json").write_text(
-        json.dumps({"val_expected_abs_error": 1.0, "val_rms_error": 2.0}), encoding="utf-8"
+    write_summary(
+        run_dir,
+        TrainingSummary(
+            epoch=3,
+            val_count=5,
+            metrics=Metrics(expected_abs_error=1.0, rms_error=2.0),
+        ),
     )
     return run_dir
 

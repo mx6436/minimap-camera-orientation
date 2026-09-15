@@ -35,6 +35,10 @@ manifest 一致性实现随之删除。验收剖面的取值（定义哈希、OR
   由 `check_structure(require_manifest=False)` 表达。
 - `run` 产物的布局（`record.json` / `summary.json`）不进 bundle：`build_manifest` 经
   `load_run` 回调取得运行档案与训练汇总，编排层仍是唯一知道 run 目录形状的地方
-  （ADR 0004）。
+  （ADR 0004）。**（本条已由 ADR 0007 修订，见下方）**
 - 本条是 ADR 0003 的补全而非修订：0003 对 `run_record` 的结论不变（该 module 不持有交付
   bundle 词汇），本条只点名它要求收口的那个交付 module。
+- **修订（ADR 0007）**：run 产物的布局不再由调用方经 `load_run` 回调注入，改为 `build_manifest` 直接
+  经 `endfield/run_dir.py` 的 `load_run` 取 typed 值——那个 module 是 torch-free 的，「布局不进 bundle」
+  与「bundle 不 import torch」两条理由均不受影响；「编排层是唯一知道 run 目录形状的地方」改由
+  `endfield/run_dir.py` 承担。

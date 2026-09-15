@@ -71,8 +71,8 @@ def _install_fake_maa(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_polar_main_composes_overlay(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     _install_fake_maa(monkeypatch)
     monkeypatch.setattr(
-        live.run_record,
-        "read",
+        live.run_dir,
+        "load_record",
         lambda run_dir: RunRecord(InputMode.POLAR, None, 3.0, 131169, {}),
     )
     monkeypatch.setattr(

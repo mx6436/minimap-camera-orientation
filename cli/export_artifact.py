@@ -9,7 +9,7 @@
 - `preprocess.onnx` 由定义模块 `endfield/preprocess.py` 导出；
 - `polar.onnx` / `polar_with_ref.onnx` 由各自 run 的 `best.pt` 导出（`export-onnx`）；
 - `manifest.json` 由 `endfield/bundle.py` 按已导出的图与 run 产物组装：交付角色词汇、
-  字段 schema 与结构自检都在那里，本模块只提供 run 产物的布局（`load_run`）。
+  字段 schema 与结构自检都在那里，run 目录的形状在 `endfield/run_dir.py`。
 
 导出后跑结构自检（manifest ↔ 图 metadata ↔ 文件哈希互证、ORT 1.19.2 可加载），
 失败退出码 1（图与 manifest 仍落盘，便于定位）。数值 conformance 证据用
@@ -22,31 +22,12 @@ from __future__ import annotations
 
 import argparse
 import json
-from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
 
 from cli.export_onnx import export as export_classifier
 from cli.export_onnx import git_commit
-from endfield import bundle, preprocess, run_record
+from endfield import bundle, preprocess, run_dir
 from endfield import conformance as cf
-
-SUMMARY_NAME = "summary.json"
-
-
-def _read_json(path: Path) -> dict:
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise ValueError(f"{path}: 读取失败：{exc}") from exc
-
-
-def load_run(run_dir: Path) -> tuple[run_record.RunRecord, Mapping[str, Any]]:
-    """run 目录布局（`record.json` / `summary.json`）-> 运行档案与训练汇总。
-
-    run 产物的形状留在这里：bundle 侧经回调取用，不持有 run 目录布局（ADR 0004）。
-    """
-    return run_record.read(run_dir), _read_json(run_dir / SUMMARY_NAME)
 
 
 def export_bundle(out_dir: Path, polar_run: Path, ref_run: Path) -> Path:
@@ -63,11 +44,9 @@ def export_bundle(out_dir: Path, polar_run: Path, ref_run: Path) -> Path:
         bundle.DeliveryRole.POLAR: Path(polar_run),
         bundle.DeliveryRole.POLAR_WITH_REF: Path(ref_run),
     }
-    for role, run_dir in runs.items():
-        export_classifier(run_dir / "best.pt", out_dir / bundle.graph_file(role))
-    manifest = bundle.build_manifest(
-        out_dir, runs, load_run, cf.profile(), git_commit=git_commit()
-    )
+    for role, run_path in runs.items():
+        export_classifier(run_dir.checkpoint_path(run_path), out_dir / bundle.graph_file(role))
+    manifest = bundle.build_manifest(out_dir, runs, cf.profile(), git_commit=git_commit())
     (out_dir / bundle.MANIFEST_NAME).write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
@@ -99,7 +78,8 @@ def main(argv: list[str] | None = None) -> int:
     if errors:
         print(f"result: FAIL（{len(errors)} 项结构自检错误；图与 manifest 保留在 {bundle_dir}）")
         return 1
-    manifest = _read_json(bundle_dir / bundle.MANIFEST_NAME)
+    manifest = bundle.read_manifest(bundle_dir)
+    assert manifest is not None  # check_structure 刚确认过 manifest 存在
     print(f"bundle: {bundle_dir}")
     print(f"result: PASS（三图 + manifest；definition_hash={manifest['definition_hash'][:12]}）")
     print(f"conformance 证据：uv run verify-artifact --bundle {bundle_dir}")

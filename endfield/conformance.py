@@ -20,7 +20,7 @@ from typing import Any
 
 import numpy as np
 
-from endfield import bundle, preprocess, run_record
+from endfield import bundle, preprocess, run_dir, run_record
 from endfield.findings import Finding
 
 # 与 MaaEnd 运行时一致的 ORT 版本（pyproject dev 依赖固定）；版本不同证据作废。
@@ -857,7 +857,7 @@ def _resolve_run_dir(
     bundle_dir: Path,
     manifest: Mapping[str, Any] | None,
     role: bundle.DeliveryRole,
-    run_dir: Path | None,
+    run_dir_path: Path | None,
 ) -> Path | None:
     """按 manifest 的 per-graph run_dir 优先解析；相对路径按 bundle 目录解析。"""
     spec = ((manifest or {}).get("graphs") or {}).get(role.value)
@@ -865,7 +865,7 @@ def _resolve_run_dir(
     if candidate:
         path = Path(candidate)
         return path if path.is_absolute() else (bundle_dir / path)
-    return run_dir
+    return run_dir_path
 
 
 def _circular_angle_error(bin_a: int, bin_b: int) -> float:
@@ -880,7 +880,7 @@ def _verify_classifier(
     channels: int,
     scenarios: Sequence[Scenario],
     tolerances: Mapping[str, float],
-    run_dir: Path | None,
+    run_dir_path: Path | None,
     report: BundleReport,
 ) -> None:
     import onnx
@@ -906,7 +906,7 @@ def _verify_classifier(
             )
         )
 
-    resolved_run = _resolve_run_dir(bundle_dir, manifest, role, run_dir)
+    resolved_run = _resolve_run_dir(bundle_dir, manifest, role, run_dir_path)
     if resolved_run is None:
         report.findings.append(
             Finding(
@@ -916,7 +916,7 @@ def _verify_classifier(
             )
         )
         return
-    checkpoint = Path(resolved_run) / "best.pt"
+    checkpoint = run_dir.checkpoint_path(resolved_run)
     if not checkpoint.exists():
         report.findings.append(
             Finding("error", "checkpoint_missing", f"缺少 checkpoint：{checkpoint}")
@@ -927,7 +927,7 @@ def _verify_classifier(
 
     from endfield.model import ExportWrapper, fold_input_conventions, load_model
 
-    record = run_record.read(Path(resolved_run))
+    record = run_dir.load_record(resolved_run)
     expected_mode = bundle.input_mode(role)
     if record.input_mode is not expected_mode:
         report.findings.append(

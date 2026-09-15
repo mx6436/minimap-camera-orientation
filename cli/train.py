@@ -9,7 +9,7 @@ from typing import Any
 
 import torch
 
-from endfield import preprocess_cache, run_record
+from endfield import preprocess_cache, run_dir, run_record
 from endfield.atomic_io import atomic_json_dump
 from endfield.data_utils import png_names, seed_everything
 from endfield.dataset import PROCESSED_REF_DIR
@@ -20,7 +20,7 @@ from endfield.model import (
     expected_parameter_count,
     load_model,
 )
-from endfield.train.artifacts import ARTIFACT_NAMES, plot_loss_curves, save_checkpoint
+from endfield.train.artifacts import plot_loss_curves, save_checkpoint
 from endfield.train.config import load_config
 from endfield.train.data import (
     AngleDataset,
@@ -30,6 +30,7 @@ from endfield.train.data import (
     split_dirs,
 )
 from endfield.train.engine import eval_loss, train_epoch
+from endfield.train.metrics import Metrics
 from endfield.train.record import build_record
 from placement import workspace
 
@@ -37,6 +38,11 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG_PATH = REPO_ROOT / "train.toml"
 # 8 物理核：SMT 线程对 conv 负载无增益反有争用
 DEFAULT_THREADS = 8
+
+
+def _tracked_metric(entry: dict[str, Any]) -> float:
+    """逐 epoch 历史行 -> 跟踪指标；磁盘键到 typed 指标的转换只在 `Metrics` 一处。"""
+    return getattr(Metrics.from_payload(entry), Metrics.TRACK_FIELD)
 
 
 def parse_args() -> argparse.Namespace:
@@ -106,7 +112,7 @@ def main() -> None:
 
     output_dir = args.run_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
-    existing = [name for name in ARTIFACT_NAMES if (output_dir / name).exists()]
+    existing = run_dir.occupied(output_dir)
     if existing:
         raise FileExistsError(
             f"{output_dir} already contains experiment artifacts ({', '.join(existing)}); "
@@ -117,7 +123,6 @@ def main() -> None:
     # compile 只包前向；checkpoint/优化器用原模型，state_dict 键不带 _orig_mod. 前缀
     compile_enabled = config["compile"] and not args.no_compile
     runtime_model = torch.compile(model) if compile_enabled else model
-    track_metric = "rms_error"
     parameter_count = count_trainable_parameters(model)
     expected_count = expected_parameter_count(model.in_channels)
     if parameter_count != expected_count:
@@ -171,7 +176,7 @@ def main() -> None:
     bad_epochs = 0
     history: list[dict[str, float | int]] = []
     run_record.write(output_dir, record)
-    atomic_json_dump(output_dir / "history.json", {"epochs": history})
+    atomic_json_dump(run_dir.history_path(output_dir), {"epochs": history})
     max_epochs = 1 if args.smoke else config["epochs"]
     for epoch in range(max_epochs):
         train_loss = train_epoch(
@@ -189,57 +194,61 @@ def main() -> None:
             config["target_sigma"],
             config["precision"],
         )
-        scheduler.step(val_metrics[track_metric])
+        tracked = getattr(val_metrics, Metrics.TRACK_FIELD)
+        scheduler.step(tracked)
         history.append(
             {
                 "epoch": epoch + 1,
                 "train_loss": train_loss,
                 "val_loss": val_loss,
-                **{f"val_{k}": v for k, v in val_metrics.items()},
+                **val_metrics.to_payload(),
                 "learning_rate": optimizer.param_groups[0]["lr"],
             }
         )
-        improved = val_metrics[track_metric] < best_val
+        improved = tracked < best_val
         if improved:
-            best_val = val_metrics[track_metric]
+            best_val = tracked
             bad_epochs = 0
-            save_checkpoint(output_dir / "best.pt", model)
+            save_checkpoint(run_dir.checkpoint_path(output_dir), model)
         else:
             bad_epochs += 1
-        atomic_json_dump(output_dir / "history.json", {"epochs": history})
+        atomic_json_dump(run_dir.history_path(output_dir), {"epochs": history})
         print(
             f"epoch={epoch + 1}/{max_epochs} train_loss={train_loss:.6f} "
-            f"val_{track_metric}={val_metrics[track_metric]:.3f}°"
+            f"val_{Metrics.TRACK_FIELD}={tracked:.3f}°"
         )
         if not args.smoke and bad_epochs >= config["early_stop_patience"]:
             print("early stopping")
             break
 
-    if not (output_dir / "best.pt").exists():
+    checkpoint = run_dir.checkpoint_path(output_dir)
+    if not checkpoint.exists():
         raise RuntimeError("best checkpoint was not produced")
-    best_entry = min(history, key=lambda entry: entry[f"val_{track_metric}"])
+    best_entry = min(history, key=_tracked_metric)
     # 结算：重新加载 best.pt 并在验证集上重新评估，确保汇报的数字就是
     # 交付 checkpoint 的数字。
-    settled_model = load_model(output_dir / "best.pt", device=device)
+    settled_model = load_model(checkpoint, device=device)
     # 与训练期验证同精度，数字才可比
     final_loss, final_metrics = eval_loss(
         settled_model, val_loader, device, config["target_sigma"], config["precision"]
     )
-    summary: dict[str, Any] = {
-        "epoch": int(best_entry["epoch"]),
-        "val_count": len(val_names),
-        f"best_val_{track_metric}": best_entry[f"val_{track_metric}"],
-        "val_loss": final_loss,
-        **{f"val_{k}": v for k, v in final_metrics.items()},
-    }
-    atomic_json_dump(output_dir / "summary.json", summary)
+    run_dir.write_summary(
+        output_dir,
+        run_dir.TrainingSummary(
+            epoch=int(best_entry["epoch"]),
+            val_count=len(val_names),
+            best_val_rms_error=_tracked_metric(best_entry),
+            val_loss=final_loss,
+            metrics=final_metrics,
+        ),
+    )
     print(
-        f"best val_{track_metric}={best_entry[f'val_{track_metric}']:.3f}° "
+        f"best val_{Metrics.TRACK_FIELD}={_tracked_metric(best_entry):.3f}° "
         f"(epoch {best_entry['epoch']})"
     )
     print("final evaluation on best.pt (val set):")
     print(f"  val_loss={final_loss:.4f}")
-    print("  " + "  ".join(f"{k}={v:.4f}" for k, v in final_metrics.items()))
+    print("  " + "  ".join(f"{k}={v:.4f}" for k, v in final_metrics.to_payload().items()))
     plot_loss_curves(output_dir, history)
 
 
