@@ -65,8 +65,10 @@ def _rename(model: onnx.ModelProto, names: dict[str, str]) -> None:
             node.output[index] = names.get(output, output)
 
 
-def write_graphs(bundle_dir: Path, *, polar_run: str = "polar") -> dict[bundle.DeliveryRole, Path]:
-    """三张手工图和两个 run 目录；返回交付角色 -> run 目录。"""
+def write_graphs(
+    bundle_dir: Path, *, mode: InputMode = InputMode.REF
+) -> dict[bundle.DeliveryRole, Path]:
+    """交付集合内的图与 run 目录：preprocess + ref 分类器（`mode` 可控以构造模式错配）。"""
     bundle_dir.mkdir(parents=True, exist_ok=True)
     preprocess_graph = build_draft_preprocess(emit_reference=True)
     _rename(preprocess_graph, {"obs": "observed", "ref": "reference"})
@@ -75,21 +77,16 @@ def write_graphs(bundle_dir: Path, *, polar_run: str = "polar") -> dict[bundle.D
         preprocess_graph,
         definition_hash=PROFILE.definition_hash,
     )
-    runs: dict[bundle.DeliveryRole, Path] = {}
-    for role, run_name in (
-        (bundle.DeliveryRole.POLAR, polar_run),
-        (bundle.DeliveryRole.POLAR_WITH_REF, "ref"),
-    ):
-        mode = InputMode(run_name)
-        write_graph(
-            bundle_dir / bundle.graph_file(role),
-            build_classifier(3 if mode is InputMode.POLAR else 7),
-            input_mode=mode.value,
-            git_commit=GIT_COMMIT,
-            **METRICS,
-        )
-        runs[role] = bundle_dir / run_name
-        write_run_dir(runs[role], mode)
+    role = bundle.DeliveryRole.POLAR_WITH_REF
+    write_graph(
+        bundle_dir / bundle.graph_file(role),
+        build_classifier(7 if mode is InputMode.REF else 3),
+        input_mode=mode.value,
+        git_commit=GIT_COMMIT,
+        **METRICS,
+    )
+    runs = {role: bundle_dir / mode.value}
+    write_run_dir(runs[role], mode)
     return runs
 
 
@@ -116,7 +113,7 @@ def check(bundle_dir: Path, **kwargs) -> list:
 # --------------------------------------------------------------------------- #
 
 
-def test_roles_cover_the_delivery_layout() -> None:
+def test_roles_cover_the_role_vocabulary() -> None:
     assert bundle.roles() == (
         bundle.DeliveryRole.PREPROCESS,
         bundle.DeliveryRole.POLAR,
@@ -127,6 +124,14 @@ def test_roles_cover_the_delivery_layout() -> None:
         "polar.onnx",
         "polar_with_ref.onnx",
     ]
+
+
+def test_delivered_roles_are_preprocess_and_ref() -> None:
+    assert bundle.delivered_roles() == (
+        bundle.DeliveryRole.PREPROCESS,
+        bundle.DeliveryRole.POLAR_WITH_REF,
+    )
+    assert bundle.delivered_classifier_roles() == (bundle.DeliveryRole.POLAR_WITH_REF,)
 
 
 def test_classifier_roles_exclude_preprocess() -> None:
@@ -164,29 +169,37 @@ def test_build_manifest_records_roles_and_metrics(tmp_path: Path) -> None:
     assert manifest["ort_version"] == PROFILE.ort_version
     assert manifest["fixtures"] == list(PROFILE.fixtures)
     assert manifest["tolerances"] == dict(PROFILE.tolerances)
-    assert sorted(manifest["graphs"]) == sorted(role.value for role in bundle.roles())
+    assert sorted(manifest["graphs"]) == sorted(role.value for role in bundle.delivered_roles())
     assert manifest["graphs"]["preprocess"]["outputs"] == {
         "observed": "observed",
         "reference": "reference",
     }
-    polar = manifest["graphs"]["polar"]
-    assert polar["input_mode"] == "polar"
-    assert polar["input_channels"] == 3
-    assert polar["metrics"] == {
+    ref = manifest["graphs"]["polar_with_ref"]
+    assert ref["input_mode"] == "ref"
+    assert ref["input_channels"] == 7
+    assert ref["metrics"] == {
         "best_epoch": 3,
         "val_count": 5,
         "val_rms_error_deg": 2.0,
         "val_expected_abs_error_deg": 1.0,
     }
-    assert manifest["graphs"]["polar_with_ref"]["input_channels"] == 7
 
 
-def test_build_manifest_requires_every_classifier_role(tmp_path: Path) -> None:
+def test_build_manifest_requires_every_delivered_classifier_role(tmp_path: Path) -> None:
     bundle_dir = tmp_path / "bundle"
     runs = write_graphs(bundle_dir)
-    del runs[bundle.DeliveryRole.POLAR_WITH_REF]
+    runs.clear()
 
-    with pytest.raises(ValueError, match="every classifier role"):
+    with pytest.raises(ValueError, match="every delivered classifier role"):
+        bundle.build_manifest(bundle_dir, runs, PROFILE, git_commit=GIT_COMMIT)
+
+
+def test_build_manifest_rejects_out_of_scope_role(tmp_path: Path) -> None:
+    bundle_dir = tmp_path / "bundle"
+    runs = write_graphs(bundle_dir)
+    runs[bundle.DeliveryRole.POLAR] = bundle_dir / "polar"
+
+    with pytest.raises(ValueError, match="delivery scope excludes"):
         bundle.build_manifest(bundle_dir, runs, PROFILE, git_commit=GIT_COMMIT)
 
 
@@ -206,12 +219,12 @@ def test_check_structure_passes_on_a_consistent_bundle(valid_bundle: Path) -> No
     manifest, findings = bundle.check_structure(valid_bundle, PROFILE)
 
     assert findings == []
-    assert manifest is not None and manifest["graphs"]["polar"]["input_channels"] == 3
+    assert manifest is not None and manifest["graphs"]["polar_with_ref"]["input_channels"] == 7
 
 
 def test_check_structure_flags_tampered_manifest_hash(valid_bundle: Path) -> None:
     manifest = json.loads((valid_bundle / bundle.MANIFEST_NAME).read_text(encoding="utf-8"))
-    manifest["graphs"]["polar"]["sha256"] = "0" * 64
+    manifest["graphs"]["polar_with_ref"]["sha256"] = "0" * 64
     (valid_bundle / bundle.MANIFEST_NAME).write_text(json.dumps(manifest), encoding="utf-8")
 
     assert_codes(check(valid_bundle), "graph_sha256")
@@ -220,7 +233,9 @@ def test_check_structure_flags_tampered_manifest_hash(valid_bundle: Path) -> Non
 def test_check_structure_flags_swapped_classifier_run(tmp_path: Path) -> None:
     bundle_dir = tmp_path / "bundle"
     manifest = bundle.build_manifest(
-        bundle_dir, write_graphs(bundle_dir, polar_run="ref"), PROFILE,
+        bundle_dir,
+        write_graphs(bundle_dir, mode=InputMode.POLAR),
+        PROFILE,
         git_commit=GIT_COMMIT,
     )
     (bundle_dir / bundle.MANIFEST_NAME).write_text(json.dumps(manifest), encoding="utf-8")
@@ -230,11 +245,19 @@ def test_check_structure_flags_swapped_classifier_run(tmp_path: Path) -> None:
     )
 
 
+def test_check_structure_flags_out_of_scope_graph(valid_bundle: Path) -> None:
+    manifest = json.loads((valid_bundle / bundle.MANIFEST_NAME).read_text(encoding="utf-8"))
+    manifest["graphs"]["polar"] = dict(manifest["graphs"]["polar_with_ref"])
+    (valid_bundle / bundle.MANIFEST_NAME).write_text(json.dumps(manifest), encoding="utf-8")
+
+    assert_codes(check(valid_bundle), "graphs_roles")
+
+
 def test_check_structure_flags_stale_graph_metadata(valid_bundle: Path) -> None:
     write_graph(
-        valid_bundle / bundle.graph_file(bundle.DeliveryRole.POLAR),
-        build_classifier(3),
-        input_mode="polar",
+        valid_bundle / bundle.graph_file(bundle.DeliveryRole.POLAR_WITH_REF),
+        build_classifier(7),
+        input_mode="ref",
         git_commit="c" * 40,
         **METRICS,
     )
@@ -249,7 +272,7 @@ def test_check_structure_flags_missing_graph(valid_bundle: Path) -> None:
 
 
 def test_check_structure_flags_invalid_graph(valid_bundle: Path) -> None:
-    (valid_bundle / bundle.graph_file(bundle.DeliveryRole.POLAR)).write_bytes(b"not onnx")
+    (valid_bundle / bundle.graph_file(bundle.DeliveryRole.POLAR_WITH_REF)).write_bytes(b"not onnx")
 
     assert_codes(check(valid_bundle), "graph_invalid")
 

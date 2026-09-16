@@ -1,7 +1,7 @@
-"""export_artifact：三图 bundle 与 manifest 契约、conformance 可消费性与确定性。
+"""export_artifact：交付图 bundle 与 manifest 契约、conformance 可消费性与确定性。
 
 manifest 字段 schema 与结构自检的接口级用例在 `tests/test_bundle.py`；本文件只走端到端：
-导出三图、manifest 通过自检、conformance 能消费。
+导出交付集合内的图、manifest 通过自检、conformance 能消费。
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from endfield.model import ARCH_VERSION, AzimuthNet
 from endfield.run_dir import TrainingSummary, write_summary
 from endfield.train.metrics import Metrics
 
-ROLE_FILES = {role.value: bundle.graph_file(role) for role in bundle.roles()}
+ROLE_FILES = {role.value: bundle.graph_file(role) for role in bundle.delivered_roles()}
 
 
 def write_run(root: Path, name: str, input_mode: str, channels: int) -> Path:
@@ -74,11 +74,11 @@ def runs(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
 @pytest.fixture(scope="module")
 def bundle_dir(tmp_path_factory: pytest.TempPathFactory, runs: dict[str, Path]) -> Path:
     out = tmp_path_factory.mktemp("artifact") / "bundle"
-    export_bundle(out, runs["polar"], runs["ref"])
+    export_bundle(out, runs["ref"])
     return out
 
 
-def test_bundle_has_three_graphs_and_complete_manifest(
+def test_bundle_has_delivered_graphs_and_complete_manifest(
     bundle_dir: Path, runs: dict[str, Path]
 ) -> None:
     manifest = read_manifest(bundle_dir)
@@ -106,7 +106,7 @@ def test_bundle_has_three_graphs_and_complete_manifest(
         preprocess.definition_hash()
     )
 
-    expected_modes = {"polar": ("polar", 3), "polar_with_ref": ("ref", 7)}
+    expected_modes = {"polar_with_ref": ("ref", 7)}
     for role, (mode, channels) in expected_modes.items():
         spec = manifest["graphs"][role]
         assert spec["input_mode"] == mode
@@ -118,7 +118,7 @@ def test_bundle_has_three_graphs_and_complete_manifest(
             "val_expected_abs_error_deg": 1.0,
         }
         run_dir = (bundle_dir / spec["run_dir"]).resolve()
-        assert run_dir == runs["polar" if role == "polar" else "ref"].resolve()
+        assert run_dir == runs["ref"].resolve()
         assert (run_dir / "best.pt").is_file()
         metadata = graph_metadata(bundle_dir / f"{role}.onnx")
         assert metadata["input_mode"] == mode
@@ -137,18 +137,25 @@ def test_manifest_is_consumable_by_conformance(bundle_dir: Path) -> None:
     assert {
         "polar_basic.observed",
         "polar_basic.reference",
-        "ref_pair_basic.polar.pmf",
         "ref_pair_basic.polar_with_ref.pmf",
     } <= labels
 
 
-def test_cli_requires_both_runs(tmp_path: Path) -> None:
+def test_cli_requires_the_ref_run(tmp_path: Path) -> None:
     out = os.fspath(tmp_path / "bundle")
     with pytest.raises(SystemExit) as excinfo:
-        main(["--out", out, "--polar-run", os.fspath(tmp_path / "polar")])
+        main(["--out", out])
     assert excinfo.value.code == 2
     with pytest.raises(SystemExit):
-        main(["--out", out])
+        main(["--out", out, "--polar-run", os.fspath(tmp_path / "polar")])
+
+
+def test_export_rejects_a_run_outside_the_delivery_scope(
+    tmp_path: Path, runs: dict[str, Path]
+) -> None:
+    with pytest.raises(ValueError, match="outside the delivery scope"):
+        export_bundle(tmp_path / "bundle", runs["polar"])
+    assert not (tmp_path / "bundle" / "polar.onnx").exists()
 
 
 def test_repeated_export_is_deterministic(
@@ -162,8 +169,6 @@ def test_repeated_export_is_deterministic(
         [
             "--out",
             os.fspath(copy),
-            "--polar-run",
-            os.fspath(runs["polar"]),
             "--ref-run",
             os.fspath(runs["ref"]),
         ]

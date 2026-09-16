@@ -1,7 +1,9 @@
-"""交付 bundle：交付角色词汇、manifest schema 与 manifest ↔ 工件一致性自检。
+"""交付 bundle：交付角色词汇、交付集合、manifest schema 与 manifest ↔ 工件一致性自检。
 
 交付角色决定图文件名（跨仓契约，MaaEnd 交付布局）与分类器角色的输入模式；通道数仍由
-`endfield/run_record.py` 单点定义，本模块不另立一份。manifest 字段 schema 属本仓；
+`endfield/run_record.py` 单点定义，本模块不另立一份。本仓当前交付的图集合是
+`DELIVERED_ROLES`：`polar` 分类器的精度在全场景劣于 `ref`，已退出交付（ADR 0008），角色
+词汇与文件名保留，旧 bundle 与实验导出的图仍可指名。manifest 字段 schema 属本仓；
 验收剖面的取值（定义哈希、ORT 版本、容差剖面、fixture 清单）由调用方构造
 `ManifestProfile` 注入——本模块不 import `conformance`，也不 import `preprocess`
 （后者的 torch 依赖不该进入校验路径）。run 目录的事实经 torch-free 的 `endfield/run_dir.py`
@@ -35,6 +37,15 @@ class DeliveryRole(StrEnum):
     POLAR_WITH_REF = "polar_with_ref"
 
 
+# 本仓当前交付的图集合（跨仓契约，MaaEnd 交付布局按它拷入）。`polar` 已退出交付：它在
+# 几乎所有场景的精度都劣于 `polar_with_ref`，并列交付只会多一份权重与一次推理；
+# 角色词汇保留是为了旧 bundle 的结构自检与 `--require polar` 仍能指名那张图。
+DELIVERED_ROLES: tuple[DeliveryRole, ...] = (
+    DeliveryRole.PREPROCESS,
+    DeliveryRole.POLAR_WITH_REF,
+)
+
+
 @dataclass(frozen=True)
 class GraphSpec:
     """一个交付角色的图契约：文件名、输入模式与输出角色映射。"""
@@ -65,13 +76,23 @@ class ManifestProfile:
 
 
 def roles() -> tuple[DeliveryRole, ...]:
-    """全部交付角色，按交付布局顺序。"""
+    """全部已知交付角色（词汇表），按交付布局顺序。"""
     return tuple(DeliveryRole)
+
+
+def delivered_roles() -> tuple[DeliveryRole, ...]:
+    """本仓当前交付 bundle 的图角色，按交付布局顺序。"""
+    return DELIVERED_ROLES
 
 
 def classifier_roles() -> tuple[DeliveryRole, ...]:
     """带 run 的交付角色：分类器图由 run 导出，preprocess 由定义模块导出。"""
     return tuple(role for role in DeliveryRole if _SPECS[role].input_mode is not None)
+
+
+def delivered_classifier_roles() -> tuple[DeliveryRole, ...]:
+    """当前交付集合里的分类器角色：manifest 必须有它们的图与 run。"""
+    return tuple(role for role in DELIVERED_ROLES if _SPECS[role].input_mode is not None)
 
 
 def spec(role: DeliveryRole | str) -> GraphSpec:
@@ -139,11 +160,19 @@ def build_manifest(
     """已导出的图 + 各分类器角色的 run -> manifest。
 
     run 目录的事实经 `endfield/run_dir.py` 读取（ADR 0007）；本模块不自行拼 run 目录里的路径。
+    交付集合之外的 run 一律拒绝——manifest 只描述本仓当前交付的图。
     """
     out_dir = Path(out_dir)
-    missing = sorted(role.value for role in classifier_roles() if role not in runs)
+    delivered = delivered_classifier_roles()
+    out_of_scope = sorted(role.value for role in runs if role not in delivered)
+    if out_of_scope:
+        expected = [role.value for role in delivered]
+        raise ValueError(f"delivery scope excludes {out_of_scope}; expected={expected}")
+    missing = sorted(role.value for role in delivered if role not in runs)
     if missing:
-        raise ValueError(f"manifest needs a run for every classifier role; missing={missing}")
+        raise ValueError(
+            f"manifest needs a run for every delivered classifier role; missing={missing}"
+        )
 
     preprocess_spec = _SPECS[DeliveryRole.PREPROCESS]
     graphs: dict[str, dict] = {
@@ -153,7 +182,7 @@ def build_manifest(
             "outputs": dict(preprocess_spec.outputs or {}),
         }
     }
-    for role in classifier_roles():
+    for role in delivered_classifier_roles():
         run_path = Path(runs[role])
         record, summary = run_dir.load_run(run_path)
         mode = record.input_mode
@@ -233,10 +262,10 @@ def check_structure(
         error("graphs_missing", "graphs 缺失或不是对象")
     else:
         declared_roles = sorted(str(role) for role in graphs)
-        expected_roles = sorted(role.value for role in DeliveryRole)
+        expected_roles = sorted(role.value for role in delivered_roles())
         if declared_roles != expected_roles:
             error("graphs_roles", f"graphs={declared_roles} != {expected_roles}")
-        for role in DeliveryRole:
+        for role in delivered_roles():
             graph_spec = graphs.get(role.value)
             if not isinstance(graph_spec, Mapping):
                 error("graph_spec_missing", f"graphs.{role.value} 缺失")

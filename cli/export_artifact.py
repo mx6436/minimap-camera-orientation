@@ -1,15 +1,19 @@
-"""交付 bundle 导出：`{preprocess,polar,polar_with_ref}.onnx` + `manifest.json`。
+"""交付 bundle 导出：`{preprocess,polar_with_ref}.onnx` + `manifest.json`。
 
-两个 run 的分类器图与定义模块导出的前处理图一次成型，对应 MaaEnd 交付布局
+分类器图与定义模块导出的前处理图一次成型，对应 MaaEnd 交付布局
 `assets/resource/model/map/cameraorientation/`（拷入步骤见 README「拷入 MaaEnd」）：
 
-    uv run export-artifact --out runs/<name>/bundle \
-        --polar-run runs/<polar_run> --ref-run runs/<ref_run>
+    uv run export-artifact --out runs/<name>/bundle --ref-run runs/<ref_run>
 
 - `preprocess.onnx` 由定义模块 `endfield/preprocess.py` 导出；
-- `polar.onnx` / `polar_with_ref.onnx` 由各自 run 的 `best.pt` 导出（`export-onnx`）；
+- `polar_with_ref.onnx` 由 ref run 的 `best.pt` 导出（`export-onnx`）；
 - `manifest.json` 由 `endfield/bundle.py` 按已导出的图与 run 产物组装：交付角色词汇、
-  字段 schema 与结构自检都在那里，run 目录的形状在 `endfield/run_dir.py`。
+  本仓当前交付集合、字段 schema 与结构自检都在那里，run 目录的形状在
+  `endfield/run_dir.py`。
+
+交付集合收在 `endfield/bundle.py` 的 `DELIVERED_ROLES`（当前为 `preprocess` +
+`polar_with_ref`；`polar` 因精度劣于 `ref` 退出交付，ADR 0008）：给的 run 不在集合内
+即拒，图不会落盘。
 
 导出后跑结构自检（manifest ↔ 图 metadata ↔ 文件哈希互证、ORT 1.19.2 可加载），
 失败退出码 1（图与 manifest 仍落盘，便于定位）。数值 conformance 证据用
@@ -30,8 +34,11 @@ from endfield import bundle, preprocess, run_dir
 from endfield import conformance as cf
 
 
-def export_bundle(out_dir: Path, polar_run: Path, ref_run: Path) -> Path:
-    """导出三图并写 manifest.json；目录已存在时原地覆盖（重复导出确定性）。"""
+def export_bundle(out_dir: Path, ref_run: Path) -> Path:
+    """导出交付图并写 manifest.json；目录已存在时原地覆盖（重复导出确定性）。
+
+    分类器角色由 run 的运行档案（`input_mode`）推出，交付集合之外即报错。
+    """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     preprocess_graph = bundle.graph_file(bundle.DeliveryRole.PREPROCESS)
@@ -40,13 +47,19 @@ def export_bundle(out_dir: Path, polar_run: Path, ref_run: Path) -> Path:
         f"exported: {out_dir / preprocess_graph} "
         f"(definition_hash={preprocess.definition_hash()[:12]})"
     )
-    runs: dict[bundle.DeliveryRole, Path] = {
-        bundle.DeliveryRole.POLAR: Path(polar_run),
-        bundle.DeliveryRole.POLAR_WITH_REF: Path(ref_run),
-    }
-    for role, run_path in runs.items():
-        export_classifier(run_dir.checkpoint_path(run_path), out_dir / bundle.graph_file(role))
-    manifest = bundle.build_manifest(out_dir, runs, cf.profile(), git_commit=git_commit())
+    ref_run = Path(ref_run)
+    record, _ = run_dir.load_run(ref_run)
+    role = bundle.role_for_mode(record.input_mode)
+    if role not in bundle.delivered_roles():
+        expected = [item.value for item in bundle.delivered_roles()]
+        raise ValueError(
+            f"{ref_run}: input_mode={record.input_mode.value!r} is outside the delivery scope "
+            f"{expected}"
+        )
+    export_classifier(run_dir.checkpoint_path(ref_run), out_dir / bundle.graph_file(role))
+    manifest = bundle.build_manifest(
+        out_dir, {role: ref_run}, cf.profile(), git_commit=git_commit()
+    )
     (out_dir / bundle.MANIFEST_NAME).write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
@@ -57,20 +70,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--out", type=Path, required=True, help="bundle 输出目录")
     parser.add_argument(
-        "--polar-run",
-        type=Path,
-        required=True,
-        help="polar 分类器 run 目录（含 best.pt / record.json / summary.json）",
-    )
-    parser.add_argument(
         "--ref-run",
         type=Path,
         required=True,
-        help="polar_with_ref 分类器 run 目录（含 best.pt / record.json / summary.json）",
+        help="ref 分类器 run 目录（含 best.pt / record.json / summary.json）",
     )
     args = parser.parse_args(argv)
 
-    bundle_dir = export_bundle(args.out, args.polar_run, args.ref_run)
+    bundle_dir = export_bundle(args.out, args.ref_run)
     _, findings = bundle.check_structure(bundle_dir, cf.profile())
     errors = [finding for finding in findings if finding.level == "error"]
     for finding in errors:
@@ -80,8 +87,12 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     manifest = bundle.read_manifest(bundle_dir)
     assert manifest is not None  # check_structure 刚确认过 manifest 存在
+    graph_count = len(bundle.delivered_roles())
     print(f"bundle: {bundle_dir}")
-    print(f"result: PASS（三图 + manifest；definition_hash={manifest['definition_hash'][:12]}）")
+    print(
+        f"result: PASS（{graph_count} 图 + manifest；"
+        f"definition_hash={manifest['definition_hash'][:12]}）"
+    )
     print(f"conformance 证据：uv run verify-artifact --bundle {bundle_dir}")
     return 0
 

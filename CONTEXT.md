@@ -83,11 +83,11 @@ _Avoid_: run 配置、训练配置、元数据文件
 _Avoid_: 训练结果、metrics 文件、实验指标
 
 **交付 bundle (Delivery Bundle)**:
-一次交付的三张图（`preprocess.onnx`、`polar.onnx`、`polar_with_ref.onnx`）与 `manifest.json`：图进入 MaaEnd 的交付布局，图文件名是跨仓契约；manifest 留在本仓，其字段 schema 属本仓。
+一次交付的图（当前为 `preprocess.onnx`、`polar_with_ref.onnx`）与 `manifest.json`：图进入 MaaEnd 的交付布局，图文件名是跨仓契约；manifest 留在本仓，其字段 schema 属本仓。
 _Avoid_: 导出产物、模型包、工件（`endfield/train/artifacts.py` 的「工件」指 run 产物，不是交付）
 
 **交付角色 (Delivery Role)**:
-交付 bundle 中一张图的角色名（`preprocess`、`polar`、`polar_with_ref`）：角色决定文件名，分类器角色另决定输入模式与输入通道数。角色不是输入模式——`polar` 角色对应 `polar` 模式，`polar_with_ref` 角色对应 `ref` 模式。
+交付侧图角色的词汇（`preprocess`、`polar`、`polar_with_ref`）：角色决定文件名，分类器角色另决定输入模式与输入通道数。角色不是输入模式——`polar` 角色对应 `polar` 模式，`polar_with_ref` 角色对应 `ref` 模式。本仓当前交付集合只有 `preprocess` 与 `polar_with_ref`：`polar` 分类器的精度在全场景劣于 `ref`，已退出交付（ADR 0008）。
 _Avoid_: 图名、模型类型、模式名
 
 **环形区域 (Ring)**:

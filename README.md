@@ -67,11 +67,10 @@ uv run live --run-dir runs/<name> --snapshot <overlay 路径>    # 保存一张 
 
 ## 交付
 
-`export-artifact` 一次导出交付 bundle：`preprocess.onnx` + `polar.onnx` + `polar_with_ref.onnx` + `manifest.json`。
+`export-artifact` 一次导出交付 bundle：`preprocess.onnx` + `polar_with_ref.onnx` + `manifest.json`。`polar` 分类器在全场景的精度都劣于 `ref`，已退出交付（ADR 0008）。
 
 ```bash
-uv run export-artifact --out runs/<name>/bundle \
-    --polar-run runs/<polar_run> --ref-run runs/<ref_run>
+uv run export-artifact --out runs/<name>/bundle --ref-run runs/<ref_run>
 ```
 
 ### 工件校验（conformance）
@@ -84,16 +83,16 @@ uv run verify-artifact --bundle runs/<name>/bundle   # 结构自检 + 内置场�
 
 ### 拷入 MaaEnd
 
-bundle 三图对应 MaaEnd 交付布局 `assets/resource/model/map/cameraorientation/`，`manifest.json` 留在本仓作为交付凭据。拷入与提交在 MaaEnd 的模型子模块内完成：
+bundle 两图对应 MaaEnd 交付布局 `assets/resource/model/map/cameraorientation/`，`manifest.json` 留在本仓作为交付凭据。拷入与提交在 MaaEnd 的模型子模块内完成：
 
 ```bash
 MAAEND=<MaaEnd 工作副本>        # 切到 feat/camera-orientation
 BUNDLE=runs/<name>/bundle
 mkdir -p "$MAAEND/assets/resource/model/map/cameraorientation"
-cp "$BUNDLE"/{preprocess,polar,polar_with_ref}.onnx \
+cp "$BUNDLE"/{preprocess,polar_with_ref}.onnx \
    "$MAAEND/assets/resource/model/map/cameraorientation/"
 cd "$MAAEND/assets/resource/model"
-git add map/cameraorientation && git commit -m "model: cameraorientation 三图工件" && git push
+git add map/cameraorientation && git commit -m "model: cameraorientation 两图工件" && git push
 ```
 
 ## 文档
