@@ -84,11 +84,11 @@ def test_load_fixtures_rejects_empty_dir(tmp_path) -> None:
         cf.load_fixtures(tmp_path)
 
 
-def test_reference_missing_alpha_copies_observed() -> None:
+def test_reference_missing_alpha_composites_over_white() -> None:
     scenario = cf.scenario_map()["ref_missing_alpha0"]
-    observed, reference = cf.expected_strip_pair(scenario)
+    _, reference = cf.expected_strip_pair(scenario)
     assert np.all(reference[..., 3] == 0)
-    assert np.array_equal(reference[..., :3], observed)
+    assert np.all(reference[..., :3] == 255)
     assert cf.gap_fraction(reference) == 1.0
 
 

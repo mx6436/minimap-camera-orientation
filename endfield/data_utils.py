@@ -37,7 +37,7 @@ def load_bgr(path: Path) -> np.ndarray:
 
 
 def load_bgra(path: Path) -> np.ndarray:
-    """BGRA PNG（ref 参考流布局：BGR = 观测背底合成参考，A = 原始连续 alpha）。"""
+    """BGRA PNG（ref 参考流布局：BGR = 白底合成参考，A = 原始连续 alpha）。"""
     image = imread_png(path)
     if image.shape != (IMG_H, IMG_W, 4):
         raise ValueError(f"{path}: expected {IMG_W}x{IMG_H} BGRA, got shape {image.shape}")

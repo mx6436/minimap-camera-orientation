@@ -5,8 +5,9 @@
 资产边界），把资产坐标减去窗口原点、按窗口宽高归一化后采样（`padding_mode="zeros"`，
 越界 = 参考缺失）；窗口优先与整图采样数值等价（observed 逐字节、reference ≤1 LSB），
 但图内只搬运窗口像素。
-合成在条带域一次完成：`ref.BGR = rgb * (a/255) + obs * (1 - a/255)`；每个输出一次
-Round（半偶）+ Cast 回 uint8。
+合成在条带域一次完成：`ref.BGR = rgb * (a/255) + 255 * (1 - a/255)`——白底合成，底图
+越透明越接近白色，透明像素（含越界读 0）即白，不掺入观测像素。每个输出一次 Round（半偶）
+后 Cast 回 uint8。
 
 几何约定：720p 基准帧以 (108.0, 111.0) 为中心裁出 118x120 观测 ROI；极点 = ROI 内
 (59.0, 60.0) 像素中心；角度 -> x 轴，第 j 列的像素中心对应
@@ -116,7 +117,7 @@ def normalize_asset(asset: np.ndarray) -> np.ndarray:
 
 
 def sample_minimap(minimap: torch.Tensor) -> torch.Tensor:
-    """NHWC uint8 观测 ROI -> float32 NCHW 条带采样值（观测与合成的共同输入）。"""
+    """NHWC uint8 观测 ROI -> float32 NCHW 条带采样值（观测条带的唯一采样）。"""
     u, v = strip_roi_uv().unbind(-1)
     return F.grid_sample(
         minimap.permute(0, 3, 1, 2).float(),
@@ -251,10 +252,13 @@ def sample_asset(
 def _compose_strips(
     obs_float: torch.Tensor, sampled: torch.Tensor
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """float32 NCHW 观测采样 + 资产采样 -> `(observed, reference)` NHWC uint8 条带。"""
+    """float32 NCHW 观测采样 + 资产采样 -> `(observed, reference)` NHWC uint8 条带。
+
+    参考 BGR 按白底合成：透明像素（含越界读 0）向白色过渡，不掺入观测像素。
+    """
     rgb, alpha = sampled[:, :3], sampled[:, 3:4]
     weight = alpha / 255.0
-    composed = rgb * weight + obs_float * (1.0 - weight)
+    composed = rgb * weight + 255.0 * (1.0 - weight)
     observed = _to_uint8(obs_float).permute(0, 2, 3, 1)
     reference = torch.cat([_to_uint8(composed), _to_uint8(alpha)], dim=1).permute(0, 2, 3, 1)
     return observed, reference
@@ -344,7 +348,9 @@ _GEOMETRY_SPEC = (
     "then asset coordinates are shifted by the window origin and normalized by the window "
     "extent; one-shot bilinear sampling: minimap on the strip grid with padding border, asset at "
     "(x,y)+(q_roi-pole)*scale with padding zeros (out-of-bounds = reference gap); strip-domain "
-    "composite ref.BGR = rgb*(a/255) + obs*(1-a/255); one Round (half-to-even) + Cast per output"
+    "composite ref.BGR = rgb*(a/255) + 255*(1-a/255) over a white backdrop (transparent "
+    "pixels, including out-of-bounds reads, are white); one Round (half-to-even) + Cast per "
+    "output"
 )
 
 

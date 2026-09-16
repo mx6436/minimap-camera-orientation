@@ -121,7 +121,7 @@ def test_record_declares_ref_representation_and_assets_root(tmp_path: Path) -> N
     record = build(config, tmp_path, assets_root="/tmp/assets")
     assert record["input_mode"] == "ref"
     assert record["input_representation"].startswith("ref_polar_unwrap")
-    assert "obs*(1 - a/255)" in record["input_representation"]
+    assert "255*(1 - a/255)" in record["input_representation"]
     assert record["input_shape"] == [7, 42, 360]
     assert record["ref_reference_assets_root"] == "/tmp/assets"
     assert "pair_encoding" not in record

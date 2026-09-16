@@ -115,15 +115,16 @@ def test_reference_opaque_constant_asset_passes_through(scale: float) -> None:
     assert np.all(obs == 200)
 
 
-def test_reference_fully_transparent_asset_copies_observed() -> None:
+def test_reference_fully_transparent_asset_composites_over_white() -> None:
     rng = np.random.default_rng(4)
     observed = rng.integers(0, 256, (preprocess.ROI_H, preprocess.ROI_W, 3), dtype=np.uint8)
     asset = _bgra(160, 140, (10, 20, 30), 0)
 
     obs, ref = preprocess.strip_pair(observed, asset, 80.0, 70.0, 1.0)
 
-    assert np.array_equal(ref[..., :3], obs)
+    assert np.all(ref[..., :3] == 255)
     assert np.all(ref[..., 3] == 0)
+    assert np.array_equal(obs, preprocess.observed_strip(observed))  # 观测流不受合成影响
 
 
 def test_reference_composition_uses_exact_alpha_weight() -> None:
@@ -132,8 +133,8 @@ def test_reference_composition_uses_exact_alpha_weight() -> None:
 
     _, ref = preprocess.strip_pair(observed, asset, 80.0, 70.0, 1.0)
 
-    # 100*(128/255) + 200*(1 - 128/255) = 149.8039... -> 150
-    assert np.all(ref[..., :3] == 150)
+    # 100*(128/255) + 255*(1 - 128/255) = 177.1960... -> 177
+    assert np.all(ref[..., :3] == 177)
     assert np.all(ref[..., 3] == 128)
 
 
@@ -220,24 +221,24 @@ def test_reference_out_of_bounds_reads_as_missing() -> None:
     observed = rng.integers(0, 256, (preprocess.ROI_H, preprocess.ROI_W, 3), dtype=np.uint8)
     asset = _bgra(40, 40, (10, 20, 30), 255)
 
-    obs, ref = preprocess.strip_pair(observed, asset, 20.0, 20.0, 1.0)
+    _, ref = preprocess.strip_pair(observed, asset, 20.0, 20.0, 1.0)
 
     alpha = ref[..., 3]
     assert alpha.min() == 0 and np.any(alpha == 255)
     assert np.all(ref[..., :3][alpha == 255] == (10, 20, 30))
-    assert np.array_equal(ref[..., :3][alpha == 0], obs[alpha == 0])
+    assert np.all(ref[..., :3][alpha == 0] == 255)
 
 
-def test_empty_sampling_window_degrades_to_observed() -> None:
-    """空裁剪窗（资产完全在采样窗之外）：ref.A 全 0、ref.BGR 逐像素等于观测。"""
+def test_empty_sampling_window_is_a_white_reference_gap() -> None:
+    """空裁剪窗（资产完全在采样窗之外）：ref.A 全 0、ref.BGR 全为白底。"""
     rng = np.random.default_rng(31)
     observed = rng.integers(0, 256, (preprocess.ROI_H, preprocess.ROI_W, 3), dtype=np.uint8)
     asset = _bgra(64, 64, (10, 20, 30), 255)
 
-    obs, ref = preprocess.strip_pair(observed, asset, 500.0, 500.0, 1.0)
+    _, ref = preprocess.strip_pair(observed, asset, 500.0, 500.0, 1.0)
 
     assert np.all(ref[..., 3] == 0)
-    assert np.array_equal(ref[..., :3], obs)
+    assert np.all(ref[..., :3] == 255)
 
 
 def test_negative_corner_clips_window_to_asset() -> None:
@@ -246,9 +247,9 @@ def test_negative_corner_clips_window_to_asset() -> None:
     observed = rng.integers(0, 256, (preprocess.ROI_H, preprocess.ROI_W, 3), dtype=np.uint8)
     asset = _bgra(140, 160, (10, 20, 30), 255)
 
-    obs, ref = preprocess.strip_pair(observed, asset, -6.5, -4.25, 1.0)
+    _, ref = preprocess.strip_pair(observed, asset, -6.5, -4.25, 1.0)
 
     alpha = ref[..., 3]
     assert 0 < int((alpha == 255).sum()) < alpha.size
     assert np.all(ref[..., :3][alpha == 255] == (10, 20, 30))
-    assert np.array_equal(ref[..., :3][alpha == 0], obs[alpha == 0])
+    assert np.all(ref[..., :3][alpha == 0] == 255)

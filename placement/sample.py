@@ -26,7 +26,7 @@ class MissingZoneAsset(Exception):
 
 
 def load_reference_image(path: Path) -> np.ndarray:
-    """读取参考底图资产原图：BGR 或 BGRA uint8，未做黑底合成。"""
+    """读取参考底图资产原图：BGR 或 BGRA uint8，未做白底合成。"""
     image = imread_png(path)
     if image.ndim != 3 or image.shape[2] not in (3, 4):
         raise ValueError(f"{path}: expected 3/4-channel PNG, got shape {image.shape}")

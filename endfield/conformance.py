@@ -166,7 +166,7 @@ def builtin_scenarios() -> list[Scenario]:
         ),
         Scenario(
             name="ref_missing_alpha0",
-            description="参考缺失：资产全透明，ref.BGR 逐像素等于观测、ref.A 全 0",
+            description="参考缺失：资产全透明，ref.BGR 全为白底、ref.A 全 0",
             tags=("ref", "gap"),
             minimap=minimap,
             asset=hidden_asset,
@@ -186,7 +186,7 @@ def builtin_scenarios() -> list[Scenario]:
         ),
         Scenario(
             name="window_empty_oob",
-            description="空裁剪窗：资产完全在采样窗之外，ref.A 全 0、ref.BGR 逐像素等于观测",
+            description="空裁剪窗：资产完全在采样窗之外，ref.A 全 0、ref.BGR 全为白底",
             tags=("ref", "oob", "empty"),
             minimap=minimap,
             asset=tiny_asset,

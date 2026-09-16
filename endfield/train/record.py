@@ -46,8 +46,9 @@ def input_representation(config: dict[str, Any]) -> str:
             "sampled once on the strip grid at (x,y)+(q_roi-pole)*scale with the zone's "
             "MapLocator ZoneTemplateScale (ValleyIV_Base 15/16, otherwise 1:1); "
             "out-of-bounds reads 0 = reference gap; "
-            "ref.BGR = rgb*(a/255) + obs*(1 - a/255) composited once in the strip domain "
-            "(alpha==0 -> observed pixels), ref.A = raw continuous alpha; "
+            "ref.BGR = rgb*(a/255) + 255*(1 - a/255) composited once in the strip domain "
+            "over a white backdrop (transparent pixels, including out-of-bounds reads, are "
+            "white), ref.A = raw continuous alpha; "
             "both streams defined by endfield/preprocess.py; "
             f"angle->x, radius->y{gap_filter})"
         )

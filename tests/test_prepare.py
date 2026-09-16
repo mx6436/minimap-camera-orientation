@@ -352,9 +352,9 @@ def test_prepare_ref_writes_both_streams_and_skips_unaccepted(tmp_path: Path) ->
     assert np.all(reference[..., 3] == 255)
 
 
-def test_prepare_ref_marks_out_of_bounds_and_copies_observed(tmp_path: Path) -> None:
+def test_prepare_ref_marks_out_of_bounds_and_whitens(tmp_path: Path) -> None:
     fx = ref_fixture(tmp_path)
-    # 底图小于参考窗口：越界处无内容 -> alpha 0，BGR 取观测（即 copy 观测）
+    # 底图小于参考窗口：越界处无内容 -> alpha 0，BGR 取白底
     small = np.full((120, 120, 4), 200, dtype=np.uint8)
     small[..., 3] = 255
     assert cv2.imwrite(str(fx.assets_root / "Test" / "Base.png"), small)
@@ -362,11 +362,10 @@ def test_prepare_ref_marks_out_of_bounds_and_copies_observed(tmp_path: Path) -> 
 
     prepare_ref(fx, ref_layout)
 
-    observed = imread_png(ref_layout.processed_dir / fx.names["ok"])
     reference = imread_png(ref_layout.processed_dir / REF_SUBDIR / fx.names["ok"])
     alpha = reference[..., 3]
     assert alpha.min() == 0 and alpha.max() == 255
-    assert np.array_equal(reference[..., :3][alpha == 0], observed[alpha == 0])
+    assert np.all(reference[..., :3][alpha == 0] == 255)
 
 
 def test_prepare_ref_is_deterministic_on_rerun(tmp_path: Path) -> None:
@@ -537,9 +536,9 @@ def test_prepare_ref_rejects_side_without_usable_samples(tmp_path: Path) -> None
         prepare_ref(fx, ref_layout)
 
 
-def test_prepare_ref_writes_observed_backdrop_reference(tmp_path: Path) -> None:
+def test_prepare_ref_writes_white_backdrop_reference(tmp_path: Path) -> None:
     fx = ref_fixture(tmp_path)
-    # 底图中心开一条 alpha=0 带：参考 BGR 应 copy 观测而非黑底
+    # 底图中心开一条 alpha=0 带：参考 BGR 应为白底而非观测像素
     asset = np.full((200, 200, 4), 200, dtype=np.uint8)
     asset[..., 3] = 255
     asset[:, 90:110, 3] = 0
@@ -549,10 +548,9 @@ def test_prepare_ref_writes_observed_backdrop_reference(tmp_path: Path) -> None:
     _, report = prepare_ref(fx, ref_layout)
 
     assert list(report.names) == [fx.names["ok"], fx.names["ok2"]]
-    observed = imread_png(ref_layout.processed_dir / fx.names["ok"])
     reference = imread_png(ref_layout.processed_dir / REF_SUBDIR / fx.names["ok"])
     alpha = reference[..., 3]
     assert np.any(alpha == 0) and np.any(alpha == 255)
-    # 参考缺失处逐像素等于观测
-    assert np.array_equal(reference[..., :3][alpha == 0], observed[alpha == 0])
-    assert np.any(reference[..., :3][alpha == 0] != 0)
+    # 参考缺失处为白底，不透明处为底图原始 BGR
+    assert np.all(reference[..., :3][alpha == 0] == 255)
+    assert np.all(reference[..., :3][alpha == 255] == 200)

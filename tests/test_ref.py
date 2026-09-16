@@ -113,5 +113,5 @@ def test_real_accepted_sample_builds_ref_pair() -> None:
 
     assert ref.shape == (IMG_H, IMG_W, REF_CHANNELS)
     assert ref.dtype == np.uint8
-    # 参考缺失处 ref.BGR 逐像素等于 obs.BGR（alpha==0 不变量）
-    assert np.array_equal(ref[..., 3:6][alpha == 0], ref[..., :3][alpha == 0])
+    # 参考缺失处 ref.BGR 为白底（alpha==0 不变量）
+    assert np.all(ref[..., 3:6][alpha == 0] == 255)

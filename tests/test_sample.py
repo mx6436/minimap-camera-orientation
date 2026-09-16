@@ -45,7 +45,7 @@ def base_frame(seed: int) -> np.ndarray:
 
 
 def test_strips_produce_observed_and_reference_bands(tmp_path: Path) -> None:
-    """条带对形状/通道正确，ref.A 保留资产原始 alpha（不是黑底合成后的 255）。"""
+    """条带对形状/通道正确，ref.A 保留资产原始 alpha（不是白底合成后的 255）。"""
     asset = np.zeros((240, 240, 4), dtype=np.uint8)
     asset[..., :3] = 50
     asset[..., 3] = 7
@@ -59,12 +59,14 @@ def test_strips_produce_observed_and_reference_bands(tmp_path: Path) -> None:
     assert reference.shape == (IMG_H, IMG_W, 4)
     assert reference.dtype == np.uint8
     assert np.all(reference[..., 3] == 7)
-    # 观测流与参考流的 BGR 都来自同一次采样：配对张量前三通道逐像素等于观测条带
+    # BGR 按白底合成：50*(7/255) + 255*(1 - 7/255) = 249.3725... -> 249
+    assert np.all(reference[..., :3] == 249)
+    # 配对张量的两路来自同一次采样：前三通道逐像素等于观测条带
     assert np.array_equal(assemble_ref_pair(observed, reference)[..., :3], observed)
 
 
-def test_reference_gap_falls_back_to_observation(tmp_path: Path) -> None:
-    """参考缺失处（ref.A == 0）的 ref.BGR 逐像素等于观测像素。"""
+def test_reference_gap_composites_over_white(tmp_path: Path) -> None:
+    """参考缺失处（ref.A == 0）的 ref.BGR 逐像素为白底。"""
     rng = np.random.default_rng(10)
     asset = rng.integers(0, 256, (240, 240, 4), dtype=np.uint8)
     asset[:, 110:130, 3] = 0  # 中心 (120,120) 裁剪窗口内一条成片透明带
@@ -75,7 +77,7 @@ def test_reference_gap_falls_back_to_observation(tmp_path: Path) -> None:
 
     alpha = reference[..., 3]
     assert np.any(alpha == 0)
-    assert np.array_equal(reference[..., :3][alpha == 0], observed[alpha == 0])
+    assert np.all(reference[..., :3][alpha == 0] == 255)
 
 
 def test_asset_is_read_once_per_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

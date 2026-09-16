@@ -59,8 +59,9 @@ INPUT_SPECS = {
         f"obs = {POLAR_GEOMETRY}. ref = MapLocator zone asset sampled once on the strip grid "
         "at (x,y)+(q_roi-pole)*scale with the zone's ZoneTemplateScale (ValleyIV_Base 15/16, "
         "otherwise 1:1); out-of-bounds reads 0 (reference gap); ref.BGR = "
-        "rgb*(a/255) + obs*(1-a/255) composited once in the strip domain (alpha==0 -> observed "
-        "pixels), ref.A = raw asset alpha (0 = reference gap); both streams are defined by "
+        "rgb*(a/255) + 255*(1-a/255) composited once in the strip domain over a white backdrop "
+        "(transparent pixels, including out-of-bounds reads, are white), ref.A = raw asset "
+        "alpha (0 = reference gap); both streams are defined by "
         "endfield/preprocess.py and delivered by preprocess.onnx. values in [0,255]; /255 is "
         "folded into the first convolution weights, HWC->CHW is a Transpose inside the graph"
     ),
