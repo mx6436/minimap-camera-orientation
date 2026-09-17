@@ -1,9 +1,10 @@
-"""数据集与加载器：文件名角度标注 → (BGR 张量, 角度标量)。"""
+"""数据集与加载器：文件名角度标注 → (BGR 张量, 角度标量, 权重标量)。"""
 
 from __future__ import annotations
 
 import hashlib
 import random
+from collections.abc import Set
 from pathlib import Path
 
 import numpy as np
@@ -54,6 +55,8 @@ class AngleDataset(Dataset):
         noise_augment: bool = False,
         roll_augment: bool = False,
         input_mode: InputMode | str = InputMode.POLAR,
+        hard_names: Set[str] = frozenset(),
+        hard_weight: float = 1.0,
     ) -> None:
         self.directory = directory
         self.names = names
@@ -61,6 +64,9 @@ class AngleDataset(Dataset):
         self.roll_augment = roll_augment
         self.input_mode = InputMode.parse(input_mode)
         self.channels = input_channels(self.input_mode)
+        # 困难样本权重：名单由调用方给出（本模块不认识 data/hard_raw），增广与权重正交
+        self.hard_names = hard_names
+        self.hard_weight = hard_weight
 
     def __len__(self) -> int:
         return len(self.names)
@@ -72,7 +78,7 @@ class AngleDataset(Dataset):
             return assemble_ref_pair(observed, reference)
         return load_bgr(self.directory / name)
 
-    def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
+    def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         name = self.names[index]
         angle = parse_angle(Path(name))
         array = self._load(name).astype(np.float32) / 255.0
@@ -92,7 +98,12 @@ class AngleDataset(Dataset):
                 array = array + np.random.normal(0.0, 0.02, array.shape).astype(np.float32)
             array = np.clip(array, 0.0, 1.0)
         tensor = torch.from_numpy(array.transpose(2, 0, 1)).contiguous()
-        return tensor, torch.tensor(angle, dtype=torch.float32)
+        weight = self.hard_weight if name in self.hard_names else 1.0
+        return (
+            tensor,
+            torch.tensor(angle, dtype=torch.float32),
+            torch.tensor(weight, dtype=torch.float32),
+        )
 
 
 def names_fingerprint(names: list[str]) -> str:

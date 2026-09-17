@@ -21,6 +21,11 @@ early_stop_patience = 25
 # 损失目标：360 bin 软标签的循环高斯 σ（度）
 target_sigma = 3.0
 
+# 困难样本权重：data/hard_raw/ 里的样本在训练损失里按该权重计（w = hard_weight，其余 1），
+# 等价于把该样本复制成 N 份后在扩容集合上取普通均值；只进训练损失，val 与全部 val 指标无
+# 权；data/hard_raw/ 为空时该值无效果
+hard_weight = 5
+
 # 运行时性能：bf16+compile 本机实测约 5x
 precision = "bf16"  # conv 走 bf16，损失始终 fp32；无 avx512_bf16/amx 时不提速
 compile = true      # 启动多花 ~2min 编译

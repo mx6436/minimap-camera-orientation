@@ -17,6 +17,7 @@ CONFIG_DEFAULTS: dict[str, Any] = {
     "epochs": 200,
     "seed": SEED,
     "target_sigma": TARGET_SIGMA,
+    "hard_weight": 5.0,
     "lr": 1e-3,
     "weight_decay": 1e-4,
     "scheduler_patience": 8,
@@ -49,6 +50,13 @@ def validate_config(config: dict[str, Any]) -> None:
         raise SystemExit("scheduler_patience/early_stop_patience must be positive")
     if config["target_sigma"] <= 0.0 or config["target_sigma"] >= 90.0:
         raise SystemExit("target_sigma must be in degrees, 0 < target_sigma < 90")
+    hard_weight = config["hard_weight"]
+    if (
+        isinstance(hard_weight, bool)
+        or not isinstance(hard_weight, (int, float))
+        or float(hard_weight) <= 0.0
+    ):
+        raise SystemExit("hard_weight must be a positive number")
     if not isinstance(config["noise_augment"], bool):
         raise SystemExit("noise_augment must be a boolean")
     if not isinstance(config["roll_augment"], bool):

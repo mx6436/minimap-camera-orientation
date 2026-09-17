@@ -1,4 +1,4 @@
-"""训练数据集：输入模式 -> 通道数与样本张量。"""
+"""训练数据集：输入模式 -> 通道数、样本张量与样本权重。"""
 
 from __future__ import annotations
 
@@ -21,6 +21,12 @@ def write_ref_sample(
     (directory / REF_SUBDIR).mkdir(parents=True, exist_ok=True)
     assert cv2.imwrite(str(directory / name), observed)
     assert cv2.imwrite(str(directory / REF_SUBDIR / name), reference)
+
+
+def write_sample(directory: Path, name: str, value: int = 200) -> None:
+    directory.mkdir(parents=True, exist_ok=True)
+    frame = np.full((IMG_H, IMG_W, 3), value, dtype=np.uint8)
+    assert cv2.imwrite(str(directory / name), frame)
 
 
 def test_input_channels_per_mode() -> None:
@@ -51,7 +57,7 @@ def test_ref_dataset_concatenates_observed_reference_and_alpha(tmp_path: Path) -
     reference[...] = (40, 50, 60, 70)
     write_ref_sample(tmp_path, "sample_r90.5.png", observed, reference)
 
-    tensor, angle = AngleDataset(tmp_path, ["sample_r90.5.png"], input_mode="ref")[0]
+    tensor, angle, _ = AngleDataset(tmp_path, ["sample_r90.5.png"], input_mode="ref")[0]
 
     assert angle.item() == pytest.approx(90.5)
     expected = np.concatenate([observed, reference], axis=2).astype(np.float32) / 255.0
@@ -66,11 +72,61 @@ def test_ref_dataset_roll_augment_shifts_all_channels(tmp_path: Path) -> None:
     reference[:, 100] = (0, 255, 0, 128)
     write_ref_sample(tmp_path, "sample_r0.png", observed, reference)
 
-    tensor, angle = AngleDataset(tmp_path, ["sample_r0.png"], roll_augment=True, input_mode="ref")[
-        0
-    ]
+    tensor, angle, weight = AngleDataset(
+        tmp_path, ["sample_r0.png"], roll_augment=True, input_mode="ref"
+    )[0]
 
-    base, _ = AngleDataset(tmp_path, ["sample_r0.png"], input_mode="ref")[0]
+    base, _, _ = AngleDataset(tmp_path, ["sample_r0.png"], input_mode="ref")[0]
     delta = int(round(angle.item())) % IMG_W
     assert tensor.shape == (7, IMG_H, IMG_W)
+    assert weight.item() == pytest.approx(1.0)
     assert torch.allclose(tensor, torch.roll(base, delta, dims=2))
+
+
+def test_dataset_weights_hard_names_and_leaves_others_at_one(tmp_path: Path) -> None:
+    write_sample(tmp_path, "hard_r10.png")
+    write_sample(tmp_path, "plain_r20.png")
+    dataset = AngleDataset(
+        tmp_path,
+        ["hard_r10.png", "plain_r20.png"],
+        hard_names={"hard_r10.png"},
+        hard_weight=5.0,
+    )
+
+    hard_tensor, hard_angle, hard = dataset[0]
+    plain_tensor, plain_angle, plain = dataset[1]
+
+    assert hard_tensor.shape == (3, IMG_H, IMG_W)
+    assert hard_angle.item() == pytest.approx(10.0)
+    assert plain_angle.item() == pytest.approx(20.0)
+    assert hard.dtype == torch.float32 and hard.item() == pytest.approx(5.0)
+    assert plain.dtype == torch.float32 and plain.item() == pytest.approx(1.0)
+    assert plain_tensor.shape == (3, IMG_H, IMG_W)
+
+
+def test_dataset_weights_are_one_without_hard_names(tmp_path: Path) -> None:
+    """名单为空（或名字不在名单里）时权重恒为 1，与 hard_weight 取值无关。"""
+    write_sample(tmp_path, "plain_r20.png")
+    dataset = AngleDataset(tmp_path, ["plain_r20.png"], hard_names=frozenset(), hard_weight=5.0)
+
+    _, _, weight = dataset[0]
+
+    assert weight.item() == pytest.approx(1.0)
+
+
+def test_dataset_weight_survives_augmentation(tmp_path: Path) -> None:
+    write_sample(tmp_path, "hard_r0.png")
+    dataset = AngleDataset(
+        tmp_path,
+        ["hard_r0.png"],
+        roll_augment=True,
+        noise_augment=True,
+        hard_names={"hard_r0.png"},
+        hard_weight=5.0,
+    )
+
+    tensor, angle, weight = dataset[0]
+
+    assert tensor.shape == (3, IMG_H, IMG_W)
+    assert 0.0 <= angle.item() < 360.0
+    assert weight.item() == pytest.approx(5.0)

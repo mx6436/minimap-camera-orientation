@@ -69,6 +69,22 @@ def test_config_rejects_invalid_max_ref_missing(tmp_path: Path, value: str) -> N
         load_config(write_config(tmp_path, body))
 
 
+def test_config_defaults_hard_weight(tmp_path: Path) -> None:
+    config = load_config(write_config(tmp_path, ""))
+    assert config["hard_weight"] == 5.0
+
+
+def test_config_accepts_hard_weight(tmp_path: Path) -> None:
+    config = load_config(write_config(tmp_path, "hard_weight = 2.5\n"))
+    assert config["hard_weight"] == 2.5
+
+
+@pytest.mark.parametrize("value", ["0", "-1.5", "true", '"5"'])
+def test_config_rejects_invalid_hard_weight(tmp_path: Path, value: str) -> None:
+    with pytest.raises(SystemExit, match="hard_weight"):
+        load_config(write_config(tmp_path, f"hard_weight = {value}\n"))
+
+
 def test_config_rejects_removed_assets_root_key(tmp_path: Path) -> None:
     """资产根不再是训练配置：ref 数据的资产根由 processed 戳携带。"""
     with pytest.raises(SystemExit, match="unknown config keys"):
