@@ -51,11 +51,11 @@ def resolve(
 ) -> RefInputs:
     """样本并集 + 定位产物 -> ref 输入侧值。
 
-    `samples` 是两侧原始目录并集；未入选（定位失败 / held / 低分 / 缺资产 / 坐标不一致）
+    `samples` 是原始目录并集；未入选（定位失败 / held / 低分 / 缺资产 / 坐标不一致）
     的样本进 `skipped`，其余按名单排序进产物。资产根经校验后随值返回。
     """
     if not samples:
-        raise SystemExit("no raw png samples in data/train_raw and data/val_raw")
+        raise SystemExit("no raw png samples in the raw dirs")
     assets = workspace.require_assets(assets_root)
     accepted, skipped = _accepted_records(locate_path)
     accepted = {name: record for name, record in accepted.items() if name in samples}

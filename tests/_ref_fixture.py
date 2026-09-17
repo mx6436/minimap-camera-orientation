@@ -55,7 +55,7 @@ class RefFixture:
 
     @property
     def samples(self) -> dict[str, Path]:
-        return dataset.raw_samples(self.train_raw, self.val_raw)
+        return dataset.raw_samples((self.train_raw,), self.val_raw)
 
     def resolve(self) -> ref_inputs.RefInputs:
         return ref_inputs.resolve(

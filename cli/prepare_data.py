@@ -1,4 +1,5 @@
-"""数据前处理：从 data/train_raw 与 data/val_raw 生成模型输入样本（polar / ref 两种模式）。
+"""数据前处理：从原始样本目录（`data/train_raw` ∪ `data/hard_raw` ∪ `data/val_raw`）
+生成模型输入样本（polar / ref 两种模式）。
 
 编排面：库侧（`endfield.prepare` 与 `placement.ref_inputs`）的 module 在这里拼成命令。
 本文件只留参数解析、输入侧适配器的选择与报告打印；管线语义在库里（ADR 0006）。
@@ -45,10 +46,21 @@ def _print_ref(
     print(f"{line} -> {layout.processed_dir}")
 
 
-def _print_sides(
-    report: prepare.PrepareReport, train_side: Sequence[str], val_side: Sequence[str]
-) -> None:
-    for label, side in (("train_raw", train_side), ("val_raw", val_side)):
+def _raw_sides() -> dict[str, list[str]]:
+    """原始目录名 -> 该目录名单：划分按训练/验证侧取并，报告按目录分行。"""
+    return {
+        directory.name: png_names(directory)
+        for directory in (*dataset.TRAIN_RAW_DIRS, dataset.VAL_RAW_DIR)
+    }
+
+
+def _train_side(sides: Mapping[str, Sequence[str]]) -> list[str]:
+    """训练侧 = 训练目录并集：样本落在哪个训练目录不改变并集。"""
+    return [name for directory in dataset.TRAIN_RAW_DIRS for name in sides[directory.name]]
+
+
+def _print_sides(report: prepare.PrepareReport, sides: Mapping[str, Sequence[str]]) -> None:
+    for label, side in sides.items():
         usable, reasons = report.side_summary(side)
         print(
             f"{label}: samples={len(side)} usable={usable} "
@@ -63,15 +75,14 @@ def _print_links(report: prepare.PrepareReport, layout: dataset.DatasetLayout) -
 
 def _run_polar(args: argparse.Namespace) -> None:
     layout = dataset.POLAR_LAYOUT
-    train_side = png_names(dataset.TRAIN_RAW_DIR)
-    val_side = png_names(dataset.VAL_RAW_DIR)
+    sides = _raw_sides()
     report = prepare.prepare(
         InputMode.POLAR,
-        prepare.polar_inputs(dataset.raw_samples(dataset.TRAIN_RAW_DIR, dataset.VAL_RAW_DIR)),
+        prepare.polar_inputs(dataset.raw_samples(dataset.TRAIN_RAW_DIRS, dataset.VAL_RAW_DIR)),
         prepare.polar_renderer(),
         layout=layout,
-        train_side=train_side,
-        val_side=val_side,
+        train_side=_train_side(sides),
+        val_side=sides[dataset.VAL_RAW_DIR.name],
         force=args.force,
         workers=args.workers,
     )
@@ -81,10 +92,9 @@ def _run_polar(args: argparse.Namespace) -> None:
 
 def _run_ref(args: argparse.Namespace) -> None:
     layout = dataset.REF_LAYOUT
-    train_side = png_names(dataset.TRAIN_RAW_DIR)
-    val_side = png_names(dataset.VAL_RAW_DIR)
+    sides = _raw_sides()
     ref = ref_inputs.resolve(
-        dataset.raw_samples(dataset.TRAIN_RAW_DIR, dataset.VAL_RAW_DIR),
+        dataset.raw_samples(dataset.TRAIN_RAW_DIRS, dataset.VAL_RAW_DIR),
         locate_path=dataset.LOCATE_PATH,
         assets_root=workspace.assets_root(args.maplocator_root),
     )
@@ -93,13 +103,13 @@ def _run_ref(args: argparse.Namespace) -> None:
         ref.inputs,
         ref.renderer(ReferenceSampler(ref.assets_root)),
         layout=layout,
-        train_side=train_side,
-        val_side=val_side,
+        train_side=_train_side(sides),
+        val_side=sides[dataset.VAL_RAW_DIR.name],
         force=args.force,
         workers=args.workers,
     )
     _print_ref(report, layout, ref)
-    _print_sides(report, train_side, val_side)
+    _print_sides(report, sides)
     _print_links(report, layout)
 
 

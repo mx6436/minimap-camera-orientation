@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from cli import locate_dataset
+from endfield import dataset
 
 FAKE_CLI = (
     "import json, sys\n"
@@ -84,6 +85,12 @@ def test_main_locates_union_of_both_raw_dirs(
     summary = json.loads((out.parent / "summary.json").read_text(encoding="utf-8"))
     assert summary["total"] == 2
     assert summary["accepted"] == 2
+
+
+def test_default_raw_dirs_cover_every_maintained_raw_directory() -> None:
+    """定位输入 = 全部人工维护目录：漏掉 hard_raw 会让困难样本静默进 skipped。"""
+    assert locate_dataset.RAW_DIRS == (*dataset.TRAIN_RAW_DIRS, dataset.VAL_RAW_DIR)
+    assert dataset.HARD_RAW_DIR in locate_dataset.RAW_DIRS
 
 
 def test_main_rejects_name_present_in_both_raw_dirs(

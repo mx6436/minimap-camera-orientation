@@ -23,6 +23,7 @@ from placement.sample import ReferenceSampler
 from tests._ref_fixture import RefFixture, locate_record, ref_fixture
 
 TRAIN_RAWS = ("a_r0.png", "b_r90.png")
+HARD_RAWS = ("h_r45.png", "h2_r300.png")
 VAL_RAWS = ("c_r180.png",)
 FRAME_VALUE = 7
 SENTINEL = 123
@@ -51,6 +52,7 @@ def digests(directory: Path) -> dict[str, str]:
 @dataclass
 class PolarCase:
     train_raw: Path
+    hard_raw: Path
     val_raw: Path
     layout: DatasetLayout
 
@@ -61,10 +63,12 @@ class PolarCase:
     def prepare(self, *, force: bool = False, workers: int = prepare.IO_WORKERS):
         return prepare.prepare(
             InputMode.POLAR,
-            prepare.polar_inputs(dataset.raw_samples(self.train_raw, self.val_raw)),
+            prepare.polar_inputs(
+                dataset.raw_samples((self.train_raw, self.hard_raw), self.val_raw)
+            ),
             prepare.polar_renderer(),
             layout=self.layout,
-            train_side=png_names(self.train_raw),
+            train_side=png_names(self.train_raw) + png_names(self.hard_raw),
             val_side=png_names(self.val_raw),
             force=force,
             workers=workers,
@@ -81,11 +85,13 @@ def layout(tmp_path: Path, name: str, *, ref: bool = False) -> DatasetLayout:
     )
 
 
-def polar_case(tmp_path: Path, name: str = "") -> PolarCase:
+def polar_case(tmp_path: Path, name: str = "", hard: tuple[str, ...] = ()) -> PolarCase:
     train_raw, val_raw = tmp_path / "train_raw", tmp_path / "val_raw"
+    hard_raw = tmp_path / "hard_raw"
     write_raw(train_raw, TRAIN_RAWS)
+    write_raw(hard_raw, hard)
     write_raw(val_raw, VAL_RAWS)
-    return PolarCase(train_raw, val_raw, layout(tmp_path, name))
+    return PolarCase(train_raw, hard_raw, val_raw, layout(tmp_path, name))
 
 
 def prepare_ref(
@@ -115,16 +121,26 @@ def prepare_ref(
 # --------------------------------------------------------------------------- #
 
 
-def test_raw_samples_merges_both_directories(tmp_path: Path) -> None:
-    train_raw, val_raw = tmp_path / "train_raw", tmp_path / "val_raw"
+def test_raw_samples_merges_all_raw_directories(tmp_path: Path) -> None:
+    """训练侧目录并集 + 验证目录：困难样本随 train_raw 一起进并集。"""
+    train_raw, hard_raw, val_raw = (
+        tmp_path / "train_raw",
+        tmp_path / "hard_raw",
+        tmp_path / "val_raw",
+    )
     write_raw(train_raw, TRAIN_RAWS)
+    write_raw(hard_raw, HARD_RAWS)
     write_raw(val_raw, VAL_RAWS)
 
-    samples = dataset.raw_samples(train_raw, val_raw)
+    samples = dataset.raw_samples((train_raw, hard_raw), val_raw)
 
     assert samples == {
         name: directory / name
-        for directory, names in ((train_raw, TRAIN_RAWS), (val_raw, VAL_RAWS))
+        for directory, names in (
+            (train_raw, TRAIN_RAWS),
+            (hard_raw, HARD_RAWS),
+            (val_raw, VAL_RAWS),
+        )
         for name in names
     }
 
@@ -135,7 +151,17 @@ def test_raw_samples_rejects_name_present_in_both_directories(tmp_path: Path) ->
     write_raw(val_raw, ("a_r0.png",))
 
     with pytest.raises(SystemExit, match="both"):
-        dataset.raw_samples(train_raw, val_raw)
+        dataset.raw_samples((train_raw,), val_raw)
+
+
+def test_raw_samples_rejects_name_in_both_train_directories(tmp_path: Path) -> None:
+    """样本在两个训练目录同样硬报错：碰撞即说明没搬干净。"""
+    train_raw, hard_raw = tmp_path / "train_raw", tmp_path / "hard_raw"
+    write_raw(train_raw, ("a_r0.png",))
+    write_raw(hard_raw, ("a_r0.png",))
+
+    with pytest.raises(SystemExit, match="both"):
+        dataset.raw_samples((train_raw, hard_raw), tmp_path / "val_raw")
 
 
 def test_directory_split_returns_each_side_sorted() -> None:
@@ -277,6 +303,19 @@ def test_prepare_polar_links_each_directory_to_its_side(tmp_path: Path) -> None:
     assert list(report.val) == sorted(VAL_RAWS)
 
 
+def test_prepare_polar_puts_hard_samples_in_train_view_only(tmp_path: Path) -> None:
+    """hard_raw 是训练侧：进 train 视图与训练划分，不进 val。"""
+    case = polar_case(tmp_path, "", hard=HARD_RAWS)
+
+    report = case.prepare()
+
+    assert png_names(case.processed) == sorted([*TRAIN_RAWS, *HARD_RAWS, *VAL_RAWS])
+    assert png_names(case.layout.train_dir) == sorted([*TRAIN_RAWS, *HARD_RAWS])
+    assert png_names(case.layout.val_dir) == sorted(VAL_RAWS)
+    assert list(report.train) == sorted([*TRAIN_RAWS, *HARD_RAWS])
+    assert list(report.val) == sorted(VAL_RAWS)
+
+
 def test_prepare_polar_keeps_cache_when_sample_moves_between_directories(tmp_path: Path) -> None:
     """样本换侧只换视图，不重算 processed。"""
     case = polar_case(tmp_path)
@@ -292,11 +331,39 @@ def test_prepare_polar_keeps_cache_when_sample_moves_between_directories(tmp_pat
     assert png_names(case.layout.val_dir) == ["b_r90.png", *VAL_RAWS]
 
 
+def test_prepare_polar_keeps_cache_when_sample_moves_to_hard_dir(tmp_path: Path) -> None:
+    """移进 hard_raw 只换训练目录、不换并集：cache hit，产物与训练视图都不变。"""
+    case = polar_case(tmp_path)
+    case.prepare()
+    write_sentinel(case.processed / TRAIN_RAWS[0])
+
+    (case.train_raw / TRAIN_RAWS[0]).rename(case.hard_raw / TRAIN_RAWS[0])
+    report = case.prepare()
+
+    assert report.cache_hit
+    assert np.all(imread_png(case.processed / TRAIN_RAWS[0]) == SENTINEL)
+    assert png_names(case.layout.train_dir) == sorted(TRAIN_RAWS)
+    assert png_names(case.layout.val_dir) == sorted(VAL_RAWS)
+
+
+def test_prepare_polar_regenerates_when_hard_sample_disappears(tmp_path: Path) -> None:
+    """硬样本从 hard_raw 消失 = 并集变小：cache miss 且产物按新并集重建。"""
+    case = polar_case(tmp_path, "", hard=HARD_RAWS)
+    case.prepare()
+
+    (case.hard_raw / HARD_RAWS[0]).unlink()
+    report = case.prepare()
+
+    assert not report.cache_hit
+    assert png_names(case.processed) == sorted([*TRAIN_RAWS, HARD_RAWS[1], *VAL_RAWS])
+    assert png_names(case.layout.train_dir) == sorted([*TRAIN_RAWS, HARD_RAWS[1]])
+
+
 def test_prepare_polar_rejects_empty_side(tmp_path: Path) -> None:
     train_raw, val_raw = tmp_path / "train_raw", tmp_path / "val_raw"
     write_raw(train_raw, TRAIN_RAWS)
     val_raw.mkdir()
-    case = PolarCase(train_raw, val_raw, layout(tmp_path, ""))
+    case = PolarCase(train_raw, tmp_path / "hard_raw", val_raw, layout(tmp_path, ""))
 
     with pytest.raises(SystemExit, match="val split is empty"):
         case.prepare()
@@ -305,22 +372,27 @@ def test_prepare_polar_rejects_empty_side(tmp_path: Path) -> None:
 def test_prepare_data_main_wires_the_default_dataset(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`prepare-data` 默认走 polar：默认数据集重定向后与库侧同一结果。"""
+    """`prepare-data` 默认走 polar：默认数据集重定向后与库侧同一结果（含 hard_raw）。"""
     from cli import prepare_data
 
-    train_raw, val_raw = tmp_path / "train_raw", tmp_path / "val_raw"
+    train_raw, hard_raw, val_raw = (
+        tmp_path / "train_raw",
+        tmp_path / "hard_raw",
+        tmp_path / "val_raw",
+    )
     write_raw(train_raw, TRAIN_RAWS)
+    write_raw(hard_raw, HARD_RAWS)
     write_raw(val_raw, VAL_RAWS)
     polar = layout(tmp_path, "")
-    monkeypatch.setattr(dataset, "TRAIN_RAW_DIR", train_raw)
+    monkeypatch.setattr(dataset, "TRAIN_RAW_DIRS", (train_raw, hard_raw))
     monkeypatch.setattr(dataset, "VAL_RAW_DIR", val_raw)
     monkeypatch.setattr(dataset, "POLAR_LAYOUT", polar)
     monkeypatch.setattr(sys, "argv", ["prepare-data", "--workers", "1"])
 
     prepare_data.main()
 
-    assert png_names(polar.processed_dir) == sorted([*TRAIN_RAWS, *VAL_RAWS])
-    assert png_names(polar.train_dir) == sorted(TRAIN_RAWS)
+    assert png_names(polar.processed_dir) == sorted([*TRAIN_RAWS, *HARD_RAWS, *VAL_RAWS])
+    assert png_names(polar.train_dir) == sorted([*TRAIN_RAWS, *HARD_RAWS])
     assert png_names(polar.val_dir) == sorted(VAL_RAWS)
 
 

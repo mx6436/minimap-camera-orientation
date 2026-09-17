@@ -1,5 +1,5 @@
-"""对 data/train_raw 与 data/val_raw 的并集全量跑 MapLocator 批量定位，产出
-data/locator/locate.jsonl。
+"""对原始样本目录（`data/train_raw` ∪ `data/hard_raw` ∪ `data/val_raw`）的全量样本跑
+MapLocator 批量定位，产出 data/locator/locate.jsonl。
 
 用法:
     uv run locate-dataset [--jobs 4] [--limit N] [--no-retry-failed]
@@ -23,7 +23,12 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from endfield.data_utils import union_png_samples
-from endfield.dataset import LOCATE_PATH, LOCATE_SUMMARY_PATH, TRAIN_RAW_DIR, VAL_RAW_DIR
+from endfield.dataset import (
+    LOCATE_PATH,
+    LOCATE_SUMMARY_PATH,
+    TRAIN_RAW_DIRS,
+    VAL_RAW_DIR,
+)
 from placement import workspace
 from placement.locator import run_cli
 from placement.placement import accept, summarize
@@ -35,7 +40,9 @@ from placement.records import (
     write_jsonl,
 )
 
-RAW_DIRS = (TRAIN_RAW_DIR, VAL_RAW_DIR)
+# 定位覆盖全部原始样本：训练侧目录并集 + 验证目录；漏掉训练目录则那里的样本在 ref 侧
+# 无定位记录，静默进 skipped
+RAW_DIRS = (*TRAIN_RAW_DIRS, VAL_RAW_DIR)
 OUT_PATH = LOCATE_PATH
 SUMMARY_PATH = LOCATE_SUMMARY_PATH
 

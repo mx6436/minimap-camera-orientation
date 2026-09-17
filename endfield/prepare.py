@@ -85,10 +85,10 @@ class _Generation:
 
 
 def polar_inputs(samples: Mapping[str, Path]) -> PrepareInputs:
-    """polar 输入侧适配器：两侧原始目录并集 -> 输入侧值（指纹即样本名并集）。"""
+    """polar 输入侧适配器：原始目录并集 -> 输入侧值（指纹即样本名并集）。"""
     names = sorted(samples)
     if not names:
-        raise SystemExit("no raw png samples in data/train_raw and data/val_raw")
+        raise SystemExit("no raw png samples in the raw dirs")
     return PrepareInputs(sources=[(name, samples[name]) for name in names], fingerprint=names)
 
 
@@ -114,8 +114,8 @@ def prepare(
 ) -> PrepareReport:
     """生成条带产物、切出训练/验证视图，返回本批事实。
 
-    `train_side` / `val_side` 是两侧原始名单：与产物求交后的结果即划分视图，被剔除的
-    样本从各自一侧消失。产物与缓存戳命中时不重算（`force` 除外）。
+    `train_side` / `val_side` 是两侧原始名单（训练侧可为多个训练目录的并集）：与产物
+    求交后的结果即划分视图，被剔除的样本从各自一侧消失。产物与缓存戳命中时不重算（`force` 除外）。
     """
     raw_train, raw_val = directory_split(train_side, val_side)
     generation = _generate(mode, inputs, render, layout, force=force, workers=workers)
