@@ -6,6 +6,7 @@ envelope 与核心字段由 `endfield/run_record.py` 持有并落盘；本模块
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,7 @@ import torch
 
 from endfield.preprocess import IMG_H, IMG_W
 from endfield.run_record import InputMode, RunRecord, input_channels
+from endfield.train.data import names_fingerprint
 
 
 def augmentation(config: dict[str, Any]) -> dict[str, Any]:
@@ -69,14 +71,22 @@ def build_record(
     val_sha256: str,
     trainable_parameters: int,
     assets_root: str | None = None,
+    hard_names: Sequence[str] = (),
 ) -> RunRecord:
-    """配置、环境与数据指纹 -> 运行档案；ref 必须给出数据集所用的资产根。"""
+    """配置、环境与数据指纹 -> 运行档案；ref 必须给出数据集所用的资产根。
+
+    `hard_names` 是**落在训练划分里**的困难样本（调用方已与训练名单求交）：它们是
+    `hard_weight` 实际作用到的样本，因此档案只记这一集合的数量与摘要。
+    """
     mode = InputMode.parse(config["input_mode"])
     metadata: dict[str, Any] = {
         "loss": (
             f"KL(q||p) between circular categorical distributions on Z/360Z, "
             f"q = wrapped gaussian pmf with sigma={config['target_sigma']:g} deg "
-            "(= cross entropy minus constant target entropy H(q))"
+            "(= cross entropy minus constant target entropy H(q)); "
+            "train loss is sample-weighted by data/hard_raw membership "
+            "(w = hard_weight for those samples, 1 otherwise; sum(w*KL)/sum(w)); "
+            "val loss and metrics are unweighted"
         ),
         "input_shape": [input_channels(mode), IMG_H, IMG_W],
         "input_scaling": "BGR uint8 / 255",
@@ -107,6 +117,9 @@ def build_record(
         "val_count": val_count,
         "train_files_sha256": train_sha256,
         "val_files_sha256": val_sha256,
+        "hard_weight": float(config["hard_weight"]),
+        "hard_count": len(hard_names),
+        "hard_names_sha256": names_fingerprint(list(hard_names)),
     }
     if mode is InputMode.REF:
         if assets_root is None:

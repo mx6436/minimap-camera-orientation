@@ -15,6 +15,7 @@ from endfield.train.data import (
     TRAIN_REF_DIR,
     VAL_DIR,
     VAL_REF_DIR,
+    names_fingerprint,
     split_dirs,
 )
 from endfield.train.record import build_record
@@ -103,7 +104,12 @@ def test_split_dirs_follows_input_mode() -> None:
         split_dirs("bogus")
 
 
-def build(config: dict, tmp_path: Path, assets_root: str | None = None) -> dict:
+def build(
+    config: dict,
+    tmp_path: Path,
+    assets_root: str | None = None,
+    hard_names: tuple[str, ...] = (),
+) -> dict:
     """跑通写侧 adapter 并落盘，返回 record.json 的 payload。"""
     record = build_record(
         config,
@@ -115,6 +121,7 @@ def build(config: dict, tmp_path: Path, assets_root: str | None = None) -> dict:
         val_sha256="b",
         trainable_parameters=131169,
         assets_root=assets_root,
+        hard_names=hard_names,
     )
     run_dir = tmp_path / "run"
     run_record.write(run_dir, record)
@@ -164,3 +171,34 @@ def test_record_max_ref_missing_defaults_to_null(tmp_path: Path) -> None:
         assets_root="/tmp/assets",
     )
     assert record["max_ref_missing"] is None
+
+
+def test_record_declares_hard_weight_and_names(tmp_path: Path) -> None:
+    config = load_config(write_config(tmp_path, ""))
+    record = build(config, tmp_path, hard_names=("b_r90.png", "a_r0.png"))
+    assert record["hard_weight"] == 5.0
+    assert record["hard_count"] == 2
+    assert record["hard_names_sha256"] == names_fingerprint(["a_r0.png", "b_r90.png"])
+    assert "sample-weighted" in record["loss"] and "unweighted" in record["loss"]
+
+
+def test_record_hard_count_and_digest_follow_the_hard_set(tmp_path: Path) -> None:
+    config = load_config(write_config(tmp_path, ""))
+    baseline = build(config, tmp_path)
+    one = build(config, tmp_path, hard_names=("a_r0.png",))
+    other = build(config, tmp_path, hard_names=("b_r90.png",))
+
+    assert baseline["hard_count"] == 0
+    assert one["hard_count"] == 1
+    digests = {
+        baseline["hard_names_sha256"],
+        one["hard_names_sha256"],
+        other["hard_names_sha256"],
+    }
+    assert len(digests) == 3
+
+
+def test_record_hard_weight_follows_config(tmp_path: Path) -> None:
+    config = load_config(write_config(tmp_path, "hard_weight = 2.5\n"))
+    record = build(config, tmp_path, hard_names=("a_r0.png",))
+    assert record["hard_weight"] == 2.5

@@ -12,7 +12,7 @@ import torch
 from endfield import preprocess_cache, run_dir, run_record
 from endfield.atomic_io import atomic_json_dump, load_json
 from endfield.data_utils import png_names, seed_everything
-from endfield.dataset import PROCESSED_REF_DIR
+from endfield.dataset import HARD_RAW_DIR, PROCESSED_REF_DIR
 from endfield.model import (
     AzimuthNet,
     choose_device,
@@ -113,6 +113,17 @@ def main() -> None:
                 f"max_ref_missing={config['max_ref_missing']:g} filtered out every "
                 "training sample; raise the threshold"
             )
+    # 困难样本：名单取自 data/hard_raw，与训练划分求交后才进损失（定位门与 max_ref_missing
+    # 对它的剔除同样有效）；权重只落在训练 loader 上，val 不带
+    hard_candidates = png_names(HARD_RAW_DIR)
+    hard_names = sorted(set(hard_candidates) & set(train_names))
+    print(f"hard: {len(hard_names)}/{len(hard_candidates)} samples in the training split")
+    if hard_candidates and not hard_names:
+        print(
+            f"warning: none of the {len(hard_candidates)} sample(s) in {HARD_RAW_DIR} is in "
+            "the training split (dropped by the locate gate or max_ref_missing); "
+            f"hard_weight={config['hard_weight']:g} has no effect"
+        )
 
     output_dir = args.run_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -141,6 +152,7 @@ def main() -> None:
         names_fingerprint(val_names),
         trainable_parameters=parameter_count,
         assets_root=assets_root,
+        hard_names=hard_names,
     )
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=config["lr"], weight_decay=config["weight_decay"]
@@ -161,6 +173,8 @@ def main() -> None:
             noise_augment=config["noise_augment"],
             roll_augment=config["roll_augment"],
             input_mode=config["input_mode"],
+            hard_names=set(hard_names),
+            hard_weight=config["hard_weight"],
         ),
         config["batch_size"],
         True,
