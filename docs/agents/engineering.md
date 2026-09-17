@@ -5,14 +5,14 @@
 ## 管线
 
 ```
-data/{train_raw,val_raw} ──locate-dataset(ref)──> data/locator
+data/{train_raw,hard_raw,val_raw} ──locate-dataset(ref)──> data/locator
         │
         └──prepare-data[polar|ref]──> data/processed{,_ref} ──train──> runs/<name>
                                                                        │
                                                       export-artifact ─┴──> bundle ──> MaaEnd
 ```
 
-- `data/train_raw` / `data/val_raw` 是仅有的两个人工维护目录，脚本只读；划分由样本所在目录表达，跨侧同名硬报错。标签 `_r<角度>.png`，允许一位小数。
+- `data/train_raw` / `data/hard_raw` / `data/val_raw` 是仅有的三个人工维护目录，脚本只读；划分由「训练侧 / 验证侧」表达（`train_raw` 与 `hard_raw` 同为训练侧，样本落在哪个训练目录不改变并集），跨目录同名硬报错。标签 `_r<角度>.png`，允许一位小数。
 - `prepare-data` 一条命令完成 raw → 模型输入 → 划分；`data/train` / `data/val`（及 `_ref`）是 `processed*` 的符号链接视图，每次运行重建并校验悬空链接。
 - `processed*` 挂 `.preprocess.json` 缓存戳（定义哈希 + 图版本 + 输入指纹）：定义变更 / 输入增删 / `--force` 触发重生成。polar 的指纹是两侧样本名并集；ref 另含消费的 `zone`/`x`/`y`/`scale`，样本在目录间移动不改变并集、不触发重算。
 - 数据准备的实现（生成 + 有效划分 + 划分视图链接）收在 `endfield/prepare.py`，输入侧的模式差异由调用方注入「输入侧值 + 渲染回调」两个适配器：polar 的在 `endfield/prepare.py`，ref 的输入解析与渲染在 `placement/ref_inputs.py`；`cli/prepare_data.py` 只做接线与打印（ADR 0006）。产物布局（`DatasetLayout`）与两侧名单求交的纯函数在 `endfield/dataset.py`，训练读取共用同一份目录口径。
@@ -42,6 +42,7 @@ data/{train_raw,val_raw} ──locate-dataset(ref)──> data/locator
 ## 训练
 
 - 入口 `uv run train --run-dir <dir>`；全部参数在 `train.toml`，每个键都有代码内默认值，未知键硬报错。
+- `hard_weight`（`train.toml`，代码内默认 5.0）是困难样本的全局权重：`data/hard_raw` 的样本在训练损失里按 `Σw·KL / Σw` 计（`w = hard_weight`，其余 1），语义等价于把该样本复制成 N 份。名单与训练划分求交后才生效（定位门与 `max_ref_missing` 的剔除同样适用，全部落空时打印显式警示）；权重只进训练损失，val 损失与全部 val 指标无权。档案记 `hard_weight` / `hard_count` / `hard_names_sha256`（ADR 0009）。
 
 ## 交付与 conformance
 

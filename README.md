@@ -27,7 +27,8 @@ uv run pytest
 单张截图是训练/验证样本，文件名以 `_r<角度>.png` 结尾标注摄像机角度，支持一位小数（如 `_r210.9.png`）。截图按训练侧与验证侧分开准备：
 
 - `data/train_raw`：训练侧原始截图。由人维护，脚本只读。
-- `data/val_raw`：验证侧，语义同上。划分由样本所在目录决定；跨侧同名样本会硬报错。
+- `data/hard_raw`：训练侧的**困难样本**，人手工挑选后只放在这里（不再留在 `train_raw`）。训练损失里按 `train.toml` 的 `hard_weight`（默认 5）计权，等价于把它们复制成 N 份；只作用于训练损失，val 与全部 val 指标无权。
+- `data/val_raw`：验证侧，语义同上。划分由样本所属的侧决定（`train_raw` 与 `hard_raw` 同为训练侧）；跨目录同名样本会硬报错。
 
 ### polar
 
@@ -53,6 +54,7 @@ uv run train --run-dir runs/<name>      # train.toml 里 input_mode = "ref"
 
 - `data/processed`（polar）/ `data/processed_ref`（ref）：前处理产物，挂缓存戳，定义或输入变化时重生成。
 - `data/train`、`data/val`（polar）/ `data/train_ref`、`data/val_ref`（ref）：划分视图，符号链接到 processed。
+- `data/hard_raw/`：训练侧的困难样本目录，样本只放这里；加权语义见上。
 - `data/locator/`：ref 的定位产物（`locate-dataset` 增量维护）。
 - `runs/<name>/`：一次训练的产物目录（checkpoint、`record.json`、指标与曲线），由 `--run-dir` 指定，`live` 与导出从这里读。
 

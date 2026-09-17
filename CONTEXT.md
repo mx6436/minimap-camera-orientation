@@ -39,8 +39,12 @@ _Avoid_: 展开图、矩形条带、双路图
 _Avoid_: 前处理工具、预处理脚本
 
 **数据准备 (Data Preparation)**:
-从原始样本到训练可用数据集的那一段：把样本经前处理落成条带产物、建立训练/验证划分视图，并为产物挂上定义变更即失效的缓存戳。输入侧因输入模式而异（`polar` 只需原始样本，`ref` 还需该样本的底图定位），输出侧对两种模式一致。
+从原始样本到训练可用数据集的那一段：把样本经前处理落成条带产物、建立训练/验证划分视图，并为产物挂上定义变更即失效的缓存戳。输入侧因输入模式而异（`polar` 只需原始样本，`ref` 还需该样本的底图定位），输出侧对两种模式一致。划分由「训练侧 / 验证侧」表达：`data/train_raw` 与 `data/hard_raw` 同为训练侧（后者是困难样本），`data/val_raw` 是验证侧；样本落在哪个训练目录不改变并集。
 _Avoid_: 数据管线（那是 locate-dataset → prepare-data → train → export 的全流程）、预处理、数据生成
+
+**困难样本 (Hard Sample)**:
+由人挑选、单独存放在 `data/hard_raw/` 的训练样本。身份即目录成员身份——样本只存在于该目录，不再同时留在 `data/train_raw`；训练损失里按 `hard_weight`（`train.toml`，代码内默认 5.0）计权，`w = hard_weight` 否则 `1`，语义等价于把该样本复制成 `hard_weight` 份。只作用于训练损失，val 损失与全部 val 指标无权；要先过数据准备与（ref 模式的）定位入选门，被剔除的困难样本进不了训练划分，权重也就落不到它头上（ADR 0009）。
+_Avoid_: 难例、hard case、加权样本、重点样本
 
 **本地工作台 (Local Workspace)**:
 gitignored 的 `local/maplocator/`：MapLocator 定位 CLI 与 MaaEnd 资产的机器本地落点，也是本仓对 MaaEnd 的唯一依赖面。布局、CLI 契约与重建口径见 `docs/maplocator-workspace.md`。
