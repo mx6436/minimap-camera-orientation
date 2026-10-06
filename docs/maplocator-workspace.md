@@ -29,9 +29,11 @@ local/maplocator/
 
 ## 来源与约束
 
-**CLI**：fork `mx6436/MaaEnd` 的分支 `local/maplocator-cli-feat`，提交 `b5aa2cd69`（2026-09-12）。
-该提交包含：静态截图批量定位 CLI（stdin 路径、stdout JSONL）、`--max-attempts`、`--stream`
-流式追踪、定位记录 `scale` 字段、参考配对模型 `cao_ref` 的接入。此分支不在 MaaEnd 上游。
+**CLI**：fork `mx6436/MaaEnd` 的本地分支 `local/maplocator-cli-feat`，提交 `a66bb49f9`（2026-10-06，尚未推送 fork）。
+以最新主线 `origin/v2` 的 `f4f99c4b0` 为基点，将旧 pin `b5aa2cd69` 的独立 CLI 提交
+变基到主线，再适配已删除的 `MapPosition::isHeld`。旧分支的摄像机模型接入提交不再重放，
+使用主线现有实现。CLI 包含静态截图批量定位（stdin 路径、stdout JSONL）、
+`--max-attempts`、`--stream` 流式追踪与定位记录 `scale` 字段。此 CLI 不在 MaaEnd 上游。
 
 **资产**：`resource/image/MapLocator`、`resource/model/map` 都是 MaaEnd 上游工作副本对应
 路径的镜像，保持原样——不修改、不增删、不手工修补。本仓与 fork 都不维护任何 MaaEnd 数据。
@@ -44,8 +46,9 @@ local/maplocator/
 ```
 cli_repo=git@github.com:mx6436/MaaEnd.git
 cli_branch=local/maplocator-cli-feat
-cli_commit=b5aa2cd69
-upstream_commit=<镜像资产时 MaaEnd 上游工作副本的 commit>
+cli_commit=a66bb49f9b13ea30cb051fa2a634638bc41813ef
+upstream_commit=f4f99c4b0f4bb294e21f4a270c29553f3cfcf5bf
+model_commit=d0a08dd86370d3b7a941481800d173fbed92fce5
 mirrored_at=<YYYY-MM-DD>
 ```
 
@@ -56,9 +59,13 @@ MAAEND=<MaaEnd 工作副本>
 DEPS="$MAAEND/agent/cpp-algo/MaaUtils/MaaDeps"
 
 # 1) CLI：fork 的 pin 提交 -> bin/map-locate + lib/
-git -C "$MAAEND" fetch mx6436 origin
-git -C "$MAAEND" checkout b5aa2cd69
-# 按 MaaEnd 上游文档构建 cpp-algo（docs/zh_cn/developers/getting-started.md，uv run build-and-install --cpp-algo）
+git -C "$MAAEND" fetch mx6436
+git -C "$MAAEND" fetch origin
+# 当前 pin 尚未推送，需使用已有的本地提交。
+git -C "$MAAEND" checkout a66bb49f9
+# 首次配置按 MaaEnd 上游文档（docs/zh_cn/developers/getting-started.md）。
+# 已配置的本机构建树：加载 MaaEnd shell.nix，仅构建 CLI 目标。
+nix-shell "$MAAEND/shell.nix" --run "cmake --build $MAAEND/agent/cpp-algo/build --config RelWithDebInfo --target map-locate --parallel 4"
 install -D "$MAAEND/agent/cpp-algo/build/bin/RelWithDebInfo/map-locate" local/maplocator/bin/map-locate
 install -D "$MAAEND/agent/cpp-algo/build/bin/RelWithDebInfo/libMaaUtils.so" local/maplocator/lib/libMaaUtils.so
 cp -L "$DEPS/vcpkg/installed/maa-x64-linux/lib/libopencv_world4.so.412" local/maplocator/lib/
@@ -66,9 +73,13 @@ cp -L "$DEPS/vcpkg/installed/maa-x64-linux/lib/libonnxruntime.so.1" local/maploc
 cp -L "$DEPS/x-tools/x86_64-linux-gnu/x86_64-linux-gnu/sysroot/usr/lib/libc++.so.1" local/maplocator/lib/
 cp -L "$DEPS/x-tools/x86_64-linux-gnu/x86_64-linux-gnu/sysroot/usr/lib/libc++abi.so.1" local/maplocator/lib/
 cp -L "$DEPS/x-tools/x86_64-linux-gnu/x86_64-linux-gnu/sysroot/usr/lib/libunwind.so.1" local/maplocator/lib/
+cp -L "$DEPS/x-tools/x86_64-linux-gnu/x86_64-linux-gnu/sysroot/lib/libatomic.so.1" local/maplocator/lib/
+# libc++ 的间接依赖不继承可执行文件的 RUNPATH。
+patchelf --set-rpath '$ORIGIN' local/maplocator/lib/libc++.so.1
 
 # 2) 资产：SOURCE 记录的上游提交，原样镜像
 git -C "$MAAEND" checkout <upstream_commit>
+git -C "$MAAEND" submodule update --init assets/resource/model
 mkdir -p local/maplocator/resource/image/MapLocator local/maplocator/resource/model/map
 rsync -a "$MAAEND/assets/resource/image/MapLocator/" local/maplocator/resource/image/MapLocator/
 rsync -a "$MAAEND/assets/resource/model/map/" local/maplocator/resource/model/map/
@@ -77,7 +88,8 @@ rsync -a "$MAAEND/assets/resource/model/map/" local/maplocator/resource/model/ma
 `lib/` 是构建产物（MaaDeps 的 vcpkg 库与 x-tools sysroot 库，路径按当前工作副本的
 `maa-x64-linux` / `x86_64-linux-gnu` 三元组；`cp -L` 解引用符号链接）；`RelWithDebInfo`
 是当前工作台使用的构建配置，其它配置的产物在 `agent/cpp-algo/build/bin/<Config>/`。库齐
-后二进制不依赖 MaaEnd 构建树的绝对路径。
+后二进制不依赖 MaaEnd 构建树的绝对路径。`libatomic.so.1` 是 libc++ 的间接依赖，
+打包的 libc++ 需补 `$ORIGIN` RUNPATH；仅修改本地库副本，不改 MaaDeps 原件。
 
 ## CLI 契约
 
@@ -107,7 +119,7 @@ map-locate --resource-dir <dir> --stream     # 帧路径从 stdin 逐行读，�
 | `rot` | MapLocator 输出的箭头朝向，**不是**摄像机角度 |
 | `scale` | 该 zone 的 `ZoneTemplateScale`（参考底图与观测的像素尺度比；无缩放 zone 为 1.0）。定位侧携带的尺度真源：训练/实机侧的参考裁剪消费此字段，不在消费方镜像 zone -> scale 表；定位失败时无 zone，恒为 1.0（不参与消费） |
 | `locConf` | 匹配分数（原始值，未加工） |
-| `isHeld` | 全局搜索没有过线峰、放行裸峰的标记 |
+| `isHeld` | 兼容字段：主线已删除原始标记，现按 `locConf < LocateOptions.loc_threshold` 标记低分结果（当前默认阈值 0.55），不再表示定位核心的独立状态 |
 | `latencyMs` / `elapsedMs` | 单次 locate 内部耗时 / 单图端到端耗时 |
 | `attempts` | 该图实际 locate 调用次数（批量模式 1..N，流式恒 1） |
 | `accepted` / `accept_reason` | 不是 CLI 字段：`locate-dataset` 解析后写入的入选门标注 |
