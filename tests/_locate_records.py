@@ -12,7 +12,6 @@ OK = {
     "rot": 3.0,
     "scale": 1.0,
     "locConf": 0.9,
-    "isHeld": False,
     "latencyMs": 10,
     "attempts": 1,
     "elapsedMs": 20,

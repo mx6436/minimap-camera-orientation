@@ -51,7 +51,7 @@ gitignored 的 `local/maplocator/`：MapLocator 定位 CLI 与 MaaEnd 资产的�
 _Avoid_: 本地依赖、外部工具目录
 
 **定位记录 (Locate Record)**:
-MapLocator 对单张截图的一条输出（`locate.jsonl` 的一行）：状态、定位到的 zone、底图坐标与尺度、匹配分数、held 标记与耗时。定位失败同样是一条记录，只是其中没有可用的定位。
+MapLocator 对单张截图的一条输出（`locate.jsonl` 的一行）：状态、定位到的 zone、底图坐标与尺度、匹配分数与耗时。历史记录还可能包含 held 标记，表示定位侧放行的未过线裸峰，不等同于匹配分数。定位失败同样是一条记录，只是其中没有可用的定位。
 _Avoid_: 定位结果、locate 行
 
 **底图定位 (Map Placement)**:

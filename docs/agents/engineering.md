@@ -16,7 +16,7 @@ data/{train_raw,hard_raw,val_raw} ──locate-dataset(ref)──> data/locator
 - `prepare-data` 一条命令完成 raw → 模型输入 → 划分；`data/train` / `data/val`（及 `_ref`）是 `processed*` 的符号链接视图，每次运行重建并校验悬空链接。
 - `processed*` 挂 `.preprocess.json` 缓存戳（定义哈希 + 图版本 + 输入指纹）：定义变更 / 输入增删 / `--force` 触发重生成。polar 的指纹是两侧样本名并集；ref 另含消费的 `zone`/`x`/`y`/`scale`，样本在目录间移动不改变并集、不触发重算。
 - 数据准备的实现（生成 + 有效划分 + 划分视图链接）收在 `endfield/prepare.py`，输入侧的模式差异由调用方注入「输入侧值 + 渲染回调」两个适配器：polar 的在 `endfield/prepare.py`，ref 的输入解析与渲染在 `placement/ref_inputs.py`；`cli/prepare_data.py` 只做接线与打印（ADR 0006）。产物布局（`DatasetLayout`）与两侧名单求交的纯函数在 `endfield/dataset.py`，训练读取共用同一份目录口径。
-- ref 额外依赖定位产物 `data/locator/`（`locate-dataset` 增量维护，可断点续跑）与 gitignored 的本地工作台 `local/maplocator/`。入选门：`status==0 && !isHeld && locConf>=0.55`；坐标一致性过滤拒绝的样本计入 skipped。
+- ref 额外依赖定位产物 `data/locator/`（`locate-dataset` 增量维护，可断点续跑）与 gitignored 的本地工作台 `local/maplocator/`。新版 CLI 入选门：`status==0 && locConf>=0.55`；不生成或推导 `isHeld`。历史记录若带 `isHeld=true`，仍按 `held` 排除；汇总仅在输入包含历史字段时保留 `held` 计数，新版低分记录归入 `below_loc_threshold`。坐标一致性过滤拒绝的样本计入 skipped。
 
 ## 前处理定义
 
@@ -55,7 +55,7 @@ data/{train_raw,hard_raw,val_raw} ──locate-dataset(ref)──> data/locator
 
 ## 实机
 
-- `live` 从 run 的 `record.json` 取输入模式：polar 每帧经定义模块展开；ref 常驻 `map-locate --stream` 子进程（定位在独立线程，显示循环不阻塞），由 `ReferenceSampler.strips` 出条带对、`assemble_ref_pair` 拼 7 通道。定位不可用（失败 / held / 低分 / 资产缺失）时 overlay 显示等待态。`--snapshot` 在首个有效定位后存一张 overlay 并退出。
+- `live` 从 run 的 `record.json` 取输入模式：polar 每帧经定义模块展开；ref 常驻 `map-locate --stream` 子进程（定位在独立线程，显示循环不阻塞），由 `ReferenceSampler.strips` 出条带对、`assemble_ref_pair` 拼 7 通道。定位不可用（失败 / 历史 held / 低分 / 资产缺失）时 overlay 显示等待态。`--snapshot` 在首个有效定位后存一张 overlay 并退出。
 - 需要 gamescope 会话；ref 需要本地工作台 CLI 支持 `--stream`。
 
 ## 模块归属

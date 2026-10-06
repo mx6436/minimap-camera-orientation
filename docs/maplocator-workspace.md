@@ -29,9 +29,9 @@ local/maplocator/
 
 ## 来源与约束
 
-**CLI**：fork `mx6436/MaaEnd` 的本地分支 `local/maplocator-cli-feat`，提交 `a66bb49f9`（2026-10-06，尚未推送 fork）。
+**CLI**：fork `mx6436/MaaEnd` 的本地分支 `local/maplocator-cli-feat`，提交 `26b52c97f`（2026-10-06，尚未推送 fork）。
 以最新主线 `origin/v2` 的 `f4f99c4b0` 为基点，将旧 pin `b5aa2cd69` 的独立 CLI 提交
-变基到主线，再适配已删除的 `MapPosition::isHeld`。旧分支的摄像机模型接入提交不再重放，
+变基到主线，删除主线已移除的 `MapPosition::isHeld` 输出，不从匹配分数补造标记。旧分支的摄像机模型接入提交不再重放，
 使用主线现有实现。CLI 包含静态截图批量定位（stdin 路径、stdout JSONL）、
 `--max-attempts`、`--stream` 流式追踪与定位记录 `scale` 字段。此 CLI 不在 MaaEnd 上游。
 
@@ -46,7 +46,7 @@ local/maplocator/
 ```
 cli_repo=git@github.com:mx6436/MaaEnd.git
 cli_branch=local/maplocator-cli-feat
-cli_commit=a66bb49f9b13ea30cb051fa2a634638bc41813ef
+cli_commit=26b52c97f6bd6d1beafe3291a3b1541f7a992c7c
 upstream_commit=f4f99c4b0f4bb294e21f4a270c29553f3cfcf5bf
 model_commit=d0a08dd86370d3b7a941481800d173fbed92fce5
 mirrored_at=<YYYY-MM-DD>
@@ -62,7 +62,7 @@ DEPS="$MAAEND/agent/cpp-algo/MaaUtils/MaaDeps"
 git -C "$MAAEND" fetch mx6436
 git -C "$MAAEND" fetch origin
 # 当前 pin 尚未推送，需使用已有的本地提交。
-git -C "$MAAEND" checkout a66bb49f9
+git -C "$MAAEND" checkout 26b52c97f
 # 首次配置按 MaaEnd 上游文档（docs/zh_cn/developers/getting-started.md）。
 # 已配置的本机构建树：加载 MaaEnd shell.nix，仅构建 CLI 目标。
 nix-shell "$MAAEND/shell.nix" --run "cmake --build $MAAEND/agent/cpp-algo/build --config RelWithDebInfo --target map-locate --parallel 4"
@@ -119,10 +119,13 @@ map-locate --resource-dir <dir> --stream     # 帧路径从 stdin 逐行读，�
 | `rot` | MapLocator 输出的箭头朝向，**不是**摄像机角度 |
 | `scale` | 该 zone 的 `ZoneTemplateScale`（参考底图与观测的像素尺度比；无缩放 zone 为 1.0）。定位侧携带的尺度真源：训练/实机侧的参考裁剪消费此字段，不在消费方镜像 zone -> scale 表；定位失败时无 zone，恒为 1.0（不参与消费） |
 | `locConf` | 匹配分数（原始值，未加工） |
-| `isHeld` | 兼容字段：主线已删除原始标记，现按 `locConf < LocateOptions.loc_threshold` 标记低分结果（当前默认阈值 0.55），不再表示定位核心的独立状态 |
 | `latencyMs` / `elapsedMs` | 单次 locate 内部耗时 / 单图端到端耗时 |
 | `attempts` | 该图实际 locate 调用次数（批量模式 1..N，流式恒 1） |
 | `accepted` / `accept_reason` | 不是 CLI 字段：`locate-dataset` 解析后写入的入选门标注 |
+
+新版 CLI 不输出 `isHeld`，入选门为 `status == 0 && locConf >= 0.55`。消费端只对历史
+记录中显式携带的 `isHeld=true` 保留 `held` 排除；不从低分推导该标记。新版低分记录
+归入 `below_loc_threshold`，汇总仅在输入包含历史字段时输出 `held` 计数。
 
 早于 `b5aa2cd69` 的 CLI 不输出 `scale`，消费端（`placement/placement.py` 的 `Placement.from_record`）直接报错。
 

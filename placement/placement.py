@@ -1,7 +1,7 @@
 """底图定位：从一条定位记录取出参考裁剪前提，并判定记录的可用性。
 
 记录字段见 docs/maplocator-workspace.md：name/status/message/zone/x/y/rot/scale/
-locConf/isHeld/latencyMs/attempts/elapsedMs。其中 `scale` 是 zone 的
+locConf/latencyMs/attempts/elapsedMs。其中 `scale` 是 zone 的
 `ZoneTemplateScale`（底图与观测的像素尺度比，无缩放 zone 为 1.0），由定位侧携带，
 训练/实机侧据此裁剪参考底图。
 """
@@ -87,10 +87,10 @@ def _require_number(record: Mapping[str, Any], key: str, hint: str = "") -> floa
 
 
 def accept(record: Record) -> tuple[bool, str]:
-    """产物入选门：定位失败、held、locConf 低于 loc_threshold 均不入选。
+    """产物入选门：定位成功且 locConf 达到门限才入选。
 
-    held 是 MapLocator 对「全局搜索没有过线峰、只能放行裸峰」的显式标记；识别层
-    JSON 不带该字段，直连 CLI 才有，因此这道门是精确的（held 分数均 < 0.55）。
+    新版 CLI 不输出 isHeld；仅对带有该字段的历史记录保留 held 排除，
+    不从匹配分数推导或补造历史标记。
     """
     if int(record.get("status", -1)) != STATUS_SUCCESS:
         return False, classify(record)
@@ -160,7 +160,7 @@ def summarize(records: Iterable[Record]) -> dict[str, Any]:
         if accept(record)[0]:
             entry["accepted"] += 1
 
-    return {
+    summary = {
         "total": len(records),
         "ok": len(successes),
         "failed": len(records) - len(successes),
@@ -170,9 +170,11 @@ def summarize(records: Iterable[Record]) -> dict[str, Any]:
         "by_category": dict(sorted(by_category.items())),
         "attempts": dict(sorted(attempts.items())),
         "locconf": locconf,
-        "held": sum(1 for record in successes if record.get("isHeld")),
         "families": dict(sorted(families.items())),
     }
+    if any("isHeld" in record for record in records):
+        summary["held"] = sum(1 for record in successes if record.get("isHeld"))
+    return summary
 
 
 def zone_asset_path(zone_id: str, assets_root: Path) -> Path | None:

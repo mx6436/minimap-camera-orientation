@@ -150,7 +150,8 @@ def test_strips_match_regenerated_training_artifacts(tmp_path: Path) -> None:
     ]
     assert samples, "no accepted real sample with a zone asset"
     scaled = [item for item in samples if item[1].get("zone") == "ValleyIV_Base"]
-    chosen = (samples[:8] + scaled[:2]) if scaled else samples[:10]
+    candidates = (samples[:8] + scaled[:2]) if scaled else samples[:10]
+    chosen = list({item[0]: item for item in candidates}.values())
 
     raw_dir = tmp_path / "raw"
     raw_dir.mkdir()
@@ -184,6 +185,9 @@ def test_strips_match_regenerated_training_artifacts(tmp_path: Path) -> None:
 
     sampler = ReferenceSampler(REAL_ASSETS_ROOT)
     for name, record, path in chosen:
+        if name not in names:
+            assert name in ref.inputs.skipped
+            continue
         assert path is not None
         frame = load_source_frame(path)
         observed_strip, reference_strip = sampler.strips(

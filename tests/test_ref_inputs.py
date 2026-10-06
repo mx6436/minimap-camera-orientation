@@ -37,6 +37,23 @@ def test_resolve_keeps_accepted_samples_and_records_skip_reasons(tmp_path: Path)
     assert len(ref.inputs.fingerprint) == 2
 
 
+def test_resolve_current_low_confidence_record_is_not_held(tmp_path: Path) -> None:
+    fx = ref_fixture(tmp_path)
+    write_jsonl(
+        fx.locate_path,
+        [
+            locate_record(fx.names["ok"]),
+            locate_record(fx.names["ok2"], locConf=0.4),
+        ],
+    )
+
+    ref = fx.resolve()
+
+    assert [name for name, _ in ref.inputs.sources] == [fx.names["ok"]]
+    assert ref.inputs.skipped[fx.names["ok2"]] == "below_loc_threshold"
+    assert "held" not in ref.inputs.skipped.values()
+
+
 def test_input_entries_carry_position_but_not_run_metadata() -> None:
     """指纹条目只取样本名与底图定位四元，定位记录的计时字段不进指纹。"""
     entry = ref_inputs.input_entries([("a.png", Placement(zone="Z_Base", x=1.5, y=2.5, scale=0.5))])
@@ -71,7 +88,6 @@ def test_resolve_rejects_records_without_scale(tmp_path: Path) -> None:
     record = {
         "name": fx.names["ok"],
         "status": 0,
-        "isHeld": False,
         "locConf": 0.9,
         "zone": "Test_Base",
         "x": 100.0,
@@ -125,7 +141,6 @@ def test_resolve_applies_coord_filter(tmp_path: Path) -> None:
     record = {
         "name": "",
         "status": 0,
-        "isHeld": False,
         "locConf": 0.9,
         "zone": "ValleyIV_Base",
         "x": 100.0,

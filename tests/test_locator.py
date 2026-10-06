@@ -47,8 +47,8 @@ FAKE_STREAM_CLI = (
     "    p = Path(path)\n"
     "    assert p.is_file() and p.stat().st_size > 0, path\n"
     "    print(json.dumps({'name': p.name, 'status': 0, 'message': 'Tracking Success',"
-    " 'zone': 'Fake_Base', 'x': 1.0, 'y': 2.0, 'rot': 0.0, 'locConf': 0.9,"
-    " 'isHeld': False, 'latencyMs': 1, 'attempts': 1, 'elapsedMs': 2}), flush=True)\n"
+    " 'zone': 'Fake_Base', 'x': 1.0, 'y': 2.0, 'rot': 0.0, 'scale': 1.0, 'locConf': 0.9,"
+    " 'latencyMs': 1, 'attempts': 1, 'elapsedMs': 2}), flush=True)\n"
 )
 
 
@@ -66,6 +66,8 @@ def test_localizer_stream_roundtrips_one_record_per_frame(tmp_path: Path) -> Non
     assert first == second
     assert first["name"] == "frame.bmp"
     assert first["status"] == 0
+    assert "isHeld" not in first
+    assert accept(first) == (True, "ok")
 
 
 def test_localizer_stream_reports_cli_death(tmp_path: Path) -> None:
@@ -129,5 +131,7 @@ def test_localizer_stream_keeps_tracking_without_reset(tmp_path: Path) -> None:
         assert results[0]["message"] != "Tracking Success"
         assert results[-1]["status"] == 0
         assert results[-1]["message"] == "Tracking Success"
+        assert all("isHeld" not in record for record in results)
+        assert accept(results[-1]) == (True, "ok")
     finally:
         stream.close()

@@ -38,7 +38,6 @@ def locate_record(name: str, **overrides: object) -> dict:
         "rot": 0.0,
         "scale": 1.0,
         "locConf": 0.9,
-        "isHeld": False,
         "attempts": 1,
     }
     record.update(overrides)
@@ -69,7 +68,7 @@ def ref_fixture(tmp_path: Path) -> RefFixture:
     """两侧共五个样本：accepted 的 ok（val）/ ok2（train），与三类不可用记录。
 
     ok/held 在 val_raw，ok2/fail/noasset 在 train_raw；不可用样本用于验证从各自
-    一侧剔除并计数。
+    一侧剔除并计数。held 显式模拟历史 CLI 记录，其余使用新版字段契约。
     """
     train_raw, val_raw = tmp_path / "train_raw", tmp_path / "val_raw"
     assets_root = tmp_path / "assets"

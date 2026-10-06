@@ -110,7 +110,8 @@ def print_summary(summary: dict) -> None:
         print(
             f"  locConf: median={locconf['median']:.3f} p25={locconf['p25']:.3f} "
             f"p75={locconf['p75']:.3f} below0.85={locconf['below_high_conf']} "
-            f"below0.55={locconf['below_loc_threshold']} held={summary['held']}"
+            f"below0.55={locconf['below_loc_threshold']}"
+            + (f" legacy_held={summary['held']}" if "held" in summary else "")
         )
     print("  families:")
     for family, counts in summary["families"].items():

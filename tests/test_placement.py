@@ -49,11 +49,19 @@ def test_failed_record_still_builds_placement_without_asset(tmp_path: Path) -> N
     assert placement.asset_path(tmp_path) is None
 
 
-def test_accept_gates_held_and_low_conf() -> None:
+def test_accept_gates_current_records_by_status_and_confidence() -> None:
+    assert "isHeld" not in OK
     assert accept(OK) == (True, "ok")
-    assert accept({**OK, "isHeld": True, "locConf": 0.2}) == (False, "held")
+    assert accept({**OK, "locConf": 0.55}) == (True, "ok")
     assert accept({**OK, "locConf": 0.5}) == (False, "below_loc_threshold")
     assert accept(failed("x.png", 1, "Global search failed.")) == (False, "global_search_failed")
+
+
+def test_accept_preserves_explicit_legacy_held_marker() -> None:
+    assert accept({**OK, "isHeld": False}) == (True, "ok")
+    assert accept({**OK, "isHeld": True}) == (False, "held")
+    assert accept({**OK, "isHeld": True, "locConf": 0.2}) == (False, "held")
+    assert accept({**OK, "isHeld": False, "locConf": 0.5}) == (False, "below_loc_threshold")
 
 
 def test_classify_maps_status_and_message() -> None:
@@ -90,6 +98,14 @@ def test_summarize_counts_and_distributions() -> None:
     assert summary["held"] == 1
     assert summary["families"]["Wuling"] == {"total": 3, "ok": 3, "accepted": 2}
     assert summary["families"]["map01"] == {"total": 1, "ok": 0, "accepted": 0}
+
+
+def test_summarize_current_low_confidence_is_not_held() -> None:
+    summary = summarize([OK, {**OK, "name": "low.png", "locConf": 0.4}])
+    assert summary["accepted"] == 1
+    assert summary["excluded_by_reason"] == {"below_loc_threshold": 1}
+    assert summary["locconf"]["below_loc_threshold"] == 1
+    assert "held" not in summary
 
 
 def test_zone_asset_path_resolves_naming_schemes(tmp_path: Path) -> None:

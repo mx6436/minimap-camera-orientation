@@ -14,6 +14,8 @@ import pytest
 
 from cli import locate_dataset
 from endfield import dataset
+from placement.placement import summarize
+from tests._locate_records import OK
 
 FAKE_CLI = (
     "import json, sys\n"
@@ -30,7 +32,7 @@ FAKE_CLI = (
     "    assert path.is_file(), path\n"
     "    print(json.dumps({'name': path.name, 'path': str(path), 'status': 0,"
     " 'message': 'Global Search Success', 'zone': 'Fake_Base', 'x': 1.0, 'y': 2.0,"
-    " 'rot': 0.0, 'scale': 1.0, 'locConf': 0.9, 'isHeld': False, 'latencyMs': 1,"
+    " 'rot': 0.0, 'scale': 1.0, 'locConf': 0.9, 'latencyMs': 1,"
     " 'attempts': 1, 'elapsedMs': 2}))\n"
 )
 
@@ -85,6 +87,22 @@ def test_main_locates_union_of_both_raw_dirs(
     summary = json.loads((out.parent / "summary.json").read_text(encoding="utf-8"))
     assert summary["total"] == 2
     assert summary["accepted"] == 2
+    assert all("isHeld" not in record for record in records.values())
+    assert "held" not in summary
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_print_summary_only_labels_explicit_legacy_held(
+    capsys: pytest.CaptureFixture[str], legacy: bool
+) -> None:
+    record = {**OK, "isHeld": True} if legacy else {**OK, "locConf": 0.4}
+    locate_dataset.print_summary(summarize([record]))
+    output = capsys.readouterr().out
+    if legacy:
+        assert "legacy_held=1" in output
+    else:
+        assert "held" not in output
+        assert "below_loc_threshold" in output
 
 
 def test_default_raw_dirs_cover_every_maintained_raw_directory() -> None:

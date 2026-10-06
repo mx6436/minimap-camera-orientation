@@ -4,7 +4,7 @@
 展开；ref 依赖 MapLocator 流式定位——定位跑在独立线程里（map-locate --stream
 常驻子进程，一帧路径进、一条 JSONL 出，跨帧不重置追踪状态），主循环只取最新结果，
 用参考底图裁出同视野参考，按 `[obs.BGR, ref.BGR, ref.A]` 拼接 7 通道张量后喂
-AzimuthNet；定位不可用（失败 / held / 低分 / 资产缺失）时显示等待态，不显示过期角度。
+AzimuthNet；定位不可用（失败 / 历史 held / 低分 / 资产缺失）时显示等待态，不显示过期角度。
 
 置信度为 AzimuthNet 输出的 360 概率方向向量的合成模长乘以解码方向与合成
 方向夹角的余弦（见 predict_angle）。
