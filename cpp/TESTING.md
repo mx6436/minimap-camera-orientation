@@ -10,8 +10,6 @@
 | `def_*` | `endfield/preprocess.strip_pair()`（torch 定义） | **判定基准**：所有 case 与它的最大绝对差 ≤ `--tolerance`（默认 0，即逐字节相同）才算通过 |
 | `ort_*` | `preprocess.onnx` 经 onnxruntime 执行 | 只报告不判定，用来和现交付路径对照 |
 
-另外：fixtures 的 `definition_hash`（`index.json`）与 C++ 的 `kPreprocessDefinitionHash` 不一致时测试直接退出（码 3）。
-
 ### fixture 分组
 
 由 `tools/gen_fixtures.py` 生成（默认 seed 固定，可复现）：
@@ -64,9 +62,9 @@ onnxruntime 执行交付图（cpp-algo 的 `CameraOrientationPredictor` 默认 2
 
 ### C++ vs 定义（判定基准）
 
-Windows x64（MSVC 19.51.36256.0，`/fp:precise`）与 Android arm64（NDK r29 clang 20.0.0，`-ffp-contract=off`，小米 12X）
-结果相同。下表最初由 u/v 全表版本测得；现行实现（方位角查表、u/v 现算，与 MaaEnd 同一份源码）算出的网格
-与全表逐位相同，两平台复测结果不变：
+Windows x64（MSVC 19.51.36256.0）与 Android arm64（NDK r29 clang 20.0.0，小米 12X）结果相同，两者都只靠源码里的
+pragma 关闭 FMA 收缩，构建不加 `-ffp-contract=off`。下表最初由 u/v 全表版本测得；现行实现（方位角查表、u/v 现算，
+与 MaaEnd 同一份源码）算出的网格与全表逐位相同，两平台复测结果不变：
 
 | 组 | cases | observed 相同 | reference 相同 | 最大差 |
 | --- | ---: | ---: | ---: | ---: |
@@ -118,14 +116,21 @@ Windows 上逐步对齐的过程（与定义比，最大差均为 1，直到最�
 现场算 `sin/cos` 时，Android（bionic libm）与 Windows 的差异位置也不同，查表后两平台结果一致。u/v 全表
 （15120×2）换成方位角表（360×2）后网格逐位不变：误差只来自 `sin/cos`，半径与乘加在 float32 下各平台一致。
 
+### FMA 收缩对照
+
+Android arm64 上只去掉源码里关闭 FMA 收缩的 pragma、其余构建条件不变：observed 有 334 个 case、reference 有
+143 个 case 出现差 1（逐元素 0.00936% / 0.00312%），测试判定失败；加回 pragma 后 336 个 case 全部逐字节相同。
+clang 在 arm64 上默认会把乘加收缩成 FMA，这个 pragma 不能省。
+
 ## 耗时
 
-同一 case（`real_00`，武陵 Base 2016×2976，scale 1），单次 `BuildOrientationStrips`：
+C++ 一列是 `camori_fixture_test --bench 20` 在 336 个 case 上的单次 `BuildOrientationStrips` 平均；onnxruntime 一列是
+`camori_ort_bench` 在 `real_00`（武陵 Base 2016×2976，scale 1）上执行交付图的单次耗时：
 
 | 平台 | C++（单线程） | onnxruntime 执行交付图 |
 | --- | ---: | ---: |
-| 小米 12X（SM8250，Android arm64） | **1.08 ms** | ORT 1.29.0：1 线程 30.5 ms / 2 线程 25.6 ms |
-| 桌面 x64 | **0.95 ms** | ORT 1.26.0（Python）：1.30 ms |
+| 小米 12X（SM8250，Android arm64） | **1.03 ms** | ORT 1.29.0：1 线程 30.5 ms / 2 线程 25.5 ms |
+| 桌面 x64 | **0.79 ms** | ORT 1.26.0（Python）：1.30 ms |
 
 Android 上 ORT 1.29 慢主要是 MaaDeps v3 的 onnxruntime 构建问题（同机 1.19.2 的推理普遍快约 5～7 倍），
 但即使与桌面 ORT 比，C++ 也不慢，并且省掉了 asset 整张转 tensor 的开销与 onnxruntime 依赖。

@@ -19,13 +19,15 @@ find_package(OpenCV REQUIRED COMPONENTS core)
 add_library(camori_preprocess STATIC src/CameraOrientationPreprocess.cpp)
 target_include_directories(camori_preprocess PUBLIC src compat)
 target_link_libraries(camori_preprocess PUBLIC opencv_core)
-# keep IEEE float32 semantics: no fast-math, no FMA contraction, so the op order matches torch;
-# plus MaaEnd cpp-algo's warning level, so code that builds here also builds there
+# MaaEnd cpp-algo's warning level, so code that builds here also builds there. FMA contraction is
+# disabled by pragmas in the source (as in MaaEnd); GCC ignores STDC FP_CONTRACT, so it needs the flag.
 if(MSVC)
-    target_compile_options(camori_preprocess PRIVATE /fp:precise /utf-8 /W4 /WX /permissive- /sdl)
+    target_compile_options(camori_preprocess PRIVATE /utf-8 /W4 /WX /permissive- /sdl)
 else()
-    target_compile_options(camori_preprocess PRIVATE -ffp-contract=off -fno-fast-math
-        -Wall -Wextra -Wpedantic -Werror -Wno-missing-field-initializers)
+    target_compile_options(camori_preprocess PRIVATE -Wall -Wextra -Wpedantic -Werror -Wno-missing-field-initializers)
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        target_compile_options(camori_preprocess PRIVATE -ffp-contract=off)
+    endif()
 endif()
 
 option(CAMORI_BUILD_TESTS "build the fixture test" ON)
@@ -42,5 +44,5 @@ option(CAMORI_BUILD_ORT_BENCH "build camori_ort_bench (needs onnxruntime)" OFF)
 if(CAMORI_BUILD_ORT_BENCH)
     find_package(onnxruntime CONFIG REQUIRED PATHS "${_deps_prefix}/share/maa-onnxruntime" "${_deps_prefix}/share/onnxruntime")
     add_executable(camori_ort_bench tests/ort_bench.cpp)
-    target_link_libraries(camori_ort_bench PRIVATE onnxruntime::onnxruntime)
+    target_link_libraries(camori_ort_bench PRIVATE onnxruntime::onnxruntime opencv_core)
 endif()

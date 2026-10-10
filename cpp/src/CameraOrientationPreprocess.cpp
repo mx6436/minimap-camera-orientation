@@ -5,9 +5,15 @@
 #include <bit>
 #include <cmath>
 #include <cstdint>
+#include <utility>
 
-// 逐字节对齐依赖 float32 的逐步舍入：本文件禁止把 a * b + c 收缩成 FMA。
-// MaaEnd 见 agent/cpp-algo/source/CMakeLists.txt，独立构建见 minimap-camera-orientation 的 cpp/CMakeLists.txt。
+// 逐字节对齐依赖 float32 的逐步舍入：本文件禁止把 a * b + c 收缩成 FMA，由 pragma 随源码保证。
+// GCC 不支持 STDC FP_CONTRACT，用 GCC 构建时须另加 -ffp-contract=off（MaaEnd 的非 MSVC 构建只用 clang）。
+#if defined(__clang__)
+#pragma STDC FP_CONTRACT OFF
+#elif defined(_MSC_VER)
+#pragma fp_contract(off)
+#endif
 
 namespace maplocator
 {
@@ -20,6 +26,9 @@ constexpr float kRoiPoleU = 59.0f;
 constexpr float kRoiPoleV = 60.0f;
 constexpr float kInnerRadius = 12.0f;
 constexpr float kOuterRadius = 54.0f;
+constexpr float kRadiusStep = (kOuterRadius - kInnerRadius) / static_cast<float>(kOrientationStripHeight);
+// 采样点相对极点的最大偏移 = 最大半径（外径 - 半步长）。
+constexpr float kMaxRadius = kInnerRadius + (static_cast<float>(kOrientationStripHeight) - 0.5f) * kRadiusStep;
 // 参考窗口在采样范围外再留的边（像素），覆盖双线性的 floor / floor + 1 两个支撑像素。
 constexpr float kWindowPad = 2.0f;
 
@@ -67,22 +76,28 @@ void SampleBilinear(const cv::Mat& image, float x, float y, float* out)
     const float w21 = dy1 * dx2;
     const float w22 = dy1 * dx1;
 
-    const auto pixel = [&](int64_t row, int64_t col, int channel) -> float {
+    // 四个角的像素起点：border 把越界的角钳回图内，zeros 让越界的角读一块全 0。
+    const auto corner = [&](int64_t row, int64_t col) -> const uint8_t* {
         if constexpr (Mode == Padding::Zeros) {
+            static constexpr uint8_t kOutside[Channels] = {};
             if (col < 0 || col >= width || row < 0 || row >= height) {
-                return 0.0f;
+                return kOutside;
             }
         }
         else {
             col = std::clamp<int64_t>(col, 0, width - 1);
             row = std::clamp<int64_t>(row, 0, height - 1);
         }
-        return static_cast<float>(image.ptr<uint8_t>(static_cast<int>(row))[col * Channels + channel]);
+        return image.ptr<uint8_t>(static_cast<int>(row)) + col * Channels;
     };
+    const uint8_t* p11 = corner(y1, x1);
+    const uint8_t* p12 = corner(y1, x2);
+    const uint8_t* p21 = corner(y2, x1);
+    const uint8_t* p22 = corner(y2, x2);
 
     for (int channel = 0; channel < Channels; ++channel) {
-        out[channel] =
-            w11 * pixel(y1, x1, channel) + w12 * pixel(y1, x2, channel) + w21 * pixel(y2, x1, channel) + w22 * pixel(y2, x2, channel);
+        out[channel] = w11 * static_cast<float>(p11[channel]) + w12 * static_cast<float>(p12[channel])
+                       + w21 * static_cast<float>(p21[channel]) + w22 * static_cast<float>(p22[channel]);
     }
 }
 
@@ -93,12 +108,11 @@ uint8_t ToUint8(float value)
 }
 
 // 单轴采样窗 [start, end)：覆盖 center ± extent 与双线性支撑，裁到资产内且非空。
-void WindowAxis(float center, float extent, int size, int& start, int& end)
+std::pair<int, int> WindowAxis(float center, float extent, int size)
 {
     const float lo = std::clamp(std::floor(center - extent - kWindowPad), 0.0f, static_cast<float>(size - 1));
     const float hi = std::clamp(std::floor(center + extent + kWindowPad) + 2.0f, lo + 1.0f, static_cast<float>(size));
-    start = static_cast<int>(lo);
-    end = static_cast<int>(hi);
+    return { static_cast<int>(lo), static_cast<int>(hi) };
 }
 
 struct StripGrid
@@ -109,9 +123,8 @@ struct StripGrid
 
     StripGrid()
     {
-        const float step = (kOuterRadius - kInnerRadius) / static_cast<float>(kOrientationStripHeight);
         for (int row = 0; row < kOrientationStripHeight; ++row) {
-            const float radius = kInnerRadius + step * (static_cast<float>(row) + 0.5f);
+            const float radius = kInnerRadius + kRadiusStep * (static_cast<float>(row) + 0.5f);
             for (int col = 0; col < kOrientationStripWidth; ++col) {
                 const float sin_theta = std::bit_cast<float>(kAzimuthSinBits[col]);
                 const float cos_theta = std::bit_cast<float>(kAzimuthCosBits[col]);
@@ -143,15 +156,9 @@ bool BuildOrientationStrips(const cv::Mat& minimap, const cv::Mat& asset, float 
     out.observed.create(kOrientationStripHeight, kOrientationStripWidth, CV_8UC3);
     out.reference.create(kOrientationStripHeight, kOrientationStripWidth, CV_8UC4);
 
-    // 采样点相对 (x, y) 的最大偏移 = 最大半径（外径 - 半步长）* scale。
-    const float step = (kOuterRadius - kInnerRadius) / static_cast<float>(kOrientationStripHeight);
-    const float extent = scale * (kInnerRadius + (static_cast<float>(kOrientationStripHeight) - 0.5f) * step);
-    int w0 = 0;
-    int w1 = 0;
-    int h0 = 0;
-    int h1 = 0;
-    WindowAxis(x, extent, asset.cols, w0, w1);
-    WindowAxis(y, extent, asset.rows, h0, h1);
+    const float extent = scale * kMaxRadius;
+    const auto [w0, w1] = WindowAxis(x, extent, asset.cols);
+    const auto [h0, h1] = WindowAxis(y, extent, asset.rows);
     const cv::Mat window = asset(cv::Rect(w0, h0, w1 - w0, h1 - h0));
 
     for (int row = 0; row < kOrientationStripHeight; ++row) {

@@ -2,7 +2,7 @@
 
 `cpp/` 是交付图 `preprocess.onnx` 的 C++ 等价实现，MaaEnd cpp-algo 直接调用它，不再经过
 onnxruntime（或 ncnn）执行预处理图。**定义仍是 `endfield/preprocess.py`**：C++ 只是它的一份
-可执行翻译，靠本目录的测试与定义逐字节对齐，并用 `definition_hash` 锁死对应的定义版本。
+可执行翻译，靠本目录的测试与定义逐字节对齐。
 
 ```
 cpp/
@@ -26,8 +26,7 @@ cpp/
 只有这里一份在改：
 
 - 改动只在 `cpp/src/` 做，跑完测试后用 `sync_maaend.py` 拷进 MaaEnd，不在 MaaEnd 里直接改；
-- `sync_maaend.py --check` 比对两边字节，并确认 MaaEnd 的 `agent/cpp-algo/source/CMakeLists.txt`
-  仍对该文件关闭 FMA 收缩（`-ffp-contract=off`）；
+- `sync_maaend.py --check` 比对两边字节；FMA 收缩由源码里的 pragma 关闭，MaaEnd 不需要额外的编译选项；
 - 唯一的 MaaEnd 专有依赖 `<MaaUtils/NoWarningCV.hpp>` 由 `compat/` 替身提供，独立构建按 MaaEnd
   cpp-algo 的告警级别编译（`/W4 /WX`、`-Wall -Wextra -Wpedantic -Werror`），这里能过的那边也能过；
 - `src/` 固定 LF（仓库根 `.gitattributes`），与 MaaEnd 的统一 LF 一致；排版按 `.clang-format`
@@ -68,7 +67,9 @@ cpp/
    `dy2·(dx2·p11 + dx1·p12) + …`。两种写法数学等价，float32 下在 `.5` 边界上取整结果可能差 1。
 
 坐标归一化 / 反归一化（`(2p+1)/L − 1` 再 `((n+1)·L − 1)/2`）照样走一遍（`GridRoundTrip()`），
-保留与图内一致的 float32 舍入；编译选项关闭 fast-math 与 FMA 合并（`/fp:precise`、`-ffp-contract=off`）。
+保留与图内一致的 float32 舍入。FMA 收缩由源码里的 pragma 关闭（clang 用 `STDC FP_CONTRACT OFF`，MSVC 用
+`fp_contract(off)`），跟着文件走，不依赖构建选项；GCC 不认这个 pragma，独立构建在 GCC 下另加 `-ffp-contract=off`。
+不能开 fast-math（`-ffast-math`、`/fp:fast`）。
 
 ## 构建与测试
 
@@ -76,15 +77,11 @@ cpp/
 
 ## 定义变更时
 
-`endfield/preprocess.py` 一改 `definition_hash` 就变（只改注释也会变）：
+`endfield/preprocess.py` 改了之后：
 
 1. `uv run python cpp/tools/gen_azimuth_table.py --check` 确认方位角表是否需要重新生成（去掉 `--check`
    即重新生成；网格几何变了会在这一步报错，先改 `StripGrid()` 与生成器里的重放）；
-2. 按定义改动同步 `src/CameraOrientationPreprocess.cpp`，把 `src/CameraOrientationPreprocess.h`
-   的 `kPreprocessDefinitionHash` 改成新值；
-3. 重新生成 fixtures 并跑 `camori_fixture_test`（fixtures 与实现哈希不一致时退出码 3）；
+2. 按定义改动同步 `src/CameraOrientationPreprocess.cpp`；
+3. 重新生成 fixtures 并跑 `camori_fixture_test`；
 4. `uv run python cpp/tools/sync_maaend.py --maaend <MaaEnd>` 同步进 MaaEnd，与按新定义训练的
    `polar_with_ref.onnx` 一起提交（MaaEnd 不收录 `preprocess.onnx`，两者的配套只靠这一步保证）。
-
-`endfield/preprocess.py` 必须保持 LF（仓库根 `.gitattributes`）：`definition_hash` 取文件原始字节，
-Windows `core.autocrlf=true` 检出成 CRLF 会得到另一个哈希。

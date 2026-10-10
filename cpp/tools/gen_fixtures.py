@@ -28,9 +28,8 @@ sys.path.insert(0, str(REPO))
 
 from endfield import conformance as cf  # noqa: E402
 from endfield import preprocess as pp  # noqa: E402
+from endfield.polar import BASE_SIZE  # noqa: E402
 
-# MaaEnd agent/cpp-algo/source/MapLocator/MapTypes.h kDefaultMinimapRoi (x, y, w, h) at 720p
-MINIMAP_ROI = (49, 51, pp.ROI_W, pp.ROI_H)
 # MaaEnd zone asset and positions seen in a Wuling_Base AutoCollect run
 REAL_ASSET = "assets/resource/image/MapLocator/Wuling/Base.png"
 REAL_POSITIONS = [(941.2, 1779.21), (941.19, 1779.21), (1010.5, 1650.25), (520.0, 900.0)]
@@ -44,6 +43,8 @@ class Writer:
         self.out = out
         self.session = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
         self.shared: dict[int, str] = {}
+        # id(shared asset) -> pp.prepare_asset(); the float32 conversion is done once per asset
+        self.prepared: dict[int, object] = {}
         self.cases: list[str] = []
 
     def _shared_asset(self, asset: np.ndarray) -> str:
@@ -58,10 +59,16 @@ class Writer:
     def case(self, name, minimap, asset, x, y, scale, tags, shared=False):
         d = self.out / name
         d.mkdir(parents=True, exist_ok=True)
-        if not shared:
-            asset = np.ascontiguousarray(cf.normalize_asset(asset))
         minimap = np.ascontiguousarray(minimap)
-        def_obs, def_ref = pp.strip_pair(minimap, asset, x, y, scale)
+        if shared:
+            if id(asset) not in self.prepared:
+                self.prepared[id(asset)] = pp.prepare_asset(asset)
+            def_obs, def_ref = pp.strip_pair_prepared(
+                minimap, self.prepared[id(asset)], x, y, scale
+            )
+        else:
+            asset = np.ascontiguousarray(cf.normalize_asset(asset))
+            def_obs, def_ref = pp.strip_pair(minimap, asset, x, y, scale)
         f32 = np.float32
         feeds = {
             "minimap": minimap[None],
@@ -124,11 +131,12 @@ def main() -> int:
     w = Writer(a.out, onnx_path)
     rng = np.random.default_rng(a.seed)
 
-    for sc in cf.builtin_scenarios():
+    scenarios = cf.builtin_scenarios()
+    for sc in scenarios:
         w.case(f"conf_{sc.name}", sc.minimap, sc.asset, sc.x, sc.y, sc.scale, ("conformance", *sc.tags))
 
     # synthetic: conformance texture as minimap, 4-channel asset with smooth alpha in [0, 255]
-    synth_mm = cf.builtin_scenarios()[0].minimap
+    synth_mm = scenarios[0].minimap
     synth_asset = np.ascontiguousarray(
         np.dstack([rng.integers(0, 256, (600, 520, 3), dtype=np.uint8), rng.integers(0, 256, (600, 520), dtype=np.uint8)])
     )
@@ -140,24 +148,24 @@ def main() -> int:
         import cv2
 
         asset = np.ascontiguousarray(cf.normalize_asset(imread(a.maaend / REAL_ASSET, cv2.IMREAD_UNCHANGED)))
-        rx, ry, rw, rh = MINIMAP_ROI
         rois = []
         for shot in sorted((a.maaend / REAL_SHOTS).glob("*.png")):
             img = imread(shot, cv2.IMREAD_COLOR)
-            if img is not None and img.shape[:2] == (720, 1280):
-                rois.append(img[ry : ry + rh, rx : rx + rw])
+            if img is not None and (img.shape[1], img.shape[0]) == BASE_SIZE:
+                rois.append(pp.observed_roi(img))
             if len(rois) == 8:
                 break
         for i, roi in enumerate(rois):
             x, y = REAL_POSITIONS[i % len(REAL_POSITIONS)]
             w.case(f"real_{i:02d}", roi, asset, x, y, 1.0, ("real",), shared=True)
         for i, (x, y, s) in enumerate(random_positions(rng, *asset.shape[:2], a.random)):
-            mm = rois[0] if i % 2 == 0 else rng.integers(0, 256, (rh, rw, 3), dtype=np.uint8)
+            mm = rois[0] if i % 2 == 0 else rng.integers(0, 256, (pp.ROI_H, pp.ROI_W, 3), dtype=np.uint8)
             w.case(f"rand_{i:03d}", mm, asset, x, y, s, ("random",), shared=True)
 
-    index = {"definition_hash": pp.definition_hash(), "onnx": str(onnx_path), "cases": w.cases}
+    definition_hash = pp.definition_hash()
+    index = {"definition_hash": definition_hash, "onnx": str(onnx_path), "cases": w.cases}
     (a.out / "index.json").write_text(json.dumps(index), encoding="utf-8")
-    print(f"definition_hash={pp.definition_hash()}  onnx={onnx_path}")
+    print(f"definition_hash={definition_hash}  onnx={onnx_path}")
     print(f"wrote {len(w.cases)} cases to {a.out}")
     return 0
 
