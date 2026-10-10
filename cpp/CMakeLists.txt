@@ -14,14 +14,18 @@ if(OpenCV_DIR)
 endif()
 find_package(OpenCV REQUIRED COMPONENTS core)
 
-add_library(camori_preprocess STATIC src/preprocess.cpp)
-target_include_directories(camori_preprocess PUBLIC include)
+# src/ is copied verbatim into MaaEnd agent/cpp-algo/source/MapLocator/ (tools/sync_maaend.py);
+# compat/ stands in for MaaEnd's <MaaUtils/NoWarningCV.hpp>.
+add_library(camori_preprocess STATIC src/CameraOrientationPreprocess.cpp)
+target_include_directories(camori_preprocess PUBLIC src compat)
 target_link_libraries(camori_preprocess PUBLIC opencv_core)
-# keep IEEE float32 semantics: no fast-math, no FMA contraction, so the op order matches ORT / torch
+# keep IEEE float32 semantics: no fast-math, no FMA contraction, so the op order matches torch;
+# plus MaaEnd cpp-algo's warning level, so code that builds here also builds there
 if(MSVC)
-    target_compile_options(camori_preprocess PRIVATE /fp:precise /utf-8)
+    target_compile_options(camori_preprocess PRIVATE /fp:precise /utf-8 /W4 /WX /permissive- /sdl)
 else()
-    target_compile_options(camori_preprocess PRIVATE -ffp-contract=off -fno-fast-math)
+    target_compile_options(camori_preprocess PRIVATE -ffp-contract=off -fno-fast-math
+        -Wall -Wextra -Wpedantic -Werror -Wno-missing-field-initializers)
 endif()
 
 option(CAMORI_BUILD_TESTS "build the fixture test" ON)

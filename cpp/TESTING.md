@@ -2,15 +2,18 @@
 
 ## 测什么
 
-`camori_fixture_test` 对每个 case 跑一次 `camori::preprocess`，与两份期望逐字节比较：
+`camori_fixture_test` 对每个 case 跑一次 `maplocator::BuildOrientationStrips`（`src/`，与 MaaEnd 同一份源码），
+与两份期望逐字节比较：
 
 | 期望 | 来源 | 角色 |
 | --- | --- | --- |
 | `def_*` | `endfield/preprocess.strip_pair()`（torch 定义） | **判定基准**：所有 case 与它的最大绝对差 ≤ `--tolerance`（默认 0，即逐字节相同）才算通过 |
 | `ort_*` | `preprocess.onnx` 经 onnxruntime 执行 | 只报告不判定，用来和现交付路径对照 |
 
-另外两道守卫：fixtures 的 `definition_hash`（`index.json`）与 C++ 的 `kDefinitionHash` 不一致时测试直接
-退出（码 3）；`strip_grid_table.inc` 与 `kDefinitionHash` 不一致时编译期 `static_assert` 失败。
+另外三道守卫：fixtures 的 `definition_hash`（`index.json`）与 C++ 的 `kPreprocessDefinitionHash` 不一致时测试
+直接退出（码 3）；`ReadPreprocessDefinitionHash()` 从 fixtures 里的 `preprocess.onnx` 读不出同一个哈希时退出
+（码 4，MaaEnd 运行时靠它判定是否启用预测器）；`CameraOrientationAzimuthTable.inc` 与 `kPreprocessDefinitionHash`
+不一致时编译期 `static_assert` 失败。
 
 ### fixture 分组
 
@@ -44,8 +47,11 @@ cpp/scripts/build-android.sh /f/Android/SDK/ndk/29.0.13599879 \
     [-DCAMORI_BUILD_ORT_BENCH=ON]
 cpp/scripts/run-android.sh cpp/build/fixtures <含 libopencv_world4.so 与 libc++_shared.so 的目录> --bench 50
 
-# 网格表是否过期
-uv run python cpp/tools/gen_strip_grid.py --check
+# 方位角表是否过期
+uv run python cpp/tools/gen_azimuth_table.py --check
+
+# MaaEnd 里的副本是否与 src/ 逐字节相同（去掉 --check 即同步）
+uv run python cpp/tools/sync_maaend.py --maaend F:/Project/Golang/MaaEnd --check
 ```
 
 `camori_fixture_test` 参数：`--tolerance N`（判定阈值，默认 0；conformance 剖面是 1）、`--bench N`（每个
@@ -62,7 +68,8 @@ onnxruntime 执行交付图（cpp-algo 的 `CameraOrientationPredictor` 默认 2
 ### C++ vs 定义（判定基准）
 
 Windows x64（MSVC 19.51.36256.0，`/fp:precise`）与 Android arm64（NDK r29 clang 20.0.0，`-ffp-contract=off`，小米 12X）
-结果相同：
+结果相同。下表最初由 u/v 全表版本测得；现行实现（方位角查表、u/v 现算，与 MaaEnd 同一份源码）算出的网格
+与全表逐位相同，两平台复测结果不变：
 
 | 组 | cases | observed 相同 | reference 相同 | 最大差 |
 | --- | ---: | ---: | ---: | ---: |
@@ -107,14 +114,16 @@ Windows 上逐步对齐的过程（与定义比，最大差均为 1，直到最�
 | 版本 | observed 相同 | reference 相同 |
 | --- | ---: | ---: |
 | 现场算 `sin/cos` + ORT 1.19 双线性写法 | 99.99873% | 99.99960% |
-| 网格查表 + ORT 1.19 双线性写法 | 99.99922% | 99.99977% |
-| 网格查表 + torch 权重写法（当前） | 100% | 100% |
+| u/v 全表 + ORT 1.19 双线性写法 | 99.99922% | 99.99977% |
+| u/v 全表 + torch 权重写法 | 100% | 100% |
+| 方位角查表、u/v 现算 + torch 权重写法（当前） | 100% | 100% |
 
-现场算 `sin/cos` 时，Android（bionic libm）与 Windows 的差异位置也不同，查表后两平台结果一致。
+现场算 `sin/cos` 时，Android（bionic libm）与 Windows 的差异位置也不同，查表后两平台结果一致。u/v 全表
+（15120×2）换成方位角表（360×2）后网格逐位不变：误差只来自 `sin/cos`，半径与乘加在 float32 下各平台一致。
 
 ## 耗时
 
-同一 case（`real_00`，武陵 Base 2016×2976，scale 1），单次 `preprocess`：
+同一 case（`real_00`，武陵 Base 2016×2976，scale 1），单次 `BuildOrientationStrips`：
 
 | 平台 | C++（单线程） | onnxruntime 执行交付图 |
 | --- | ---: | ---: |

@@ -1,4 +1,5 @@
-// Compare camori::preprocess against fixtures produced by cpp/tools/gen_fixtures.py.
+// Compare maplocator::BuildOrientationStrips (cpp/src/, shipped verbatim in MaaEnd) against fixtures produced by
+// cpp/tools/gen_fixtures.py.
 //
 // usage: camori_fixture_test <fixtures_dir> [--tolerance N] [--bench N] [--verbose]
 //
@@ -19,7 +20,7 @@
 #include <string>
 #include <vector>
 
-#include "camori/preprocess.h"
+#include "CameraOrientationPreprocess.h"
 
 namespace fs = std::filesystem;
 
@@ -132,14 +133,23 @@ int main(int argc, char** argv)
 
     const std::string index = read_text(root / "index.json");
     const std::string fixture_hash = json_string(index, "definition_hash");
-    if (fixture_hash != camori::kDefinitionHash) {
+    if (fixture_hash != maplocator::kPreprocessDefinitionHash) {
         std::printf(
             "definition_hash mismatch: fixtures=%s implementation=%.*s\n"
-            "endfield/preprocess.py changed; update the C++ implementation and kDefinitionHash.\n",
+            "endfield/preprocess.py changed; update the C++ implementation and kPreprocessDefinitionHash.\n",
             fixture_hash.c_str(),
-            static_cast<int>(camori::kDefinitionHash.size()),
-            camori::kDefinitionHash.data());
+            static_cast<int>(maplocator::kPreprocessDefinitionHash.size()),
+            maplocator::kPreprocessDefinitionHash.data());
         return 3;
+    }
+    // MaaEnd gates the predictor on the hash read from the shipped graph; gen_fixtures.py puts that graph here.
+    const auto graph_hash = maplocator::ReadPreprocessDefinitionHash(root / "preprocess.onnx");
+    if (graph_hash != fixture_hash) {
+        std::printf(
+            "ReadPreprocessDefinitionHash(preprocess.onnx) = %s, expected %s\n",
+            graph_hash.value_or("(none)").c_str(),
+            fixture_hash.c_str());
+        return 4;
     }
 
     std::vector<fs::path> dirs;
@@ -182,11 +192,11 @@ int main(int argc, char** argv)
             }
             asset_buf = &it->second;
         }
-        const cv::Mat minimap(camori::kRoiH, camori::kRoiW, CV_8UC3, minimap_buf.data());
+        const cv::Mat minimap(maplocator::kOrientationRoiHeight, maplocator::kOrientationRoiWidth, CV_8UC3, minimap_buf.data());
         const cv::Mat asset(ah, aw, CV_8UC4, asset_buf->data());
 
-        camori::Strips strips;
-        if (!camori::preprocess(minimap, asset, x, y, scale, strips)) {
+        maplocator::OrientationStrips strips;
+        if (!maplocator::BuildOrientationStrips(minimap, asset, x, y, scale, strips)) {
             std::printf("%-26s preprocess() returned false  <-- FAIL\n", name.c_str());
             ++failed;
             continue;
@@ -219,7 +229,7 @@ int main(int argc, char** argv)
         if (bench > 0) {
             const auto t0 = std::chrono::steady_clock::now();
             for (int i = 0; i < bench; ++i) {
-                camori::preprocess(minimap, asset, x, y, scale, strips);
+                maplocator::BuildOrientationStrips(minimap, asset, x, y, scale, strips);
             }
             bench_ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
             bench_calls += bench;
