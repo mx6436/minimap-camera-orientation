@@ -1,0 +1,2 @@
+# definition_hash 取 endfield/preprocess.py 的原始字节 sha256：固定 LF，避免 Windows autocrlf 检出改变哈希
+endfield/preprocess.py text eol=lf
