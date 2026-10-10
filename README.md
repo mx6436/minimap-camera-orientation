@@ -97,8 +97,8 @@ cd "$MAAEND/assets/resource/model"
 git add map/cameraorientation && git commit -m "model: cameraorientation 两图工件" && git push
 ```
 
-MaaEnd 不执行 `preprocess.onnx`，而是跑 [cpp/](./cpp/README.md) 的 C++ 等价实现，只读图里的
-`definition_hash` 核对版本，不一致就停用预测器。`definition_hash` 变了的交付要同步 C++（在 MaaEnd 主仓提交）：
+MaaEnd 不执行 `preprocess.onnx`，而是跑 [cpp/](./cpp/README.md) 的 C++ 等价实现；cpp-algo 构建时核对图里的
+`definition_hash` 与 C++ 是否一致，不一致则构建失败。`definition_hash` 变了的交付要同步 C++（在 MaaEnd 主仓提交）：
 
 ```bash
 uv run python cpp/tools/sync_maaend.py --maaend "$MAAEND" --check   # 去掉 --check 即拷入

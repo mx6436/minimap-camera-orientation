@@ -7,7 +7,7 @@ onnxruntime（或 ncnn）执行前处理图。**定义仍是 `endfield/preproces
 ```
 cpp/
 ├── src/CameraOrientationPreprocess.h      接口：maplocator::BuildOrientationStrips(minimap, asset, x, y, scale, strips)
-├── src/CameraOrientationPreprocess.cpp    实现（只依赖 OpenCV core 的 cv::Mat）与 preprocess.onnx 的哈希读取
+├── src/CameraOrientationPreprocess.cpp    实现（只依赖 OpenCV core 的 cv::Mat）
 ├── src/CameraOrientationAzimuthTable.inc  360 个方位角 sin / cos 的 float32 位模式（生成文件）
 ├── compat/MaaUtils/NoWarningCV.hpp        独立构建时替代 MaaEnd 同名头文件
 ├── tests/fixture_test.cpp                 fixture 比对测试（误差统计 + 计时）
@@ -82,10 +82,10 @@ cpp/
    会在这一步报错，先改 `StripGrid()` 与生成器里的重放）；
 2. 按定义改动同步 `src/CameraOrientationPreprocess.cpp`，把 `src/CameraOrientationPreprocess.h`
    的 `kPreprocessDefinitionHash` 改成新值（方位角表与它不一致会编译期 `static_assert` 失败）；
-3. 重新生成 fixtures 并跑 `camori_fixture_test`（fixtures 与实现哈希不一致退出码 3，读不出
-   fixtures 里 `preprocess.onnx` 的哈希退出码 4）；
+3. 重新生成 fixtures 并跑 `camori_fixture_test`（fixtures 与实现哈希不一致时退出码 3）；
 4. `uv run python cpp/tools/sync_maaend.py --maaend <MaaEnd>` 同步进 MaaEnd，与新的
-   `preprocess.onnx` 一起提交——MaaEnd 运行时读图里的 `definition_hash`，与 C++ 不一致就停用预测器。
+   `preprocess.onnx` 一起提交——MaaEnd 的 cpp-algo 在 CMake 配置时核对图里的 `definition_hash`
+   与 C++ 的 `kPreprocessDefinitionHash`，不一致直接构建失败（`agent/cpp-algo/cmake/CameraOrientation.cmake`）。
 
 `endfield/preprocess.py` 必须保持 LF（仓库根 `.gitattributes`）：`definition_hash` 取文件原始字节，
 Windows `core.autocrlf=true` 检出成 CRLF 会得到另一个哈希。

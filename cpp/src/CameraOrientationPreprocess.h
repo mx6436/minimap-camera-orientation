@@ -1,8 +1,5 @@
 #pragma once
 
-#include <filesystem>
-#include <optional>
-#include <string>
 #include <string_view>
 
 #include <MaaUtils/NoWarningCV.hpp>
@@ -19,8 +16,8 @@ namespace maplocator
 // 规范副本在该仓 cpp/src/，MaaEnd 的 MapLocator/CameraOrientation{Preprocess.h,Preprocess.cpp,
 // AzimuthTable.inc} 由 cpp/tools/sync_maaend.py 原样同步；改动在那边做，不在 MaaEnd 里直接改。
 //
-// kPreprocessDefinitionHash 锁定本实现对应的定义版本。交付的 preprocess.onnx 在 metadata 里仍带
-// 定义的哈希，二者不一致说明定义变了而本实现没跟上。
+// kPreprocessDefinitionHash 锁定本实现对应的定义版本。交付的 preprocess.onnx 在 metadata 里带着定义的
+// 哈希，MaaEnd 在构建期（agent/cpp-algo/cmake/CameraOrientation.cmake）核对二者，不一致则构建失败。
 inline constexpr std::string_view kPreprocessDefinitionHash = "223450125d4464985270056d6e88b8394515c31494588dcc5f6bfc70022ef600";
 
 inline constexpr int kOrientationRoiWidth = 118;
@@ -39,8 +36,5 @@ struct OrientationStrips
 // (x, y):  located position in asset pixels; scale: ZoneTemplateScale(zone).
 // Returns false when the inputs do not match the contract.
 bool BuildOrientationStrips(const cv::Mat& minimap, const cv::Mat& asset, float x, float y, float scale, OrientationStrips& out);
-
-// Reads the `definition_hash` metadata entry of preprocess.onnx without an inference runtime.
-std::optional<std::string> ReadPreprocessDefinitionHash(const std::filesystem::path& model_path);
 
 } // namespace maplocator

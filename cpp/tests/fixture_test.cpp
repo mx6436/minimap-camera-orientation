@@ -142,15 +142,6 @@ int main(int argc, char** argv)
             maplocator::kPreprocessDefinitionHash.data());
         return 3;
     }
-    // MaaEnd gates the predictor on the hash read from the shipped graph; gen_fixtures.py puts that graph here.
-    const auto graph_hash = maplocator::ReadPreprocessDefinitionHash(root / "preprocess.onnx");
-    if (graph_hash != fixture_hash) {
-        std::printf(
-            "ReadPreprocessDefinitionHash(preprocess.onnx) = %s, expected %s\n",
-            graph_hash.value_or("(none)").c_str(),
-            fixture_hash.c_str());
-        return 4;
-    }
 
     std::vector<fs::path> dirs;
     for (const auto& e : fs::directory_iterator(root)) {

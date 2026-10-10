@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
 import sys
 from pathlib import Path
 
@@ -119,12 +118,9 @@ def main() -> int:
     a = ap.parse_args()
 
     a.out.mkdir(parents=True, exist_ok=True)
-    # the test also reads definition_hash back from <out>/preprocess.onnx (MaaEnd's predictor gate)
     onnx_path = a.onnx
     if onnx_path is None:
         onnx_path = pp.export_onnx(a.out / "preprocess.onnx")
-    elif onnx_path.resolve() != (a.out / "preprocess.onnx").resolve():
-        shutil.copyfile(onnx_path, a.out / "preprocess.onnx")
     w = Writer(a.out, onnx_path)
     rng = np.random.default_rng(a.seed)
 

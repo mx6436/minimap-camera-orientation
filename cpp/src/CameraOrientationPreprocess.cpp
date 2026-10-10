@@ -5,9 +5,6 @@
 #include <bit>
 #include <cmath>
 #include <cstdint>
-#include <fstream>
-#include <iterator>
-#include <vector>
 
 // 逐字节对齐依赖 float32 的逐步舍入：本文件禁止把 a * b + c 收缩成 FMA。
 // MaaEnd 见 agent/cpp-algo/source/CMakeLists.txt，独立构建见 minimap-camera-orientation 的 cpp/CMakeLists.txt。
@@ -133,20 +130,6 @@ const StripGrid& GetStripGrid()
     return grid;
 }
 
-// protobuf varint；越界返回 false。
-bool ReadVarint(const std::vector<char>& data, size_t& pos, uint64_t& value)
-{
-    value = 0;
-    for (int shift = 0; shift < 64 && pos < data.size(); shift += 7) {
-        const auto byte = static_cast<uint8_t>(data[pos++]);
-        value |= static_cast<uint64_t>(byte & 0x7F) << shift;
-        if ((byte & 0x80) == 0) {
-            return true;
-        }
-    }
-    return false;
-}
-
 } // namespace
 
 bool BuildOrientationStrips(const cv::Mat& minimap, const cv::Mat& asset, float x, float y, float scale, OrientationStrips& out)
@@ -203,38 +186,6 @@ bool BuildOrientationStrips(const cv::Mat& minimap, const cv::Mat& asset, float 
         }
     }
     return true;
-}
-
-std::optional<std::string> ReadPreprocessDefinitionHash(const std::filesystem::path& model_path)
-{
-    std::ifstream file(model_path, std::ios::binary);
-    if (!file) {
-        return std::nullopt;
-    }
-    const std::vector<char> data((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-
-    // metadata_props 是 StringStringEntryProto { key = 1, value = 2 }：
-    // 0x0A len "definition_hash" 0x12 len <value>。只认这一种编码，找不到就当作没有。
-    constexpr std::string_view kKey = "definition_hash";
-    const auto begin = data.begin();
-    for (auto it = std::search(begin, data.end(), kKey.begin(), kKey.end()); it != data.end();
-         it = std::search(it + 1, data.end(), kKey.begin(), kKey.end())) {
-        const auto key_pos = static_cast<size_t>(it - begin);
-        if (key_pos < 2 || data[key_pos - 2] != 0x0A || static_cast<uint8_t>(data[key_pos - 1]) != kKey.size()) {
-            continue;
-        }
-        size_t pos = key_pos + kKey.size();
-        if (pos >= data.size() || data[pos] != 0x12) {
-            continue;
-        }
-        ++pos;
-        uint64_t length = 0;
-        if (!ReadVarint(data, pos, length) || length > data.size() - pos) {
-            continue;
-        }
-        return std::string(data.data() + pos, static_cast<size_t>(length));
-    }
-    return std::nullopt;
 }
 
 } // namespace maplocator

@@ -10,10 +10,9 @@
 | `def_*` | `endfield/preprocess.strip_pair()`（torch 定义） | **判定基准**：所有 case 与它的最大绝对差 ≤ `--tolerance`（默认 0，即逐字节相同）才算通过 |
 | `ort_*` | `preprocess.onnx` 经 onnxruntime 执行 | 只报告不判定，用来和现交付路径对照 |
 
-另外三道守卫：fixtures 的 `definition_hash`（`index.json`）与 C++ 的 `kPreprocessDefinitionHash` 不一致时测试
-直接退出（码 3）；`ReadPreprocessDefinitionHash()` 从 fixtures 里的 `preprocess.onnx` 读不出同一个哈希时退出
-（码 4，MaaEnd 运行时靠它判定是否启用预测器）；`CameraOrientationAzimuthTable.inc` 与 `kPreprocessDefinitionHash`
-不一致时编译期 `static_assert` 失败。
+另外两道守卫：fixtures 的 `definition_hash`（`index.json`）与 C++ 的 `kPreprocessDefinitionHash` 不一致时测试
+直接退出（码 3）；`CameraOrientationAzimuthTable.inc` 与 `kPreprocessDefinitionHash` 不一致时编译期
+`static_assert` 失败。交付图与 C++ 的版本核对在 MaaEnd 构建期做（cpp-algo 的 CMake 配置）。
 
 ### fixture 分组
 
