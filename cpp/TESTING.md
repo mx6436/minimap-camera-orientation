@@ -12,7 +12,7 @@
 
 另外两道守卫：fixtures 的 `definition_hash`（`index.json`）与 C++ 的 `kPreprocessDefinitionHash` 不一致时测试
 直接退出（码 3）；`CameraOrientationAzimuthTable.inc` 与 `kPreprocessDefinitionHash` 不一致时编译期
-`static_assert` 失败。交付图与 C++ 的版本核对在 MaaEnd 构建期做（cpp-algo 的 CMake 配置）。
+`static_assert` 失败。
 
 ### fixture 分组
 

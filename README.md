@@ -85,20 +85,18 @@ uv run verify-artifact --bundle runs/<name>/bundle   # 结构自检 + 内置场�
 
 ### 拷入 MaaEnd
 
-bundle 两图对应 MaaEnd 交付布局 `assets/resource/model/map/cameraorientation/`，`manifest.json` 留在本仓作为交付凭据。拷入与提交在 MaaEnd 的模型子模块内完成：
+MaaEnd 交付布局 `assets/resource/model/map/cameraorientation/` 只收 bundle 里的 `polar_with_ref.onnx`；`preprocess.onnx` 与 `manifest.json` 留在本仓。拷入与提交在 MaaEnd 的模型子模块内完成：
 
 ```bash
 MAAEND=<MaaEnd 工作副本>        # 切到 feat/camera-orientation
 BUNDLE=runs/<name>/bundle
 mkdir -p "$MAAEND/assets/resource/model/map/cameraorientation"
-cp "$BUNDLE"/{preprocess,polar_with_ref}.onnx \
-   "$MAAEND/assets/resource/model/map/cameraorientation/"
+cp "$BUNDLE"/polar_with_ref.onnx "$MAAEND/assets/resource/model/map/cameraorientation/"
 cd "$MAAEND/assets/resource/model"
-git add map/cameraorientation && git commit -m "model: cameraorientation 两图工件" && git push
+git add map/cameraorientation && git commit -m "model: cameraorientation 分类器" && git push
 ```
 
-MaaEnd 不执行 `preprocess.onnx`，而是跑 [cpp/](./cpp/README.md) 的 C++ 等价实现；cpp-algo 构建时核对图里的
-`definition_hash` 与 C++ 是否一致，不一致则构建失败。`definition_hash` 变了的交付要同步 C++（在 MaaEnd 主仓提交）：
+MaaEnd 的预处理跑 [cpp/](./cpp/README.md) 的 C++ 等价实现。`definition_hash` 变了的交付要同步 C++（在 MaaEnd 主仓提交）：
 
 ```bash
 uv run python cpp/tools/sync_maaend.py --maaend "$MAAEND" --check   # 去掉 --check 即拷入

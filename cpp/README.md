@@ -1,7 +1,7 @@
-# cpp：前处理的 C++ 等价实现
+# cpp：预处理的 C++ 等价实现
 
 `cpp/` 是交付图 `preprocess.onnx` 的 C++ 等价实现，MaaEnd cpp-algo 直接调用它，不再经过
-onnxruntime（或 ncnn）执行前处理图。**定义仍是 `endfield/preprocess.py`**：C++ 只是它的一份
+onnxruntime（或 ncnn）执行预处理图。**定义仍是 `endfield/preprocess.py`**：C++ 只是它的一份
 可执行翻译，靠本目录的测试与定义逐字节对齐，并用 `definition_hash` 锁死对应的定义版本。
 
 ```
@@ -35,7 +35,7 @@ cpp/
 
 ## 为什么需要
 
-前处理图没有可学习参数，只是两次双线性 `GridSample` 加窗口裁剪与白底合成，但放在推理框架里
+预处理图没有可学习参数，只是两次双线性 `GridSample` 加窗口裁剪与白底合成，但放在推理框架里
 代价不小：
 
 - MaaEnd 升到 MaaDeps v3（onnxruntime 1.29）后，Android 上这张图单次 25～30 ms（小米 12X，
@@ -83,9 +83,8 @@ cpp/
 2. 按定义改动同步 `src/CameraOrientationPreprocess.cpp`，把 `src/CameraOrientationPreprocess.h`
    的 `kPreprocessDefinitionHash` 改成新值（方位角表与它不一致会编译期 `static_assert` 失败）；
 3. 重新生成 fixtures 并跑 `camori_fixture_test`（fixtures 与实现哈希不一致时退出码 3）；
-4. `uv run python cpp/tools/sync_maaend.py --maaend <MaaEnd>` 同步进 MaaEnd，与新的
-   `preprocess.onnx` 一起提交——MaaEnd 的 cpp-algo 在 CMake 配置时核对图里的 `definition_hash`
-   与 C++ 的 `kPreprocessDefinitionHash`，不一致直接构建失败（`agent/cpp-algo/cmake/CameraOrientation.cmake`）。
+4. `uv run python cpp/tools/sync_maaend.py --maaend <MaaEnd>` 同步进 MaaEnd，与按新定义训练的
+   `polar_with_ref.onnx` 一起提交（MaaEnd 不收录 `preprocess.onnx`，两者的配套只靠这一步保证）。
 
 `endfield/preprocess.py` 必须保持 LF（仓库根 `.gitattributes`）：`definition_hash` 取文件原始字节，
 Windows `core.autocrlf=true` 检出成 CRLF 会得到另一个哈希。

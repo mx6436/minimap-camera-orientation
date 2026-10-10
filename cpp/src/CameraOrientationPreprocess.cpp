@@ -24,7 +24,7 @@ constexpr float kOuterRadius = 54.0f;
 constexpr float kWindowPad = 2.0f;
 
 // torch.sin / torch.cos(torch.deg2rad(arange(360, float32))) 的 float32 位模式。
-// 三角函数是前处理里唯一依赖 libm 的部分，不同平台在最后一位上会有出入，直接取定义的值；
+// 三角函数是预处理里唯一依赖 libm 的部分，不同平台在最后一位上会有出入，直接取定义的值；
 // 半径与 u / v 的乘加仍在这里按定义的 float32 顺序计算。
 #include "CameraOrientationAzimuthTable.inc"
 
