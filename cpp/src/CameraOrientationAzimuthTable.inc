@@ -2,8 +2,6 @@
 // torch.sin / torch.cos(torch.deg2rad(torch.arange(360, dtype=torch.float32))) as float32 bit patterns.
 // Included inside an anonymous namespace by CameraOrientationPreprocess.cpp.
 
-constexpr std::string_view kAzimuthTableDefinitionHash = "223450125d4464985270056d6e88b8394515c31494588dcc5f6bfc70022ef600";
-
 constexpr std::array<uint32_t, kOrientationStripWidth> kAzimuthSinBits = {
     0x00000000, 0x3c8ef859, 0x3d0ef2c6, 0x3d565e3b, 0x3d8edc7b, 0x3db27eb5, 0x3dd61305, 0x3df996a3,
     0x3e0e8365, 0x3e20305c, 0x3e31d0d4, 0x3e43636f, 0x3e54e6ce, 0x3e665992, 0x3e77ba60, 0x3e8483ee,

@@ -10,9 +10,7 @@
 | `def_*` | `endfield/preprocess.strip_pair()`（torch 定义） | **判定基准**：所有 case 与它的最大绝对差 ≤ `--tolerance`（默认 0，即逐字节相同）才算通过 |
 | `ort_*` | `preprocess.onnx` 经 onnxruntime 执行 | 只报告不判定，用来和现交付路径对照 |
 
-另外两道守卫：fixtures 的 `definition_hash`（`index.json`）与 C++ 的 `kPreprocessDefinitionHash` 不一致时测试
-直接退出（码 3）；`CameraOrientationAzimuthTable.inc` 与 `kPreprocessDefinitionHash` 不一致时编译期
-`static_assert` 失败。
+另外：fixtures 的 `definition_hash`（`index.json`）与 C++ 的 `kPreprocessDefinitionHash` 不一致时测试直接退出（码 3）。
 
 ### fixture 分组
 

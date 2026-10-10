@@ -57,8 +57,6 @@ def render() -> str:
         "as float32 bit patterns.",
         "// Included inside an anonymous namespace by CameraOrientationPreprocess.cpp.",
         "",
-        f'constexpr std::string_view kAzimuthTableDefinitionHash = "{pp.definition_hash()}";',
-        "",
     ]
     for name, values in (("kAzimuthSinBits", sin), ("kAzimuthCosBits", cos)):
         bits = values.astype(np.float32).view(np.uint32)

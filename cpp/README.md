@@ -78,10 +78,10 @@ cpp/
 
 `endfield/preprocess.py` 一改 `definition_hash` 就变（只改注释也会变）：
 
-1. `uv run python cpp/tools/gen_azimuth_table.py` 重新生成方位角表（带新的哈希；网格几何变了
-   会在这一步报错，先改 `StripGrid()` 与生成器里的重放）；
+1. `uv run python cpp/tools/gen_azimuth_table.py --check` 确认方位角表是否需要重新生成（去掉 `--check`
+   即重新生成；网格几何变了会在这一步报错，先改 `StripGrid()` 与生成器里的重放）；
 2. 按定义改动同步 `src/CameraOrientationPreprocess.cpp`，把 `src/CameraOrientationPreprocess.h`
-   的 `kPreprocessDefinitionHash` 改成新值（方位角表与它不一致会编译期 `static_assert` 失败）；
+   的 `kPreprocessDefinitionHash` 改成新值；
 3. 重新生成 fixtures 并跑 `camori_fixture_test`（fixtures 与实现哈希不一致时退出码 3）；
 4. `uv run python cpp/tools/sync_maaend.py --maaend <MaaEnd>` 同步进 MaaEnd，与按新定义训练的
    `polar_with_ref.onnx` 一起提交（MaaEnd 不收录 `preprocess.onnx`，两者的配套只靠这一步保证）。

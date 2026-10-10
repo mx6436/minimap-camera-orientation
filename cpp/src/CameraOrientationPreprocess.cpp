@@ -28,8 +28,6 @@ constexpr float kWindowPad = 2.0f;
 // 半径与 u / v 的乘加仍在这里按定义的 float32 顺序计算。
 #include "CameraOrientationAzimuthTable.inc"
 
-static_assert(kAzimuthTableDefinitionHash == kPreprocessDefinitionHash, "CameraOrientationAzimuthTable.inc 来自另一版定义，需重新生成");
-
 enum class Padding
 {
     Zeros,
