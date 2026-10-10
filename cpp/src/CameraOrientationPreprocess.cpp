@@ -62,6 +62,14 @@ void SampleBilinear(const cv::Mat& image, float x, float y, float* out)
         x = std::clamp(x, 0.0f, static_cast<float>(width - 1));
         y = std::clamp(y, 0.0f, static_cast<float>(height - 1));
     }
+    else {
+        // 坐标不在 [-1, width) × [-1, height) 内时四个角都在图外，结果就是 0；提前返回，
+        // 也避免把无穷大或超出整数范围的坐标转成整数（输入有限但极大时会出现）。
+        if (!(x >= -1.0f && x < static_cast<float>(width)) || !(y >= -1.0f && y < static_cast<float>(height))) {
+            std::fill(out, out + Channels, 0.0f);
+            return;
+        }
+    }
     const int64_t x1 = static_cast<int64_t>(std::floor(x));
     const int64_t y1 = static_cast<int64_t>(std::floor(y));
     const int64_t x2 = x1 + 1;
