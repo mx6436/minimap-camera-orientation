@@ -38,7 +38,7 @@ uv run prepare-data --mode ref          # -> data/processed_ref，并建 data/tr
 uv run train --run-dir runs/<name>      # train.toml 里 input_mode = "ref"
 ```
 
-定位与 ref 实机推理依赖本机的 MapLocator 工作台 `local/maplocator/`。
+定位依赖本机的 MapLocator 工作台 `local/maplocator/`。
 
 ## 交付
 

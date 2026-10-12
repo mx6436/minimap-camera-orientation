@@ -18,11 +18,9 @@ def make_cli(path: Path, usage: str) -> Path:
     return path
 
 
-def make_workspace(
-    tmp_path: Path, usage: str = "usage: map-locate --resource-dir <dir> [--stream]"
-) -> Path:
+def make_workspace(tmp_path: Path) -> Path:
     root = tmp_path / "maplocator"
-    make_cli(workspace.cli_path(root), usage)
+    make_cli(workspace.cli_path(root), "usage: map-locate --resource-dir <dir>")
     workspace.resource_dir(root).mkdir(parents=True)
     return root
 
@@ -90,22 +88,6 @@ def test_require_locator_reports_cli_that_cannot_start(tmp_path: Path) -> None:
 
     with pytest.raises(SystemExit, match="无法执行"):
         workspace.require_locator(root)
-
-
-def test_require_locator_probes_stream_capability(tmp_path: Path) -> None:
-    root = make_workspace(tmp_path)
-
-    assert workspace.require_locator(root, stream=True) == (
-        workspace.cli_path(root),
-        workspace.resource_dir(root),
-    )
-
-
-def test_require_locator_rejects_cli_without_stream(tmp_path: Path) -> None:
-    root = make_workspace(tmp_path, usage="usage: map-locate --resource-dir <dir>")
-
-    with pytest.raises(SystemExit, match="--stream"):
-        workspace.require_locator(root, stream=True)
 
 
 def test_require_assets_reports_missing_dir(tmp_path: Path) -> None:

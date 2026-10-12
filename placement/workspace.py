@@ -52,15 +52,12 @@ def assets_root_from_provenance(stamp: Mapping[str, object] | None) -> str:
     )
 
 
-def require_locator(root: Path = WORKSPACE_ROOT, *, stream: bool = False) -> tuple[Path, Path]:
-    """CLI 与资源目录；缺件、起不来或不支持 --stream 时硬报错。"""
+def require_locator(root: Path = WORKSPACE_ROOT) -> tuple[Path, Path]:
+    """CLI 与资源目录；缺件或起不来时硬报错。"""
     cli = _require_cli(cli_path(root))
     resource = _require_resource(resource_dir(root))
-    usage = _usage(cli)
-    if usage is None:
+    if _usage(cli) is None:
         raise SystemExit(f"{cli} 无法执行（缺共享库？见 {DOC_PATH}）")
-    if stream and "--stream" not in usage:
-        raise SystemExit(f"{cli} 不支持 --stream，需按 {DOC_PATH} 重建工作台")
     return cli, resource
 
 
@@ -83,7 +80,7 @@ def _require_resource(resource: Path) -> Path:
 
 
 def _usage(cli: Path) -> str | None:
-    """CLI 没有 --help：无参数运行会把 usage（含 --stream）打到 stderr 并以 2 退出。
+    """CLI 没有 --help：无参数运行会把 usage 打到 stderr 并以 2 退出。
 
     返回 stdout+stderr；起不来（缺共享库等）返回 None。
     """

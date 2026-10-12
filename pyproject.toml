@@ -14,14 +14,12 @@ dependencies = [
     "torch>=2.13",
     "onnx>=1.18",
     "onnxscript>=0.2",  # torch.onnx dynamo 导出器运行时依赖
-    "MaaFw>=5.13.0b5",  # LinuxController + gamescope toolkit 需要 5.13.0b5+
 ]
 
 [project.scripts]
 train = "cli.train:main"
 prepare-data = "cli.prepare_data:main"
 locate-dataset = "cli.locate_dataset:main"
-live = "cli.live:main"
 export-onnx = "cli.export_onnx:main"
 export-preprocess = "cli.export_preprocess:main"
 export-artifact = "cli.export_artifact:main"
