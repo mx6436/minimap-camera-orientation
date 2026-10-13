@@ -1,6 +1,6 @@
 # 小地图摄像机角度识别
 
-从《明日方舟：终末地》的实时小地图预测摄像机角度（`[0, 360)`，顺时针为正），供 MaaEnd 等自动化工具对齐视角。术语与各环节的权威见 [GLOSSARY.md](./GLOSSARY.md)。
+从《明日方舟：终末地》的实时小地图预测摄像机角度（`[0, 360)`，顺时针为正），供 MaaEnd 等自动化工具对齐视角。
 
 流程：构建 C++ 数据准备工具 → 生成数据集 → 训练 → 导出 ONNX。
 
@@ -16,17 +16,17 @@ cmake -S cpp --preset linux-x64
 cmake --build cpp/build
 ```
 
-平台 preset 见 `cpp/CMakePresets.json`。
+## 数据约定
 
-## 生成数据集
+输入数据是 1280x720 的原始截图，放在 `data/{train_raw,hard_raw,val_raw}` 目录下。
 
-原始截图放在 `data/{train_raw,hard_raw,val_raw}`，由人维护。在仓库根目录执行：
+## 准备数据集
+
+在仓库根目录执行：
 
 ```bash
 cpp/build/bin/dataset-prep
 ```
-
-跳过原因见 `data/processed_ref/report.json`；门槛、参数与产物格式以工具自身（`--help` 与 `cpp/src/main.cpp`）为准。
 
 ## 训练
 
@@ -38,12 +38,11 @@ uv sync
 uv run train --run-dir runs/<name>
 ```
 
-参数以 `python/train.toml` 为准。
+训练参数以 `python/train.toml` 为准。
 
 ## 导出 ONNX
 
 ```bash
+cd python
 uv run export-onnx --run-dir runs/<name>
 ```
-
-图落在 run 目录；输入输出契约与校验以 `python/endfield/onnx_contract.py` 为准。
