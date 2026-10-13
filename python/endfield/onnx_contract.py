@@ -13,7 +13,7 @@ from typing import Any
 from endfield.strip import INPUT_CHANNELS, STRIP_H, STRIP_W
 
 # 与 MaaEnd 运行时同版本；版本不符时导出校验的结论作废
-ORT_VERSION = "1.19.2"
+ORT_VERSION = "1.29.0"
 INPUT_NAME = "strip"
 OUTPUT_NAME = "pmf"
 OUTPUT_BINS = 360

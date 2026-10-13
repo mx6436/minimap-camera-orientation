@@ -13,7 +13,7 @@ dependencies = [
     "matplotlib>=3.11",
     "torch>=2.13",
     "onnx>=1.18",
-    "onnxruntime==1.19.2",  # 与 MaaEnd 运行时同版本（ORT 加载校验与实机口径一致）
+    "onnxruntime==1.29.0",  # 与 MaaEnd 运行时同版本（ORT 加载校验与实机口径一致）
     "onnxscript>=0.2",  # torch.onnx dynamo 导出器运行时依赖
 ]
 

@@ -8,7 +8,7 @@
 输出 Z/360Z 上的离散概率质量函数 [1,360]。循环 pad 原样导出为 Pad(wrap)，由 ONNX
 Runtime 支持。
 
-交付文件名固定 `polar_with_ref.onnx`；导出后即跑 ONNX IO 契约与 ORT 1.19.2 加载校验
+交付文件名固定 `polar_with_ref.onnx`；导出后即跑 ONNX IO 契约与 ORT 1.29.0 加载校验
 （`endfield/onnx_contract.py`），不合格的图不会当作交付物落盘。
 """
 
@@ -81,7 +81,7 @@ def attach_metadata(
 
 
 def _validate_export(path: Path) -> None:
-    """导出即校验：ONNX IO 契约 + ORT 1.19.2 可加载（与 MaaEnd 运行时同版本）。"""
+    """导出即校验：ONNX IO 契约 + ORT 1.29.0 可加载（与 MaaEnd 运行时同版本）。"""
     import onnx
 
     from endfield.onnx_contract import check_classifier_model, check_onnx_runtime
