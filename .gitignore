@@ -10,3 +10,6 @@ prototype/out/
 
 # nix direnv
 .direnv/
+
+# C++ 数据准备工具
+cpp/build/
