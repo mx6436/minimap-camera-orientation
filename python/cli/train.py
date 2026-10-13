@@ -9,10 +9,10 @@ from typing import Any
 
 import torch
 
-from endfield import preprocess_cache, run_dir, run_record
+from endfield import run_dir, run_record
 from endfield.atomic_io import atomic_json_dump, load_json
-from endfield.data_utils import png_names, seed_everything
-from endfield.dataset import HARD_RAW_DIR, PROCESSED_REF_DIR
+from endfield.data_utils import seed_everything
+from endfield.dataset import DEFAULT_DATA_ROOT, DataLayout, split_names
 from endfield.model import (
     AzimuthNet,
     choose_device,
@@ -20,6 +20,8 @@ from endfield.model import (
     expected_parameter_count,
     load_model,
 )
+from endfield.paths import repo_path
+from endfield.strip import INPUT_CHANNELS
 from endfield.train import artifacts as train_artifacts
 from endfield.train.artifacts import plot_loss_curves, save_checkpoint
 from endfield.train.config import load_config
@@ -28,15 +30,12 @@ from endfield.train.data import (
     filter_reference_gap,
     make_loader,
     names_fingerprint,
-    split_dirs,
 )
 from endfield.train.engine import eval_loss, train_epoch
 from endfield.train.metrics import Metrics
 from endfield.train.record import build_record
-from placement import workspace
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_CONFIG_PATH = REPO_ROOT / "train.toml"
+DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[1] / "train.toml"
 # 8 物理核：SMT 线程对 conv 负载无增益反有争用
 DEFAULT_THREADS = 8
 # 会话级、不改变训练前提的字段：续训时放行，其余任一不一致即拒
@@ -56,7 +55,21 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_CONFIG_PATH,
         help="训练配置 TOML（模型/损失/优化/增强）",
     )
-    parser.add_argument("--run-dir", type=Path, required=True)
+    parser.add_argument(
+        "--data-root",
+        type=Path,
+        default=DEFAULT_DATA_ROOT,
+        help=(
+            "数据根：含 train_raw/hard_raw/val_raw 与 processed_ref"
+            "（缺省 <repo>/data；相对路径按 <repo>/ 解析）"
+        ),
+    )
+    parser.add_argument(
+        "--run-dir",
+        type=Path,
+        required=True,
+        help="run 产物目录（相对路径按 <repo>/ 解析）",
+    )
     parser.add_argument("--resume", action="store_true", help="从 run 目录的 last.pt 接续训练")
     parser.add_argument("--device", default=None, help="auto、cpu 或 cuda")
     parser.add_argument(
@@ -78,6 +91,16 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _processed_names(layout: DataLayout, names: list[str]) -> tuple[list[str], int]:
+    """raw 名单 -> 有条带产物的名单；返回 (可用名单, 被跳过的数量)。
+
+    数据准备工具会因非 720p、定位失败、低分或缺资产跳过样本，这些样本没有产物，
+    训练侧不进入划分。
+    """
+    available = [name for name in names if layout.available(name)]
+    return available, len(names) - len(available)
+
+
 def main() -> None:
     args = parse_args()
     if args.threads < 1:
@@ -91,19 +114,24 @@ def main() -> None:
     torch.set_num_threads(args.threads)
     seed_everything(config["seed"])
     device = choose_device(args.device)
-    train_dir, val_dir = split_dirs(config["input_mode"])
-    train_names = png_names(train_dir)
-    val_names = png_names(val_dir)
+
+    layout = DataLayout(repo_path(args.data_root))
+    raw = split_names(layout)
+    train_names, missing_train = _processed_names(layout, raw.train)
+    val_names, missing_val = _processed_names(layout, raw.val)
+    if missing_train or missing_val:
+        print(
+            f"processed_ref: {missing_train} train / {missing_val} val raw sample(s) have no "
+            f"strip pair (skipped by the data-prep gate; see {layout.processed_ref}/report.json)"
+        )
     if not train_names or not val_names:
-        raise SystemExit(f"missing {train_dir} or {val_dir} PNG files; run prepare-data first")
-    assets_root = None
-    if config["input_mode"] is run_record.InputMode.REF:
-        assets_root = workspace.assets_root_from_provenance(
-            preprocess_cache.read_stamp(PROCESSED_REF_DIR)
+        raise SystemExit(
+            f"missing processed strips under {layout.processed_ref}; "
+            "run the C++ data-prep tool first"
         )
     if config["max_ref_missing"] is not None:
         total = len(train_names)
-        train_names = filter_reference_gap(train_names, train_dir, config["max_ref_missing"])
+        train_names = filter_reference_gap(layout, train_names, config["max_ref_missing"])
         print(
             f"max_ref_missing={config['max_ref_missing']:g}: "
             f"kept {len(train_names)}/{total} training samples"
@@ -115,17 +143,16 @@ def main() -> None:
             )
     # 困难样本：名单取自 data/hard_raw，与训练划分求交后才进损失（定位门与 max_ref_missing
     # 对它的剔除同样有效）；权重只落在训练 loader 上，val 不带
-    hard_candidates = png_names(HARD_RAW_DIR)
-    hard_names = sorted(set(hard_candidates) & set(train_names))
-    print(f"hard: {len(hard_names)}/{len(hard_candidates)} samples in the training split")
-    if hard_candidates and not hard_names:
+    hard_names = sorted(set(raw.hard) & set(train_names))
+    print(f"hard: {len(hard_names)}/{len(raw.hard)} samples in the training split")
+    if raw.hard and not hard_names:
         print(
-            f"warning: none of the {len(hard_candidates)} sample(s) in {HARD_RAW_DIR} is in "
-            "the training split (dropped by the locate gate or max_ref_missing); "
+            f"warning: none of the {len(raw.hard)} sample(s) in {layout.hard_raw} is in "
+            "the training split (dropped by the data-prep gate or max_ref_missing); "
             f"hard_weight={config['hard_weight']:g} has no effect"
         )
 
-    output_dir = args.run_dir.resolve()
+    output_dir = repo_path(args.run_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     existing = run_dir.occupied(output_dir)
     if existing and not args.resume:
@@ -134,7 +161,7 @@ def main() -> None:
             "choose an empty --run-dir"
         )
 
-    model = AzimuthNet(in_channels=run_record.input_channels(config["input_mode"])).to(device)
+    model = AzimuthNet(in_channels=INPUT_CHANNELS).to(device)
     # compile 只包前向；checkpoint/优化器用原模型，state_dict 键不带 _orig_mod. 前缀
     compile_enabled = config["compile"] and not args.no_compile
     runtime_model = torch.compile(model) if compile_enabled else model
@@ -151,7 +178,6 @@ def main() -> None:
         names_fingerprint(train_names),
         names_fingerprint(val_names),
         trainable_parameters=parameter_count,
-        assets_root=assets_root,
         hard_names=hard_names,
     )
     optimizer = torch.optim.AdamW(
@@ -168,11 +194,10 @@ def main() -> None:
     train_generator.manual_seed(config["seed"])
     train_loader = make_loader(
         AngleDataset(
-            train_dir,
+            layout,
             train_names,
             noise_augment=config["noise_augment"],
             roll_augment=config["roll_augment"],
-            input_mode=config["input_mode"],
             hard_names=set(hard_names),
             hard_weight=config["hard_weight"],
         ),
@@ -183,7 +208,7 @@ def main() -> None:
         train_generator,
     )
     val_loader = make_loader(
-        AngleDataset(val_dir, val_names, input_mode=config["input_mode"]),
+        AngleDataset(layout, val_names),
         config["batch_size"],
         False,
         config["seed"],
@@ -198,7 +223,7 @@ def main() -> None:
         recorded = run_dir.load_record(output_dir)
         fresh = {k: v for k, v in record.metadata.items() if k not in _SESSION_KEYS}
         old = {k: recorded.metadata.get(k) for k in fresh}
-        if (old, recorded.input_mode) != (fresh, record.input_mode):
+        if old != fresh:
             raise SystemExit(f"{output_dir}: train.toml 与 record.json 不一致；换配置请换新目录")
         state = train_artifacts.load_resume_state(run_dir.last_path(output_dir))
         model.load_state_dict(state["model"])

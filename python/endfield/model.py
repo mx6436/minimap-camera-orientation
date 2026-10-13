@@ -1,6 +1,7 @@
 """摄像机角度预测模型（AzimuthNet）：逐像素预测颜色类别后验，沿半径以
 加权和与跨半径 soft-min 双路聚合为 2×16 通道方位角剖面，再经循环一维卷积
-匹配滤波输出每个方位角的 logits；交叉熵训练，argmax 解码。方位角轴全程
+匹配滤波输出每个方位角的 logits；交叉熵训练。推断解码在 MaaEnd C++
+（`CameraOrientationPredictor`）。方位角轴全程
 不下采样、只做循环卷积，对输入平移精确等变。
 
 角向可达半径 = 主干各层 dilation 之和 + score 头的 ±1：每层 k=3 取 ±d，方位轴又
@@ -18,10 +19,9 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from endfield.preprocess import IMG_H, IMG_W
+from endfield.strip import INPUT_CHANNELS, STRIP_H, STRIP_W
 
 TARGET_SIGMA = 3.0
-REFINE_RADIUS = 5
 MATCH_DILATIONS = (1, 8, 16)
 # 主干各块输出通道数与方位轴 dilation：可达半径 = Σd + score 头的 ±1 ≥ 视锥半宽 40°。
 # 宽度是运算量的二次项、dilation 在 MAC 上免费，所以预算从宽度里出、可达范围不动；
@@ -41,11 +41,9 @@ class CircularConv1d(nn.Module):
         return self.conv(F.pad(x, (self.pad, self.pad), mode="circular"))
 
 
-# 架构版本：checkpoint 的键集与参数量随架构变化；旧版本在 load_model 中兼容。
+# 架构版本：checkpoint 的键集与参数量随架构变化；arch 5 = 窄主干 32-32-48-48 +
+# 角向可达 ±40；arch 4 的宽主干（32-64-128）与 arch 3 的 3 通道首层（polar）不兼容。
 ARCH_VERSION = 5
-# arch 3 = 3 通道首层（polar）；arch 4 起首层通道数由 checkpoint 权重形状决定。
-# arch 5 = 窄主干 32-32-48-48 + 角向可达 ±40；arch 4 的宽主干（32-64-128）不兼容。
-SUPPORTED_ARCH_VERSIONS = (3, ARCH_VERSION)
 
 
 class AzimuthNet(nn.Module):
@@ -59,7 +57,7 @@ class AzimuthNet(nn.Module):
         self,
         score_channels: int = 16,
         trunk_channels: tuple[int, ...] = TRUNK_CHANNELS,
-        in_channels: int = 3,
+        in_channels: int = INPUT_CHANNELS,
     ) -> None:
         super().__init__()
         self.in_channels = in_channels
@@ -89,7 +87,7 @@ class AzimuthNet(nn.Module):
             nn.Conv2d(channels[-1], score_channels, 3),
         )
         with torch.no_grad():
-            radial_rows = self.trunk(torch.zeros(1, in_channels, IMG_H, IMG_W)).shape[-2]
+            radial_rows = self.trunk(torch.zeros(1, in_channels, STRIP_H, STRIP_W)).shape[-2]
         self.radial = nn.Parameter(torch.zeros(score_channels, radial_rows))
         d1, d2, d3 = MATCH_DILATIONS
         self.filter = nn.Sequential(
@@ -147,57 +145,18 @@ def smoothed_targets(angles: np.ndarray, sigma: float = TARGET_SIGMA) -> torch.T
     return torch.from_numpy(weights.astype(np.float32))
 
 
-def decode_probs(probs: torch.Tensor) -> tuple[np.ndarray, np.ndarray]:
-    """argmax 定峰后取 ±REFINE_RADIUS 窗口内的循环加权平均，得到亚度级角度。
-
-    置信度为 360 个概率方向向量（方向 = bin 方位角，长度 = softmax 概率）的合成
-    模长，再乘以解码方向与合成方向夹角的余弦：分布集中且窗口均值对准合成方向时
-    接近 1，均匀、多峰对消或窗口均值被次要峰拉偏时趋 0。
-    """
-    values = probs.detach().cpu().numpy()
-    centers = values.argmax(axis=1)
-    radians = np.deg2rad(np.arange(360))
-    sin_sum = values @ np.sin(radians)
-    cos_sum = values @ np.cos(radians)
-    confidence = np.hypot(sin_sum, cos_sum)
-    offsets = np.arange(-REFINE_RADIUS, REFINE_RADIUS + 1)
-    decoded = np.empty(len(centers), dtype=np.float64)
-    for i, center in enumerate(centers):
-        cols = (center + offsets) % 360
-        weights = values[i, cols]
-        radians = np.deg2rad(cols)
-        angle = np.degrees(
-            np.arctan2(np.sum(weights * np.sin(radians)), np.sum(weights * np.cos(radians)))
-        )
-        value = angle % 360.0
-        decoded[i] = 0.0 if value == 360.0 else value
-        resultant = np.degrees(np.arctan2(sin_sum[i], cos_sum[i]))
-        confidence[i] *= np.cos(np.deg2rad(decoded[i] - resultant))
-    return decoded, confidence
-
-
-def decode_logits(logits: torch.Tensor) -> tuple[np.ndarray, np.ndarray]:
-    return decode_probs(torch.softmax(logits.detach().cpu(), dim=1))
-
-
 def count_trainable_parameters(model: nn.Module) -> int:
     return sum(parameter.numel() for parameter in model.parameters() if parameter.requires_grad)
 
 
-EXPECTED_PARAMETER_COUNT = 71_137  # in_channels = 3（polar）
-EXPECTED_REF_PARAMETER_COUNT = 72_289  # in_channels = 7（ref）
-EXPECTED_PARAMETER_COUNTS: dict[int, int] = {
-    3: EXPECTED_PARAMETER_COUNT,
-    7: EXPECTED_REF_PARAMETER_COUNT,
-}
+EXPECTED_PARAMETER_COUNT = 72_289  # in_channels = 7（ref）
 
 
 def expected_parameter_count(in_channels: int) -> int:
-    """给定首层通道数的期望参数量；未知通道数说明架构未定义，直接拒绝。"""
-    try:
-        return EXPECTED_PARAMETER_COUNTS[in_channels]
-    except KeyError:
-        raise ValueError(f"unsupported in_channels: {in_channels!r}") from None
+    """给定首层通道数的期望参数量；非 ref 首层说明架构未定义，直接拒绝。"""
+    if in_channels != INPUT_CHANNELS:
+        raise ValueError(f"unsupported in_channels: {in_channels!r}")
+    return EXPECTED_PARAMETER_COUNT
 
 
 def choose_device(value: str | None = None) -> torch.device:
@@ -221,10 +180,8 @@ def load_model(path: Path | str, device: torch.device | str = "cpu") -> nn.Modul
     checkpoint = torch.load(path, map_location="cpu", weights_only=False)
     if not isinstance(checkpoint, dict) or "model" not in checkpoint:
         raise ValueError(f"invalid checkpoint: {path}")
-    if checkpoint.get("arch") not in SUPPORTED_ARCH_VERSIONS:
-        raise ValueError(
-            f"unsupported checkpoint arch version {checkpoint.get('arch')!r}: {path}"
-        )
+    if checkpoint.get("arch") != ARCH_VERSION:
+        raise ValueError(f"unsupported checkpoint arch version {checkpoint.get('arch')!r}: {path}")
     in_channels = _checkpoint_in_channels(checkpoint["model"], path)
     model = AzimuthNet(in_channels=in_channels)
     if count_trainable_parameters(model) != expected_parameter_count(in_channels):
@@ -235,23 +192,3 @@ def load_model(path: Path | str, device: torch.device | str = "cpu") -> nn.Modul
         raise ValueError(f"incompatible checkpoint weights: {path}")
     model.load_state_dict(checkpoint["model"])
     return model.to(device).eval()
-
-
-def predict_angle(model: nn.Module, strip_bgr: np.ndarray) -> tuple[float, float]:
-    """strip_bgr: 极坐标展开的输出，返回 (角度 [0,360), 置信度)：
-    置信度为 360 概率方向向量的合成模长，乘以解码方向与合成方向夹角的余弦。
-    """
-    angle, confidence, _ = predict_probs(model, strip_bgr)
-    return angle, confidence
-
-
-def predict_probs(model: nn.Module, strip_bgr: np.ndarray) -> tuple[float, float, np.ndarray]:
-    """predict_angle 附带第三返回值：Z/360Z 上的 softmax 概率质量函数。"""
-    array = strip_bgr.astype(np.float32) / 255.0
-    features = torch.from_numpy(array.transpose(2, 0, 1)).unsqueeze(0)
-    features = features.to(next(model.parameters()).device)
-    with torch.no_grad():
-        output = model(features)
-    probs = torch.softmax(output.detach().cpu(), dim=1)
-    angles, confidence = decode_probs(probs)
-    return float(angles[0]), float(confidence[0]), probs.numpy()[0]

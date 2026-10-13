@@ -1,17 +1,19 @@
+"""训练数据的通用小工具：PNG 解码、角度标注解析与样本名列举。"""
+
 from __future__ import annotations
 
 import random
 import re
-from collections.abc import Iterable
 from pathlib import Path
 
+import cv2
 import numpy as np
 
-from endfield.polar import imread_png
-from endfield.preprocess import IMG_H, IMG_W
+from endfield.strip import REFERENCE_CHANNELS, STRIP_H, STRIP_W
 
 ANGLE_RE = re.compile(r"_r(\d+(?:\.\d+)?)\.png$")
 SEED = 42
+PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
 
 def parse_angle(path: Path) -> float:
@@ -25,38 +27,34 @@ def parse_angle(path: Path) -> float:
     return angle
 
 
-def circular_error(predicted: np.ndarray, target: np.ndarray) -> np.ndarray:
-    return np.abs((predicted - target + 180.0) % 360.0 - 180.0)
+def imread_png(path: Path) -> np.ndarray:
+    """PNG -> cv2 原生布局 BGR/BGRA uint8 HWC；按 magic bytes 拒绝非 PNG 输入。"""
+    with path.open("rb") as stream:
+        if stream.read(len(PNG_MAGIC)) != PNG_MAGIC:
+            raise ValueError(f"{path}: expected PNG data")
+    image = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
+    if image is None:
+        raise ValueError(f"{path}: cannot decode PNG image")
+    return image
 
 
 def load_bgr(path: Path) -> np.ndarray:
     image = imread_png(path)
-    if image.shape != (IMG_H, IMG_W, 3):
-        raise ValueError(f"{path}: expected {IMG_W}x{IMG_H} BGR, got shape {image.shape}")
+    if image.shape != (STRIP_H, STRIP_W, 3):
+        raise ValueError(f"{path}: expected {STRIP_W}x{STRIP_H} BGR, got shape {image.shape}")
     return image
 
 
 def load_bgra(path: Path) -> np.ndarray:
     """BGRA PNG（ref 参考流布局：BGR = 白底合成参考，A = 原始连续 alpha）。"""
     image = imread_png(path)
-    if image.shape != (IMG_H, IMG_W, 4):
-        raise ValueError(f"{path}: expected {IMG_W}x{IMG_H} BGRA, got shape {image.shape}")
+    if image.shape != (STRIP_H, STRIP_W, REFERENCE_CHANNELS):
+        raise ValueError(f"{path}: expected {STRIP_W}x{STRIP_H} BGRA, got shape {image.shape}")
     return image
 
 
 def png_names(directory: Path) -> list[str]:
     return sorted(path.name for path in directory.glob("*.png"))
-
-
-def union_png_samples(directories: Iterable[Path]) -> dict[str, Path]:
-    """原始目录并集 -> {样本名: 源文件}。"""
-    samples: dict[str, Path] = {}
-    for directory in directories:
-        for path in sorted(directory.glob("*.png")):
-            if path.name in samples:
-                raise SystemExit(f"sample name in both raw dirs: {path.name}")
-            samples[path.name] = path
-    return samples
 
 
 def seed_everything(seed: int = SEED) -> None:

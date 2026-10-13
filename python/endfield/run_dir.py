@@ -1,11 +1,11 @@
 """run 产物契约：run 目录里的文件与训练汇总（`summary.json`）的 schema。
 
 持有 run 目录的形状（`best.pt` / `last.pt` / `record.json` / `summary.json` / `history.json`
-的路径与占用标记）与训练汇总的字段 schema，供训练写侧、实机取 checkpoint、交付导出与
-conformance 共用。
-`record.json` 的 schema 仍由 `endfield/run_record.py` 持有，本模块只是它的调用方。
+与交付图名 `polar_with_ref.onnx` 的路径与占用标记）与训练汇总的字段 schema，供训练写侧与
+交付导出共用。`record.json` 的 schema 仍由 `endfield/run_record.py` 持有，本模块只是它的
+调用方。
 
-本模块保持 torch-free：`cli/verify_artifact.py` 的校验路径经 `endfield/bundle.py` 到达这里。
+本模块保持 torch-free。
 """
 
 from __future__ import annotations
@@ -31,6 +31,8 @@ CHECKPOINT_NAME = "best.pt"
 LAST_NAME = "last.pt"
 SUMMARY_NAME = "summary.json"
 HISTORY_NAME = "history.json"
+# 交付图名：MaaEnd 的 CameraOrientationPredictor 固定消费该文件名
+GRAPH_NAME = "polar_with_ref.onnx"
 
 # 写侧会写的文件（不含 loss_curve.png）：目录里出现任一即视为已被一次 run 占用
 OCCUPANCY_MARKERS: tuple[str, ...] = (
@@ -49,8 +51,8 @@ _CONTRACT_METRICS = ("expected_abs_error", "rms_error")
 class TrainingSummary:
     """`summary.json` 的 typed view：交付契约字段 + 训练侧诊断。
 
-    `metrics` 里的 rms 误差与期望绝对误差是交付 manifest 与交付图 metadata 的输入；其余字段是
-    诊断信息，随 `endfield/train/metrics.py` 的口径演化。
+    `metrics` 里的 rms 误差与期望绝对误差是交付图 metadata 的输入；其余字段是诊断信息，
+    随 `endfield/train/metrics.py` 的口径演化。
     """
 
     epoch: int
@@ -84,6 +86,11 @@ def summary_path(run_dir: Path) -> Path:
 def history_path(run_dir: Path) -> Path:
     """逐 epoch 训练历史的路径。"""
     return Path(run_dir) / HISTORY_NAME
+
+
+def graph_path(run_dir: Path) -> Path:
+    """交付 ONNX 图的路径。"""
+    return Path(run_dir) / GRAPH_NAME
 
 
 def occupied(run_dir: Path) -> list[str]:
@@ -124,7 +131,7 @@ def load_summary(run_dir: Path) -> TrainingSummary:
 
 
 def load_run(run_dir: Path) -> tuple[RunRecord, TrainingSummary]:
-    """run 目录 -> 运行档案与训练汇总；交付侧与 conformance 的唯一读取入口。"""
+    """run 目录 -> 运行档案与训练汇总；交付导出的唯一读取入口。"""
     return load_record(run_dir), load_summary(run_dir)
 
 

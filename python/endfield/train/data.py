@@ -1,4 +1,4 @@
-"""数据集与加载器：文件名角度标注 → (BGR 张量, 角度标量, 权重标量)。"""
+"""数据集与加载器：文件名角度标注 -> (7 通道参考配对张量, 角度标量, 权重标量)。"""
 
 from __future__ import annotations
 
@@ -12,36 +12,20 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 
 from endfield.data_utils import load_bgr, load_bgra, parse_angle
-from endfield.dataset import (
-    REF_SUBDIR,
-    TRAIN_DIR,
-    TRAIN_REF_DIR,
-    VAL_DIR,
-    VAL_REF_DIR,
-)
+from endfield.dataset import DataLayout
 from endfield.input_encoding import assemble_ref_pair, reference_gap_fraction
-from endfield.run_record import InputMode, input_channels
-
-SPLIT_DIRS: dict[InputMode, tuple[Path, Path]] = {
-    InputMode.POLAR: (TRAIN_DIR, VAL_DIR),
-    InputMode.REF: (TRAIN_REF_DIR, VAL_REF_DIR),
-}
+from endfield.strip import INPUT_CHANNELS
 
 
-def split_dirs(input_mode: InputMode | str) -> tuple[Path, Path]:
-    """输入模式 -> (训练目录, 验证目录)。"""
-    return SPLIT_DIRS[InputMode.parse(input_mode)]
-
-
-def filter_reference_gap(names: list[str], directory: Path, max_missing: float) -> list[str]:
+def filter_reference_gap(layout: DataLayout, names: list[str], max_missing: float) -> list[str]:
     """按参考条带的环内缺失占比过滤训练样本：**严格大于**阈值即排除（等于保留）。
 
-    缺失占比 = 42x360 条带中 `ref.A < 255` 的像素比例（读 `ref/` 流，与
-    `prepare-data --mode ref` 落盘一致，各半径等权）。只选样本，不改磁盘数据。
+    缺失占比 = 42x360 条带中 `ref.A < 255` 的像素比例（读 `processed_ref/ref/` 流，
+    与 C++ 数据准备工具落盘一致，各半径等权）。只选样本，不改磁盘数据。
     """
     kept: list[str] = []
     for name in names:
-        reference = load_bgra(directory / REF_SUBDIR / name)
+        reference = load_bgra(layout.reference_path(name))
         if reference_gap_fraction(reference) <= max_missing:
             kept.append(name)
     return kept
@@ -50,20 +34,17 @@ def filter_reference_gap(names: list[str], directory: Path, max_missing: float) 
 class AngleDataset(Dataset):
     def __init__(
         self,
-        directory: Path,
+        layout: DataLayout,
         names: list[str],
         noise_augment: bool = False,
         roll_augment: bool = False,
-        input_mode: InputMode | str = InputMode.POLAR,
         hard_names: Set[str] = frozenset(),
         hard_weight: float = 1.0,
     ) -> None:
-        self.directory = directory
+        self.layout = layout
         self.names = names
         self.noise_augment = noise_augment
         self.roll_augment = roll_augment
-        self.input_mode = InputMode.parse(input_mode)
-        self.channels = input_channels(self.input_mode)
         # 困难样本权重：名单由调用方给出（本模块不认识 data/hard_raw），增广与权重正交
         self.hard_names = hard_names
         self.hard_weight = hard_weight
@@ -72,21 +53,16 @@ class AngleDataset(Dataset):
         return len(self.names)
 
     def _load(self, name: str) -> np.ndarray:
-        if self.input_mode is InputMode.REF:
-            observed = load_bgr(self.directory / name)
-            reference = load_bgra(self.directory / REF_SUBDIR / name)
-            return assemble_ref_pair(observed, reference)
-        return load_bgr(self.directory / name)
+        observed = load_bgr(self.layout.observed_path(name))
+        reference = load_bgra(self.layout.reference_path(name))
+        return assemble_ref_pair(observed, reference)
 
     def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         name = self.names[index]
         angle = parse_angle(Path(name))
         array = self._load(name).astype(np.float32) / 255.0
-        if array.shape[2] != self.channels:
-            raise ValueError(
-                f"{name}: expected {self.channels} channels for input_mode "
-                f"{self.input_mode.value!r}, got {array.shape[2]}"
-            )
+        if array.shape[2] != INPUT_CHANNELS:
+            raise ValueError(f"{name}: expected {INPUT_CHANNELS} channels, got {array.shape[2]}")
         if self.roll_augment:
             # 架构对角向平移精确等变，滚动后的样本严格有效；随机 δ 同时
             # 平衡各 bin 的有效样本量，不受标注角度分布影响
@@ -107,7 +83,7 @@ class AngleDataset(Dataset):
 
 
 def names_fingerprint(names: list[str]) -> str:
-    """跨 run 校验数据集一致性的摘要：排序、\n 连接后取 sha256。"""
+    """跨 run 校验数据集一致性的摘要：排序、\\n 连接后取 sha256。"""
     return hashlib.sha256("\n".join(sorted(names)).encode("utf-8")).hexdigest()
 
 

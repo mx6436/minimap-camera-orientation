@@ -13,20 +13,16 @@ dependencies = [
     "matplotlib>=3.11",
     "torch>=2.13",
     "onnx>=1.18",
+    "onnxruntime==1.19.2",  # 与 MaaEnd 运行时同版本（ORT 加载校验与实机口径一致）
     "onnxscript>=0.2",  # torch.onnx dynamo 导出器运行时依赖
 ]
 
 [project.scripts]
 train = "cli.train:main"
-prepare-data = "cli.prepare_data:main"
-locate-dataset = "cli.locate_dataset:main"
 export-onnx = "cli.export_onnx:main"
-export-preprocess = "cli.export_preprocess:main"
-export-artifact = "cli.export_artifact:main"
-verify-artifact = "cli.verify_artifact:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["endfield", "placement", "cli"]
+packages = ["endfield", "cli"]
 
 [tool.ruff]
 line-length = 100
@@ -42,12 +38,7 @@ select = [
     "B",   # bugbear 常见错误
 ]
 
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-
 [dependency-groups]
 dev = [
-    "pytest>=9.1.1",
     "ruff>=0.16.5",
-    "onnxruntime==1.19.2",  # 与 MaaEnd 运行时同版本（conformance 与实机口径一致）
 ]

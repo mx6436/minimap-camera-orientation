@@ -1,19 +1,20 @@
 """运行档案的写侧 adapter：训练配置与环境事实 -> RunRecord（核心字段 + 复现 metadata）。
 
 envelope 与核心字段由 `endfield/run_record.py` 持有并落盘；本模块只把训练侧的配置、
-环境与数据指纹翻译成 metadata。
+环境与数据指纹翻译成 metadata。训练固定为 ref 单模式，预处理定义的权威在 MaaEnd C++
+（`CameraOrientationPreprocess.cpp`）。
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
-from pathlib import Path
 from typing import Any
 
 import torch
 
-from endfield.preprocess import IMG_H, IMG_W
-from endfield.run_record import InputMode, RunRecord, input_channels
+from endfield.input_encoding import REFERENCE_STRIP_SEMANTICS
+from endfield.run_record import RunRecord
+from endfield.strip import INPUT_CHANNELS, STRIP_H, STRIP_W
 from endfield.train.data import names_fingerprint
 
 
@@ -35,29 +36,16 @@ def augmentation(config: dict[str, Any]) -> dict[str, Any]:
 
 
 def input_representation(config: dict[str, Any]) -> str:
-    if InputMode.parse(config["input_mode"]) is InputMode.REF:
-        gap_filter = ""
-        if config["max_ref_missing"] is not None:
-            gap_filter = (
-                f"; train samples filtered to reference-gap fraction "
-                f"(ref.A<255) <= {config['max_ref_missing']:g}"
-            )
-        return (
-            f"ref_polar_unwrap_obs_bgr_ref_bgra_{IMG_W}x{IMG_H} "
-            "(channels = [obs.BGR, ref.BGR, ref.A]; reference = MapLocator zone asset "
-            "sampled once on the strip grid at (x,y)+(q_roi-pole)*scale with the zone's "
-            "MapLocator ZoneTemplateScale (ValleyIV_Base 15/16, otherwise 1:1); "
-            "out-of-bounds reads 0 = reference gap; "
-            "ref.BGR = rgb*(a/255) + 255*(1 - a/255) composited once in the strip domain "
-            "over a white backdrop (transparent pixels, including out-of-bounds reads, are "
-            "white), ref.A = raw continuous alpha; "
-            "both streams defined by endfield/preprocess.py; "
-            f"angle->x, radius->y{gap_filter})"
+    gap_filter = ""
+    if config["max_ref_missing"] is not None:
+        gap_filter = (
+            f"; train samples filtered to reference-gap fraction "
+            f"(ref.A<255) <= {config['max_ref_missing']:g}"
         )
     return (
-        f"polar_unwrap_bgr_{IMG_W}x{IMG_H} (angle->x, 1 deg/column, clockwise, "
-        "north at column 0; "
-        "radius->y, inner at top)"
+        f"ref_polar_unwrap_obs_bgr_ref_bgra_{STRIP_W}x{STRIP_H} "
+        f"(channels = [obs.BGR, ref.BGR, ref.A]; {REFERENCE_STRIP_SEMANTICS}; "
+        f"angle->x, radius->y{gap_filter})"
     )
 
 
@@ -70,15 +58,13 @@ def build_record(
     train_sha256: str,
     val_sha256: str,
     trainable_parameters: int,
-    assets_root: str | None = None,
     hard_names: Sequence[str] = (),
 ) -> RunRecord:
-    """配置、环境与数据指纹 -> 运行档案；ref 必须给出数据集所用的资产根。
+    """配置、环境与数据指纹 -> 运行档案。
 
     `hard_names` 是**落在训练划分里**的困难样本（调用方已与训练名单求交）：它们是
     `hard_weight` 实际作用到的样本，因此档案只记这一集合的数量与摘要。
     """
-    mode = InputMode.parse(config["input_mode"])
     metadata: dict[str, Any] = {
         "loss": (
             f"KL(q||p) between circular categorical distributions on Z/360Z, "
@@ -88,9 +74,10 @@ def build_record(
             "(w = hard_weight for those samples, 1 otherwise; sum(w*KL)/sum(w)); "
             "val loss and metrics are unweighted"
         ),
-        "input_shape": [input_channels(mode), IMG_H, IMG_W],
+        "input_shape": [INPUT_CHANNELS, STRIP_H, STRIP_W],
         "input_scaling": "BGR uint8 / 255",
         "input_representation": input_representation(config),
+        "max_ref_missing": config["max_ref_missing"],
         "conv_padding_mode": "azimuth-circular; radius-zero (radius boundaries are ring-outside)",
         "seed": config["seed"],
         "threads": threads,
@@ -121,16 +108,7 @@ def build_record(
         "hard_count": len(hard_names),
         "hard_names_sha256": names_fingerprint(list(hard_names)),
     }
-    if mode is InputMode.REF:
-        if assets_root is None:
-            raise SystemExit(
-                "ref record requires the dataset's reference assets root; "
-                "run prepare-data --mode ref to write the stamp"
-            )
-        metadata["max_ref_missing"] = config["max_ref_missing"]
     return RunRecord(
-        input_mode=mode,
-        assets_root=Path(assets_root) if assets_root is not None else None,
         target_sigma=float(config["target_sigma"]),
         trainable_parameters=trainable_parameters,
         metadata=metadata,
