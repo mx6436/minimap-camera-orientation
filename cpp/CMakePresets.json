@@ -1,0 +1,27 @@
+{
+  "version": 5,
+  "configurePresets": [
+    {
+      "name": "linux-x64",
+      "displayName": "Linux x64",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/MaaEnd/agent/cpp-algo/MaaUtils/MaaDeps/cmake/maa-x64-linux-toolchain.cmake",
+        "CMAKE_PREFIX_PATH": "${sourceDir}/MaaEnd/agent/cpp-algo/MaaUtils/MaaDeps/vcpkg/installed/maa-x64-linux"
+      }
+    },
+    {
+      "name": "linux-arm64",
+      "displayName": "Linux arm64",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/MaaEnd/agent/cpp-algo/MaaUtils/MaaDeps/cmake/maa-arm64-linux-toolchain.cmake",
+        "CMAKE_PREFIX_PATH": "${sourceDir}/MaaEnd/agent/cpp-algo/MaaUtils/MaaDeps/vcpkg/installed/maa-arm64-linux"
+      }
+    }
+  ]
+}
