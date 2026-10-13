@@ -13,3 +13,5 @@ prototype/out/
 
 # C++ 数据准备工具
 cpp/build/
+
+.vscode/
