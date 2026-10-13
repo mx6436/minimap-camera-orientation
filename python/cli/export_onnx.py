@@ -53,7 +53,7 @@ def git_commit() -> str:
 
 
 def attach_metadata(
-    path: Path, record: run_record.RunRecord, summary: run_dir.TrainingSummary, checkpoint: Path
+    path: Path, record: run_record.RunRecord, summary: run_dir.TrainingSummary
 ) -> None:
     import onnx
 
@@ -66,7 +66,6 @@ def attach_metadata(
             "already applied (sums to 1). Bin j corresponds to azimuth j degrees clockwise "
             "from north; bin 359 and bin 0 are adjacent (circular topology)"
         ),
-        "source_checkpoint": str(checkpoint),
         "git_commit": git_commit(),
         "val_expected_abs_error_deg": f"{summary.metrics.expected_abs_error:.6f}",
         "val_rms_error_deg": f"{summary.metrics.rms_error:.6f}",
@@ -120,7 +119,7 @@ def export(checkpoint: Path, output: Path | None = None) -> Path:
         output_names=["pmf"],
         external_data=False,
     )
-    attach_metadata(output, record, summary, checkpoint)
+    attach_metadata(output, record, summary)
     _validate_export(output)
     print(f"exported: {output} (channels={INPUT_CHANNELS})")
     return output
