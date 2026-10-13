@@ -12,6 +12,8 @@ pkgs.mkShell {
     ccache
     cmake
     ninja
+
+    openssl
   ];
 
   shellHook = ''
