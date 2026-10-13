@@ -1,0 +1,4 @@
+[submodule "cpp/MaaEnd"]
+	path = cpp/MaaEnd
+	url = git@github.com:mx6436/MaaEnd.git
+	branch = refactor/cameraorientation-preprocess
